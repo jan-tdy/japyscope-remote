@@ -28,6 +28,7 @@ below, which supersede the mockup where they conflict with it.
 | OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure |
 | Firmware language | Python 3 |
 | Web UI stack | Flask + Jinja2, server-rendered plain HTML (no JS framework) |
+| Web UI port | **8080**, all interfaces (`--host 0.0.0.0 --port 8080`, set in `install/systemd/japyscope-webui.service`) — `http://<device-ip>:8080/` normally, `http://192.168.4.1:8080/setup` while the controller is broadcasting its own Wi-Fi setup hotspot. `install/update.py`'s post-update health check also polls `http://127.0.0.1:8080/healthz` on this port. |
 | Repo layout | Monorepo (this repo) |
 | License | MIT — every dependency must be MIT/BSD/Apache/LGPL-compatible; INDI/PyIndi-client are LGPL, used as a separate process + Python bindings (not statically linked), so no conflict; avoid GPL-only e-ink demo code |
 
