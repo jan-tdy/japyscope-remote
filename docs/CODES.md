@@ -47,24 +47,37 @@ Full T9 map (`firmware/hal/input/keys.py` order, letters per digit):
 | 9 | w x y z — **SmartSearch-only exception** (everywhere else, 9 = back); yes, this duplicates key 8's letters, so w/x/y/z can be typed via either key — that's intentional, the point is giving 9 the "old phone" wxyz muscle memory without disturbing keys 1–8 |
 | 0 | 0 (digit only, no letters) |
 
-## Dev Tools code
+## Dev Tools codes
 
-4-digit code entered via rotate-per-digit (Home → Dev Tools). No specific
-codes are defined yet in v0 — the mockup only implements the entry UI, not
-any destructive action gated behind it. **Add new Dev Tools codes here as
-they're introduced** (e.g. factory reset, force-reindex local catalogs,
-manual driver restart) — don't scatter magic numbers in code without an
-entry in this table.
+4-digit code entered via rotate-per-digit (Home → Dev Tools). These already
+exist in the mockup (`handleDevtools()` in `docs/mockup.html`) — this table
+is a faithful port, not a wishlist. **Add new Dev Tools codes here as
+they're introduced** — don't scatter magic numbers in `firmware/ui/`
+without a matching entry in this table.
 
-| Code | Action | Requires sudo password? |
+| Code | Action | Notes |
 |---|---|---|
-| _(none defined yet)_ | | |
+| `0000` | Exit Dev Tools | |
+| `1111` | Restart INDI server | functional — calls into `firmware/indi/manager.py`'s restart |
+| `1234` | Show system info (IP, INDI version, uptime) | functional |
+| `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
+| `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
+| `9600` | Select communication interface | functional — opens interface selection (currently one option: RJ12 direct to mount) |
+| `9999` | Easter egg (astronomer/Moon joke) | cosmetic only |
+| `4200` | Easter egg ("42.") | cosmetic only |
+| `1957` | Easter egg (Sputnik) | cosmetic only |
+| `0905` | Easter egg ("Protocol 09: the code stays free — JapySoft") | cosmetic only |
+| anything else | "Invalid code." | |
+
+None of the above currently require the sudo password — add the
+requirement here (and enforce it in `firmware/ui/`) the day a Dev Tools
+code becomes genuinely destructive (e.g. a future factory-reset code).
 
 ## Sudo password
 
 - Default: `1234` (factory default, stored in `shared.db` `settings.sudo_password`).
 - Set via Menu → Sudo Password (same rotary-dial 4-digit entry as Dev Tools codes).
-- Intended to guard future destructive Dev Tools actions — none currently need it, since none are defined yet (see table above).
+- Intended to guard destructive Dev Tools actions — none of the current codes need it (see table above), since none are destructive yet.
 - **Not a real security boundary** — same spirit as the Web UI access code below: a deterrent, not encryption-grade auth. Don't build anything safety-critical behind it without upgrading the mechanism first.
 
 ## Web UI access code

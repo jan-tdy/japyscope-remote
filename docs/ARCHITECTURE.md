@@ -11,9 +11,9 @@ No hardware exists yet (still Fáza 0/1beta), but firmware v0 is being built
 now so installation, OTA updates, and INDI process management are already
 solved before the first prototype is wired up. The UX for both the hand
 controller and its companion Web UI is fully defined by the interactive
-HTML/JS mockup published at the root of this site (`docs/index.html` —
-open it via GitHub Pages) plus the decisions below, which supersede the
-mockup where they conflict with it.
+HTML/JS mockup published as part of this site (`docs/mockup.html` — open
+the [Mockup tab](index.html#mockup) via GitHub Pages) plus the decisions
+below, which supersede the mockup where they conflict with it.
 
 ## Confirmed decisions
 
@@ -31,7 +31,7 @@ mockup where they conflict with it.
 | Repo layout | Monorepo (this repo) |
 | License | MIT — every dependency must be MIT/BSD/Apache/LGPL-compatible; INDI/PyIndi-client are LGPL, used as a separate process + Python bindings (not statically linked), so no conflict; avoid GPL-only e-ink demo code |
 
-## UX/behavior changes vs. the `docs/index.html` mockup
+## UX/behavior changes vs. the `docs/mockup.html` mockup
 
 The mockup was built first to nail down interaction design and is kept
 as-is for reference/demo purposes, but the following changed after it was
@@ -55,7 +55,7 @@ japyscope-remote/
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog
       client.py       # STUB — PyIndi-client wrapper, methods raise NotImplementedError pending real hardware
-    ui/                # NOT STARTED — screen/state-machine logic ported from docs/index.html
+    ui/                # NOT STARTED — screen/state-machine logic ported from docs/mockup.html
     main.py             # NOT STARTED — entrypoint wiring HAL + indi + ui together
   webui/                # NOT STARTED — Flask app + templates
   shared/
@@ -64,7 +64,7 @@ japyscope-remote/
     install.sh           # NOT STARTED
     update.py             # NOT STARTED
     systemd/               # NOT STARTED
-  docs/                     # this file, WIRING.md, CODES.md — DONE; INSTALL.md/UPDATE.md/TROUBLESHOOTING.md — STUBS pending install.sh/update.py; index.html — the mockup, DONE
+  docs/                     # this file, WIRING.md, CODES.md — DONE; INSTALL.md/UPDATE.md/TROUBLESHOOTING.md — STUBS pending install.sh/update.py; index.html — nav shell/wiki site, DONE; mockup.html — the interactive mockup, DONE
   tests/                     # DONE for what exists (db, display HAL, indi manager); needs more once ui/webui/install exist
 ```
 
@@ -75,7 +75,7 @@ process management, data model, docs) with working tests, and left the
 following for a follow-up session — everything below has enough context in
 this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
 
-1. **`firmware/ui/`** — port every screen from `docs/index.html`'s JS state
+1. **`firmware/ui/`** — port every screen from `docs/mockup.html`'s JS state
    machine (`st.screen` switch in the mockup's `<script>`) to Python,
    driven by `firmware.hal.display.DisplayHAL` / `firmware.hal.input.InputHAL`
    from this pass. Include the four behavior changes listed above — they are
@@ -83,7 +83,7 @@ this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
 2. **`firmware/main.py`** — argument parsing (`--simulate`), constructs
    `make_display()` / `make_input()` / `IndiServerManager` / the `ui` state
    machine, runs the main loop, handles clean shutdown (stop indiserver).
-3. **`webui/`** — Flask app implementing every page in `docs/index.html`'s
+3. **`webui/`** — Flask app implementing every page in `docs/mockup.html`'s
    `#tab-webui` (Wi-Fi AP setup, code-gated login with 5-attempt lockout,
    status with opt-in live position, multi-catalog CRUD + CSV import,
    settings, diagnostics, system), backed by `shared/db.py`.
@@ -114,9 +114,10 @@ this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
 3. `install/install.sh` and `install/update.py` tested against a Raspberry
    Pi OS Bullseye Lite image (QEMU or a spare Pi) before trusting them on
    real Pi Zero W hardware.
-4. `docs/index.html` opened via the GitHub Pages URL to sanity-check current
-   UX decisions (noting it does **not** reflect the behavior changes above —
-   it's kept as the original interaction-design reference).
+4. `docs/mockup.html` opened via the GitHub Pages URL (or the Mockup tab in
+   `docs/index.html`) to sanity-check current UX decisions (noting it does
+   **not** reflect the behavior changes above — it's kept as the original
+   interaction-design reference).
 5. `docs/WIRING.md` cross-checked against the physical build at each Fáza.
 6. `pytest` for everything already covered (`tests/`) — 12 tests passing as
    of this pass (`shared/db.py`, display HAL, INDI manager lifecycle).

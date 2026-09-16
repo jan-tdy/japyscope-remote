@@ -1,0 +1,1819 @@
+<title>JapyScope Remote Simulator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    --bg:#0c0808;
+    --fg:#e8dcd6;
+    --muted:#9c8a84;
+    --accent:#c23b3b;
+    --accent-dim:#7a2a2a;
+    --body-navy:#1a2247;
+    --body-navy-dark:#12183a;
+    --key-face:#525d80;
+    --key-face-dark:#3d465f;
+    --key-text:#dfe4f2;
+    --screen-bg:#b7bcae;
+    --screen-fg:#20241d;
+    --screen-dim:#5c5f52;
+    --panel-bg:#1c1414;
+    --panel-border:#3a2626;
+  }
+  body{
+    background:
+      radial-gradient(ellipse at 50% -10%, rgba(194,59,59,0.10), transparent 55%),
+      var(--bg);
+    color:var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding-block: 28px;
+  }
+  .wrap{
+    max-width: 880px;
+    margin: 0 auto;
+    display:flex;
+    flex-wrap:wrap;
+    gap:28px;
+    align-items:flex-start;
+    justify-content:center;
+  }
+  h1{ font-size:1.3rem; margin:0 0 2px 0; color:#f2e4de; text-wrap:balance; }
+  .subtitle{ color:var(--muted); font-size:.85rem; margin:0 0 18px 0; max-width:60ch; }
+  .col-device{ flex:0 0 auto; display:flex; flex-direction:column; align-items:center; }
+  .col-info{ flex:1 1 260px; min-width:260px; max-width:340px; }
+
+  /* ---- tabs ---- */
+  .tabbar{ max-width:880px; margin:0 auto 20px; display:flex; gap:8px; padding:0 16px; }
+  .tab-btn{
+    font-family:inherit; font-size:.82rem; font-weight:600;
+    background:var(--panel-bg); color:var(--muted); border:1px solid var(--panel-border);
+    border-radius:8px; padding:9px 18px; cursor:pointer;
+  }
+  .tab-btn.active{ background:var(--accent-dim); color:#f4d9d3; border-color:var(--accent); }
+  .tab-panel{ display:none; }
+  .tab-panel.active{ display:block; }
+
+  /* ---- device ---- */
+  .device{
+    width:300px;
+    background: linear-gradient(180deg, var(--body-navy), var(--body-navy-dark));
+    border-radius:22px;
+    padding:20px 18px 26px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+    position:relative;
+  }
+  .side-encoder{
+    position:absolute; right:-13px; top:150px;
+    width:22px; height:150px;
+    display:flex; flex-direction:column;
+    border-radius:11px;
+    background: linear-gradient(180deg,#2f9e63,#1f7a4a);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.18);
+    overflow:hidden;
+    cursor:pointer;
+    touch-action:none;
+  }
+  .side-encoder .enc-zone{
+    flex:1 1 auto;
+    display:flex; align-items:center; justify-content:center;
+    color:#e9fff2; font-size:.55rem; line-height:1;
+    border-top:1px solid rgba(0,0,0,0.18);
+  }
+  .side-encoder .enc-zone:first-child{ border-top:none; }
+  .side-encoder .enc-zone.pressed{ background:rgba(0,0,0,0.25); }
+  .side-encoder .enc-zone.push{ font-weight:700; letter-spacing:.03em; }
+  .side-encoder .ridge{ width:10px; height:2px; background:rgba(255,255,255,0.5); border-radius:1px; box-shadow:0 4px 0 rgba(255,255,255,0.5), 0 -4px 0 rgba(255,255,255,0.5); }
+  .screen-wrap{ position:relative; }
+  .screen{
+    background:var(--screen-bg);
+    color:var(--screen-fg);
+    border-radius:5px;
+    padding:14px 12px;
+    height:150px;
+    overflow:hidden;
+    font-family:"JetBrains Mono", "IBM Plex Mono", "Courier New", monospace;
+    font-size:.82rem;
+    line-height:1.5;
+    white-space:pre-wrap;
+    word-break:break-word;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.35);
+    transition: background .25s ease, box-shadow .25s ease;
+  }
+  /* Fixed physical size on purpose: real e-ink is one constant panel — it can
+     draw any content up to its resolution (unlike a segment/character LCD),
+     but the panel itself never grows or shrinks with how much text is shown.
+     Backlight ON must look BRIGHTER than off — it's RGB light shining onto the
+     panel (colors mix, e.g. R+G High = yellow), never a darkening overlay.
+     Colors are computed and applied inline by updateBacklightVisual() since
+     they're a 3x3x3 mix, not a fixed set of CSS classes. */
+  .screen .dim{ color:var(--screen-dim); }
+  .screen .cursor{ display:inline-block; width:.55em; background:var(--screen-fg); animation: blink 1s steps(1) infinite; }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  .keys{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap:9px;
+    margin-top:16px;
+  }
+  .key{
+    background: linear-gradient(180deg, var(--key-face), var(--key-face-dark));
+    border: 1px solid rgba(0,0,0,0.35);
+    border-radius:9px;
+    color:var(--key-text);
+    text-align:center;
+    padding:12px 0 10px;
+    cursor:pointer;
+    user-select:none;
+    position:relative;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+    transition: transform .05s ease;
+  }
+  .key:active, .key.pressed{
+    transform: translateY(2px);
+    box-shadow: 0 0 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, var(--key-face-dark), var(--key-face));
+  }
+  .key .letters{ display:block; font-size:.62rem; letter-spacing:.09em; opacity:.85; text-transform:lowercase; height:.9em; }
+  .key .digit{ display:block; font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums; }
+  .key .arrow{ position:absolute; top:5px; width:0; height:0; opacity:.85; }
+  .key .arrow.up{ right:8px; border-left:5px solid transparent; border-right:5px solid transparent; border-bottom:7px solid var(--accent); }
+  .key .arrow.down{ right:8px; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--accent); }
+  .key .arrow.left{ right:8px; border-top:5px solid transparent; border-bottom:5px solid transparent; border-right:7px solid var(--accent); }
+  .key .arrow.right{ right:8px; border-top:5px solid transparent; border-bottom:5px solid transparent; border-left:7px solid var(--accent); }
+
+  .device-caption{ margin-top:14px; color:var(--muted); font-size:.72rem; text-align:center; }
+
+  /* ---- info panel ---- */
+  .panel{ background:var(--panel-bg); border:1px solid var(--panel-border); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  .panel h2{ font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); margin:0 0 8px 0; }
+  .panel p{ font-size:.83rem; color:#cfc2bc; line-height:1.5; margin:0; }
+  .legend-grid{
+    display:grid; grid-template-columns: repeat(3,1fr); gap:4px;
+    font-family:"JetBrains Mono","Courier New",monospace; font-size:.65rem;
+    color:#cfc2bc; text-align:center;
+  }
+  .legend-grid div{ background:#241919; border:1px solid var(--panel-border); border-radius:4px; padding:5px 2px; }
+  .legend-note{ margin-top:8px; font-size:.72rem; color:var(--muted); }
+  .log{ list-style:none; margin:0; padding:0; font-family:"JetBrains Mono","Courier New",monospace; font-size:.72rem; color:var(--muted); max-height:150px; overflow-y:auto; }
+  .log li{ padding:2px 0; border-bottom:1px dashed var(--panel-border); }
+  .log li:first-child{ color:#e0d2cc; }
+  .reset-btn{
+    display:block; width:100%; margin-top:6px;
+    background:var(--accent-dim); color:#f4d9d3; border:1px solid var(--accent);
+    border-radius:6px; padding:8px 0; font-size:.8rem; cursor:pointer;
+  }
+  .reset-btn:hover{ background:var(--accent); }
+  kbd{ background:#241919; border:1px solid var(--panel-border); border-radius:3px; padding:0 4px; font-size:.72rem; color:#e0d2cc; }
+  @media (max-width:760px){
+    .wrap{ flex-direction:column; align-items:center; }
+    .col-info{ max-width:340px; }
+  }
+
+  /* ---- embedded Web UI (deliberately plain, browser-page look) ---- */
+  .webui-page{
+    --wbg:#ffffff; --wfg:#111111; --wmuted:#5a5a5a; --wlink:#0000EE; --wlinkv:#551A8B;
+    --wborder:#767676; --winput:#ffffff; --wcode:#f0f0f0; --wwarn:#a83232;
+    background:var(--wbg); color:var(--wfg);
+    font-family: Georgia, "Times New Roman", Times, serif;
+    font-size:16px; line-height:1.45;
+    padding:22px 24px 26px;
+    border-radius:10px;
+    max-width:848px; margin:0 auto;
+  }
+  .webui-page h1{ font-size:1.25rem; margin:0 0 4px 0; color:var(--wfg); }
+  .webui-page h2{ font-size:1.05rem; margin:1.2em 0 .3em 0; }
+  .webui-page .route{ font-family:"Courier New",monospace; font-size:.8rem; color:var(--wmuted); margin:0 0 1em 0; }
+  .webui-page a{ color:var(--wlink); cursor:pointer; }
+  .webui-page a:visited{ color:var(--wlinkv); }
+  .webui-page hr{ border:none; border-top:1px solid var(--wborder); margin:1.5em 0; }
+  .webui-page nav{ margin-bottom:1em; }
+  .webui-page nav a{ margin-right:10px; }
+  .webui-page nav a.current{ color:var(--wfg); text-decoration:none; font-weight:bold; }
+  .webui-page table{ border-collapse:collapse; width:100%; margin:.6em 0; }
+  .webui-page table, .webui-page th, .webui-page td{ border:1px solid var(--wborder); }
+  .webui-page th, .webui-page td{ padding:4px 8px; text-align:left; font-variant-numeric:tabular-nums; }
+  .webui-page th{ background:var(--wcode); }
+  .webui-page label{ display:block; margin:.5em 0 .15em 0; }
+  .webui-page input[type=text], .webui-page input[type=number], .webui-page input[type=password], .webui-page input[type=file], .webui-page select{
+    font-family:inherit; font-size:1rem;
+    background:var(--winput); color:var(--wfg);
+    border:1px solid var(--wborder); padding:3px 5px;
+    max-width:100%;
+  }
+  .webui-page button{
+    font-family:inherit; font-size:1rem;
+    background:var(--winput); color:var(--wfg);
+    border:1px solid var(--wborder); padding:4px 10px;
+    margin-top:.6em; cursor:pointer;
+  }
+  .webui-page .muted{ color:var(--wmuted); font-size:.9rem; }
+  .webui-page .warn{ color:var(--wwarn); font-size:.9rem; }
+  .webui-page .ok{ color:#1a7a3a; font-size:.9rem; }
+  .webui-page pre{
+    background:var(--wcode); border:1px solid var(--wborder);
+    padding:8px; overflow-x:auto; font-size:.85rem;
+    font-family:"Courier New", monospace;
+  }
+  .webui-page .field-row{ display:flex; flex-wrap:wrap; gap:10px 20px; }
+  .webui-page .field-row > div{ min-width:160px; }
+  .webui-page footer{ margin-top:2em; padding-top:.6em; border-top:1px solid var(--wborder); font-size:.8rem; color:var(--wmuted); }
+  .webui-page .page{ display:none; }
+  .webui-page .page.active{ display:block; }
+  @media (max-width:480px){
+    .webui-page table{ font-size:.85rem; }
+  }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>JapyScope Remote — Simulator</h1>
+    <p class="subtitle">Interactive mockup of the JapyScope Remote hand controller by JapySoft, plus its companion Web UI — sharing one catalog and one access code, same as the real system will. Click with your mouse, or use your keyboard.</p>
+  </div>
+</div>
+
+<div class="tabbar">
+  <button class="tab-btn active" data-tab="hw">Hand Controller</button>
+  <button class="tab-btn" data-tab="webui">Web UI</button>
+</div>
+
+<div class="tab-panel active" id="tab-hw">
+<div class="wrap">
+  <div class="col-device">
+    <div class="device">
+      <div class="screen-wrap" title="RGB backlight (night-vision friendly, color-mixing) — Menu → Backlight">
+        <div class="screen" id="screen"></div>
+      </div>
+      <div class="keys" id="keys"></div>
+      <div class="side-encoder" id="sideEncoder" title="Side scroll wheel: scroll = rotate, click = push">
+        <div class="enc-zone" data-key="ENC_UP">▲</div>
+        <div class="enc-zone push" data-key="ENC_PUSH"><span class="ridge"></span></div>
+        <div class="enc-zone" data-key="ENC_DOWN">▼</div>
+      </div>
+    </div>
+    <div class="device-caption">JapyScope Remote — HW mockup, v0.6<br>4.26&Prime; e-ink, 800×480 (SSD1677) · side wheel: scroll = rotate · click = push</div>
+  </div>
+
+  <div class="col-info">
+    <div class="panel">
+      <h2>Key Map</h2>
+      <div class="legend-grid">
+        <div>1 —</div><div>2 Jog Up</div><div>3 —</div>
+        <div>4 Jog Left</div><div>5 —</div><div>6 Jog Right</div>
+        <div>7 Jog Speed</div><div>8 Jog Down</div><div>9 Back</div>
+        <div>FN2 reserved</div><div>0 digit "0"</div><div>BKSP delete</div>
+      </div>
+      <p class="legend-note">Everything is navigated with the side wheel: rotate to scroll (home screen, menus, lists), push to open/select/confirm. 2/4/6/8 jog the mount whenever the mount can move — home screen, tracking, alignment. 9 always means one level back, never an action. The real backlight is edge-mounted RGB LEDs that light the whole e-ink panel (colors mix, e.g. R+G High = yellow), not a separate light — adjust each channel from Menu → Backlight (rotate = pick R/G/B, push = cycle Off/Med/High); it also auto-off after ~20s idle to save power and comes back with the next key press. Menu → Park sends the mount to a safe resting position; while parked, rotate to choose Unpark or Power off, then push. Menu → Sudo Password sets the factory password (default 1234, same rotary-dial entry as Dev Tools codes) that will guard any destructive Dev Tools action once one exists — none currently need it. The display itself is a fixed-size e-ink panel: its box never grows or shrinks, only what's drawn on it changes.</p>
+    </div>
+    <div class="panel">
+      <h2>Action Log</h2>
+      <ul class="log" id="log"></ul>
+      <button class="reset-btn" id="resetBtn">↺ Restart simulator</button>
+    </div>
+    <div class="panel">
+      <p>Keyboard: <kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd> = digits, <kbd>Enter</kbd> = encoder push, <kbd>↑</kbd>/<kbd>↓</kbd> = encoder rotate, <kbd>Backspace</kbd> = BKSP, <kbd>F</kbd> = FN2.</p>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="tab-panel" id="tab-webui">
+  <div class="webui-page">
+    <h1>JapyScope Remote — Web UI</h1>
+    <p class="muted">Screen draft, v1 (no mount control). Raspberry Pi OS Lite + INDI. Plain server-rendered HTML, deliberately undesigned. Logs in with the code shown on the controller, and shares its catalog with it — try generating a code on the Hand Controller tab, then log in here.</p>
+
+    <nav id="wu-nav"></nav>
+    <hr>
+
+    <!-- LOGIN -->
+    <!-- WI-FI SETUP (AP mode, shown instead of everything else while the controller is broadcasting its own hotspot) -->
+    <section class="page" data-key="wifisetup">
+      <p class="route">GET /setup — AP mode, 192.168.4.1</p>
+      <h2>Wi-Fi Setup</h2>
+      <p>You're connected to the controller's own hotspot <b>JapyScope-Setup</b>. Enter your home Wi-Fi details so the controller can join your network:</p>
+      <form id="wifisetup-form" onsubmit="return false;">
+        <label for="wf-ssid">Wi-Fi name (SSID)</label>
+        <input type="text" id="wf-ssid" placeholder="Home-WiFi-5G">
+        <label for="wf-pass">Password</label>
+        <input type="text" id="wf-pass" placeholder="••••••••">
+        <div><button type="submit">Connect</button></div>
+      </form>
+      <p id="wifisetup-msg" class="ok"></p>
+      <p class="muted">Afterwards the controller joins your network and this hotspot disappears — reconnect your phone or laptop to your normal Wi-Fi to keep using this Web UI.</p>
+    </section>
+
+    <section class="page" data-key="login">
+      <p class="route">GET /</p>
+      <h2>Access</h2>
+      <p>Enter the code shown on the controller's display:</p>
+      <form id="login-form" onsubmit="return false;">
+        <label for="code">Code</label>
+        <input type="text" id="code" inputmode="numeric" maxlength="6" placeholder="123456" style="letter-spacing:.3em; width:7em;">
+        <div><button type="submit">Enter</button></div>
+      </form>
+      <p id="login-msg" class="warn"></p>
+      <p class="muted">The code is dynamic — generate it from the controller's menu (Wi-Fi / Web Access). It appears on the e-ink display and is only valid for a limited time.</p>
+      <p class="warn">5 wrong attempts → 30s lockout.</p>
+    </section>
+
+    <!-- STATUS -->
+    <section class="page" data-key="status">
+      <p class="route">GET /status</p>
+      <h2>Status</h2>
+      <table>
+        <tr><th>Item</th><th>Value</th></tr>
+        <tr><td>INDI connection</td><td>connected — Sky-Watcher Flextube 400P</td></tr>
+        <tr><td>RA / Dec</td><td>05h 34m 32s / +22° 00′ 52″</td></tr>
+        <tr><td>Alt / Az</td><td>47.3° / 132.8°</td></tr>
+        <tr><td>Tracking</td><td>on (sidereal)</td></tr>
+        <tr><td>Alignment</td><td id="status-align">—</td></tr>
+        <tr><td>Parked</td><td id="status-parked">—</td></tr>
+        <tr><td>Pi temperature</td><td>41.2 °C</td></tr>
+        <tr><td>Wi-Fi signal</td><td>−58 dBm</td></tr>
+        <tr><td>Uptime</td><td>2 h 14 min</td></tr>
+      </table>
+      <p class="muted">Read-only — no controls on this page. Alignment and Parked reflect the controller's real state; everything else above is illustrative sample data in this mockup.</p>
+    </section>
+
+    <!-- CATALOG -->
+    <section class="page" data-key="catalog">
+      <p class="route">GET /catalog</p>
+      <h2>My catalog</h2>
+      <table>
+        <tr><th>#</th><th>Name</th><th>RA</th><th>Dec</th><th>Type</th><th>Note</th><th>Source</th><th></th></tr>
+        <tbody id="cat-rows"></tbody>
+      </table>
+      <h2>Add object</h2>
+      <form id="add-form" onsubmit="return false;">
+        <div class="field-row">
+          <div><label for="c-name">Name</label><input type="text" id="c-name"></div>
+          <div><label for="c-ra">RA</label><input type="text" id="c-ra" placeholder="HH:MM:SS"></div>
+          <div><label for="c-dec">Dec</label><input type="text" id="c-dec" placeholder="±DD:MM:SS"></div>
+          <div><label for="c-type">Type</label><input type="text" id="c-type" placeholder="star / reference / other"></div>
+        </div>
+        <label for="c-note">Note</label>
+        <input type="text" id="c-note" style="width:100%;">
+        <div><button type="submit">Add</button></div>
+      </form>
+      <p id="add-note" class="ok"></p>
+
+      <h2>Import from file</h2>
+      <form id="import-form" onsubmit="return false;">
+        <input type="file" id="imp-file" accept=".csv,.txt">
+        <button type="submit">Upload</button>
+      </form>
+      <p class="muted">CSV, one object per line: <code>name,ra,dec,type,note</code> — RA/Dec and type/note are optional (blank if unknown). A first line that doesn't look like data (e.g. starting with "name,") is treated as a header and skipped. Example: <code>M57 Ring Nebula,18h53m35s,+33°01′,nebula,test import</code></p>
+      <p id="import-note" class="muted"></p>
+      <p class="muted">Anything added here shows up on the controller under Catalog → My Catalog — the controller only reads this list, it doesn't edit it.</p>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" data-key="settings">
+      <p class="route">GET/POST /settings</p>
+      <h2>Settings</h2>
+      <div class="field-row">
+        <div><label for="s-lat">Latitude</label><input type="text" id="s-lat" value="37.8845° N"></div>
+        <div><label for="s-lon">Longitude</label><input type="text" id="s-lon" value="4.7787° W"></div>
+        <div><label for="s-elev">Elevation (m)</label><input type="number" id="s-elev" value="245"></div>
+      </div>
+      <label for="s-tz">Timezone</label>
+      <select id="s-tz"><option>Europe/Madrid</option><option>UTC</option></select>
+      <div><button type="button" id="sync-time-btn">Sync time</button></div>
+      <p id="sync-time-note" class="ok"></p>
+      <p class="muted">Latitude / longitude / elevation / timezone fields above are illustrative — not wired up in this mockup.</p>
+      <hr>
+      <p class="warn">Reset alignment model — clears the mount's current T-Point model. You'll need to align again.</p>
+      <button type="button" id="reset-align-btn">Reset alignment model</button>
+      <p id="reset-align-note" class="ok"></p>
+      <hr>
+      <h2>Park position</h2>
+      <p class="muted">Where the mount parks to when you choose Park on the controller.</p>
+      <label for="s-park-mode">Position</label>
+      <select id="s-park-mode">
+        <option value="zenith">Zenith (straight up)</option>
+        <option value="home">Home (Alt 0°, Az 0°)</option>
+        <option value="custom">Custom Alt/Az</option>
+      </select>
+      <div class="field-row" id="s-park-custom">
+        <div><label for="s-park-alt">Alt (°)</label><input type="number" id="s-park-alt" value="45"></div>
+        <div><label for="s-park-az">Az (°)</label><input type="number" id="s-park-az" value="180"></div>
+      </div>
+      <div><button type="button" id="save-park-btn">Save park position</button></div>
+      <p id="save-park-note" class="ok"></p>
+    </section>
+
+    <!-- DIAGNOSTICS -->
+    <section class="page" data-key="diag">
+      <p class="route">GET /diagnostics</p>
+      <h2>Diagnostics — recent INDI log lines</h2>
+      <pre>2026-09-14T21:03:11Z [INDI] SkyWatcherAltAzMount: connected on /dev/ttyUSB0
+2026-09-14T21:03:12Z [INDI] alignment: loaded 4-point model
+2026-09-14T21:04:47Z [INDI] slew requested: RA 05:34:32 Dec +22:00:52
+2026-09-14T21:05:19Z [INDI] slew complete, tracking enabled
+2026-09-14T21:11:02Z [WARN] wifi rssi dropped to -71 dBm</pre>
+      <p class="muted">Illustrative sample log — not live in this mockup.</p>
+    </section>
+
+    <!-- SYSTEM -->
+    <section class="page" data-key="system">
+      <p class="route">POST /system/*</p>
+      <h2>System</h2>
+      <p><button type="button" disabled>Restart INDI server</button> <span class="muted">(illustrative — not wired up in this mockup)</span></p>
+      <p><button type="button" disabled>Restart Raspberry Pi</button> <span class="muted">(illustrative — not wired up in this mockup)</span></p>
+      <p><button type="button" id="wifi-wizard-btn">Restart Wi-Fi setup wizard</button></p>
+      <p id="wifi-wizard-note" class="muted"></p>
+      <p class="muted">No mount control here or anywhere in the Web UI — system and data management only.</p>
+      <hr>
+      <button type="button" id="logout-btn">Log out</button>
+    </section>
+
+    <footer>
+      Draft, Sep 14 2026 — Raspberry Pi OS Lite (no Astroberry) · server-rendered HTML, no CSS framework · HA integration is handled by a separate project, ha-indi-client.
+    </footer>
+  </div>
+</div>
+
+<script>
+  /* shared between the Hand Controller and the Web UI, like the real device and its Web UI will be */
+  var SHARED = {
+    myCatalog: [
+      {name:"V445 Her", ra:"18h24m11s", dec:"+12°09′", type:"star", note:"", alt:45, src:"webui"},
+      {name:"V445 Cyg", ra:"20h34m02s", dec:"+40°09′", type:"star", note:"", alt:-8, src:"webui"},
+      {name:"Chimney reference point", ra:"05h12m00s", dec:"+40°00′", type:"reference", note:"alignment test", alt:52, src:"webui"}
+    ],
+    webAccessCode: null,
+    webAccessValid: false,
+    loggedIn: false,
+    wifiSetupActive: false,
+    wifiJustConfigured: false,
+    homeSSID: null,
+    aligned: false,
+    parked: false,
+    parkPosition: { mode: "zenith", alt: 45, az: 180 },
+    sudoPassword: "1234"
+  };
+</script>
+
+<script>
+(function(){
+  "use strict";
+
+  var LETTERS = {
+    "1":["a","b","c","1"], "2":["d","e","f","2"], "3":["g","h","i","3"],
+    "4":["j","k","l","4"], "5":["m","n","o","5"], "6":["p","q","r","s","6"],
+    "7":["t","u","v","7"], "8":["w","x","y","z","8"]
+  };
+  var STARS = ["Polaris","Vega","Capella","Deneb","Arcturus","Altair"];
+  var SPEED_STEPS = [1,2,4,8,16,32,64];
+  var VISIBLE_ROWS = 4;
+  var BACKLIGHT_LEVELS = ["Off","Med","High"];
+  var BACKLIGHT_INTENSITY = {"Off":0, "Med":150, "High":255};
+  var BACKLIGHT_CHANNELS = ["R","G","B"];
+  /* Only one option each for now — real placeholders for future hardware
+     support, same idea as the catalog categories being examples to extend. */
+  var DRIVERS = ["Sky-Watcher Alt-Az GTi (INDI)"];
+  var INTERFACES = ["RJ12 (direct to mount)"];
+  var HOME_POINT = {ra:"05h34m32s", dec:"+22°00′52″"};
+
+  var BASIC_OBJECTS = [
+    {name:"Moon", ra:"—", dec:"—", alt:55, src:"basic"},
+    {name:"Mars", ra:"09h12m40s", dec:"+18°02′", alt:30, src:"basic"},
+    {name:"Jupiter", ra:"03h11m05s", dec:"+17°55′", alt:48, src:"basic"},
+    {name:"Saturn", ra:"23h18m22s", dec:"−06°40′", alt:20, src:"basic"},
+    {name:"Polaris", ra:"02h31m49s", dec:"+89°15′", alt:38, src:"basic"},
+    {name:"Vega", ra:"18h36m56s", dec:"+38°47′", alt:61, src:"basic"}
+  ];
+  var MESSIER_OBJECTS = [
+    {name:"M31 Andromeda Galaxy", ra:"00h42m44s", dec:"+41°16′", alt:29, src:"messier"},
+    {name:"M42 Orion Nebula", ra:"05h35m17s", dec:"−05°23′", alt:-15, src:"messier"},
+    {name:"M13 Hercules Cluster", ra:"16h41m41s", dec:"+36°28′", alt:50, src:"messier"}
+  ];
+  var NGC_OBJECTS = [
+    {name:"NGC 7000 North America", ra:"20h58m48s", dec:"+44°20′", alt:33, src:"ngc"},
+    {name:"NGC 869 Double Cluster", ra:"02h19m00s", dec:"+57°09′", alt:41, src:"ngc"}
+  ];
+  var CALDWELL_OBJECTS = [
+    {name:"C14 Double Cluster", ra:"02h20m00s", dec:"+57°08′", alt:41, src:"caldwell"}
+  ];
+
+  var screenEl = document.getElementById("screen");
+  var deviceEl = document.querySelector(".device");
+  var logEl = document.getElementById("log");
+
+  var st = {};
+  var timers = [];
+
+  function addTimer(id){ timers.push(id); return id; }
+  function clearTimers(){
+    timers.forEach(function(id){ clearTimeout(id); clearInterval(id); });
+    timers = [];
+  }
+  function pad2(n){ return (n<10?"0":"")+n; }
+
+  function resetState(){
+    clearTimers();
+    var now = new Date();
+    st = {
+      screen:"BOOT",
+      typeBuf:"", curKey:null, curPos:0, curTimeout:null,
+      results:[], resIndex:0, selected:null,
+      homeIndex:0, menuIndex:0, alignIndex:0, alignMoreIndex:0, alignConfirmIndex:0, parkConfirmIndex:0, parkedIndex:0, speed:1, starIdx:0,
+      backlight:{R:1, G:0, B:0}, backlightChanIndex:0, backlightAutoOff:false, lastActivity:Date.now(),
+      driverIndex:0, interfaceIndex:0,
+      sudoDigits:[null,null,null,null], sudoPos:0, sudoCurrent:0,
+      slewWarnings:[], slewWarnBack:"IDLE",
+      listItems:[], listIndex:0, listTitle:"", catIndex:0,
+      jogNote:null, jogNoteTimer:null,
+      speedReturn:"IDLE",
+      devDigits:[null,null,null,null], devPos:0, devCurrent:0,
+      slewGlyphs:"", trackSec:0,
+      clock: pad2(now.getHours())+":"+pad2(now.getMinutes())+":"+pad2(now.getSeconds()),
+      log:[]
+    };
+    logAction("Simulator started");
+    render();
+    updateBacklightVisual();
+    /* One static partial-refresh splash, then straight to IDLE (or PARKED if
+       it was parked before the restart) — no animated boot bar, since e-ink
+       can't redraw fast enough for that to be readable. */
+    addTimer(setTimeout(function(){
+      if(SHARED.parked) st.parkedIndex = 0;
+      st.screen = SHARED.parked ? "PARKED" : "IDLE";
+      render();
+    }, 1600));
+    addTimer(setInterval(function(){
+      var d = new Date();
+      st.clock = pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());
+      if(st.screen === "IDLE") render();
+      if(SHARED.wifiSetupActive && st.screen !== "WIFI_SETUP" && st.screen !== "BOOT"){
+        startWifiSetup();
+      }
+      if(!st.backlightAutoOff && st.screen !== "BOOT" && st.screen !== "SHUTDOWN" &&
+         (st.backlight.R+st.backlight.G+st.backlight.B) > 0 && (Date.now()-st.lastActivity) > 20000){
+        st.backlightAutoOff = true;
+        updateBacklightVisual();
+        logAction("Backlight auto-off (20s idle)");
+      }
+    }, 1000));
+  }
+
+  function logAction(text){
+    st.log.unshift(text);
+    if(st.log.length > 8) st.log.length = 8;
+    logEl.innerHTML = st.log.map(function(l){ return "<li>"+escapeHtml(l)+"</li>"; }).join("");
+  }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; });
+  }
+  function normalize(s){ return s.toLowerCase().replace(/[^a-z0-9]/g,""); }
+
+  /* ---------- rendering ---------- */
+
+  function setLines(lines){
+    screenEl.innerHTML = lines.join("\n").replace(/\n/g,"<br>");
+  }
+
+  function updateBacklightVisual(){
+    var el = screenEl || document.getElementById("screen");
+    if(!el) return;
+    var bl = st.backlightAutoOff ? {R:0,G:0,B:0} : st.backlight;
+    var r = BACKLIGHT_INTENSITY[BACKLIGHT_LEVELS[bl.R]];
+    var g = BACKLIGHT_INTENSITY[BACKLIGHT_LEVELS[bl.G]];
+    var b = BACKLIGHT_INTENSITY[BACKLIGHT_LEVELS[bl.B]];
+    var total = bl.R + bl.G + bl.B; // 0..6, drives how strongly the light shows
+    if(total === 0){
+      el.style.background = "";
+      el.style.boxShadow = "";
+      return;
+    }
+    // Real RGB LEDs mixing light onto a pale e-ink panel: base it up so colors
+    // read clearly (e.g. R+G High = yellow), background gets brighter/more
+    // saturated with more light — never darker — plus an outward glow.
+    var bg = "rgb("+(90+Math.round(r*0.65))+","+(90+Math.round(g*0.65))+","+(90+Math.round(b*0.65))+")";
+    var glowAlpha = (0.25 + 0.5*(total/6)).toFixed(2);
+    var glowSize = Math.round(10+14*(total/6));
+    var glowSpread = Math.round(1+5*(total/6));
+    el.style.background = bg;
+    el.style.boxShadow = "inset 0 2px 6px rgba(0,0,0,0.2), 0 0 "+glowSize+"px "+glowSpread+"px rgba("+r+","+g+","+b+","+glowAlpha+")";
+  }
+
+  function render(){
+    updateBacklightVisual();
+    switch(st.screen){
+      case "BOOT": return renderBoot();
+      case "IDLE": return renderIdle();
+      case "TYPE": return renderTyping();
+      case "RESULTS": return renderResults();
+      case "WARN": return renderWarn();
+      case "SLEW": return renderSlew();
+      case "SLEW_ABORTED": return renderSlewAborted();
+      case "TRACK": return renderTrack();
+      case "MENU": return renderMenu();
+      case "TIME_SYNC": return setLines(["Synchronizing time…","","NTP: pool.ntp.org"]);
+      case "ALIGN_CHOOSE": return renderAlignChoose();
+      case "ALIGN_STAR_PICK": return renderAlignStarPick();
+      case "ALIGN_SMART_NA": return setLines(["Smart align (plate-solve)","Not available in this mockup.","","push/9 = back"]);
+      case "ALIGN_JOG": return renderAlignJog();
+      case "ALIGN_MORE": return renderAlignMore();
+      case "ALIGN_SAVE": return setLines(["ALIGNED!","Saving to SD…","Navigating to Venus…"]);
+      case "ALIGN_CONFIRM": return renderAlignConfirm();
+      case "CATALOG_MENU": return renderCatalogMenu();
+      case "LIST": return renderList();
+      case "WIFI_ACCESS": return renderWifiAccess();
+      case "LOCATION": return setLines(["Location","37.8845° N   4.7787° W","Elevation: 245 m","<span class=\"dim\">push/9 = back</span>"]);
+      case "ABOUT": return setLines(["JapyScope Remote","by JapySoft","SW v0.3   HW v1.0","<span class=\"dim\">github.com/jan-tdy  ·  push/9=back</span>"]);
+      case "SYSTEM_CONFIRM": return setLines(["Power off the controller?","push = yes","9 = back"]);
+      case "SHUTDOWN": return setLines(["SHUTTING DOWN…"]);
+      case "DEVTOOLS": return renderDevtools();
+      case "SPEED_ADJUST": return renderSpeedAdjust();
+      case "WIFI_SETUP": return renderWifiSetup();
+      case "BACKLIGHT": return renderBacklight();
+      case "FN2_EASTER": return setLines(["Made in Piconcillo.","Assembled with equal parts","solder and stubbornness.","<span class=\"dim\">…</span>"]);
+      case "PARK_CONFIRM": return renderParkConfirm();
+      case "PARKING": return setLines(["PARKING…","<span class=\"dim\">…</span>"]);
+      case "PARKED": return renderParked();
+      case "DRIVER_SELECT": return renderDriverSelect();
+      case "IFACE_SELECT": return renderIfaceSelect();
+      case "SUDO_SET": return renderSudoSet();
+      default: return setLines(["?"]);
+    }
+  }
+
+  function renderBoot(){
+    /* Static splash, drawn once — no animated progress bar. Decided 14.9.2026:
+       no kernel-level boot splash (e-ink is too slow to redraw a scrolling/
+       animating boot sequence readably), so a systemd oneshot draws this one
+       static logo via partial refresh, then hands off to the main service. */
+    setLines([
+      "JapyScope Remote",
+      "by JapySoft — SW v0.3  HW v1.0",
+      "",
+      "Starting…"
+    ]);
+  }
+
+  var HOME_ITEMS = ["Menu","Catalog","Dev Tools"];
+
+  function renderIdle(){
+    var lines = [
+      "JapyScope Remote      "+st.clock,
+      SHARED.aligned ? ("RA "+HOME_POINT.ra+"  Dec "+HOME_POINT.dec) : "Not aligned — Menu → Alignment"
+    ];
+    HOME_ITEMS.forEach(function(it,i){ lines.push((i===st.homeIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">"+(st.jogNote || "rotate=scroll  push=open  2/4/6/8=jog  7=speed")+"</span>");
+    setLines(lines);
+  }
+
+  function noteJog(text){
+    st.jogNote = text;
+    render();
+    clearTimeout(st.jogNoteTimer);
+    st.jogNoteTimer = addTimer(setTimeout(function(){
+      st.jogNote = null;
+      if(st.screen === "IDLE" || st.screen === "ALIGN_JOG" || st.screen === "TRACK") render();
+    }, 450));
+  }
+
+  function renderTyping(){
+    setLines([
+      "SmartSearch",
+      st.typeBuf + "<span class=\"cursor\">&nbsp;</span>",
+      "<span class=\"dim\">push=search  BKSP=delete  9=back</span>"
+    ]);
+  }
+
+  function renderResults(){
+    if(st.results.length === 0){
+      setLines(["Nothing found.","<span class=\"dim\">9=back</span>"]);
+      return;
+    }
+    var lines = ["SmartSearch results:"];
+    var i0r = Math.max(0, Math.min(st.resIndex, st.results.length-VISIBLE_ROWS));
+    for(var i=i0r; i<Math.min(i0r+VISIBLE_ROWS, st.results.length); i++){
+      var r = st.results[i];
+      var mark = (i===st.resIndex) ? "&gt;" : " ";
+      lines.push(mark+" ["+(i+1)+"] "+r.name+"  [Alt:"+r.alt+"°]");
+    }
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function renderWarn(){
+    var lines = (st.slewWarnings && st.slewWarnings.length) ? st.slewWarnings.slice() : ["WARNING"];
+    lines.push("push = slew anyway");
+    lines.push("9 = back");
+    setLines(lines);
+  }
+
+  function pseudoAz(name){
+    var h = 0;
+    for(var i=0; i<name.length; i++){ h = (h*31 + name.charCodeAt(i)) % 360; }
+    if(h < 0) h += 360;
+    return h;
+  }
+
+  function renderSlew(){
+    setLines([
+      "SLEWING TO",
+      st.selected.name,
+      "Alt "+st.selected.alt+"°   Az "+pseudoAz(st.selected.name)+"°",
+      "["+st.slewGlyphs+"]",
+      "<span class=\"dim\">7 = abort</span>"
+    ]);
+  }
+
+  function renderSlewAborted(){
+    setLines([
+      "SLEW ABORTED",
+      st.selected.name,
+      "<span class=\"dim\">push = continue   9 = back</span>"
+    ]);
+  }
+
+  function renderTrack(){
+    setLines([
+      "TRACKING",
+      st.trackObj.name,
+      "RA "+st.trackObj.ra+"  Dec "+st.trackObj.dec,
+      "Alt "+st.trackObj.alt+"°   Az "+pseudoAz(st.trackObj.name)+"°",
+      "↑ "+formatMMSS(st.trackSec),
+      "<span class=\"dim\">"+(st.jogNote || "2/4/6/8=jog  7=speed  9=back")+"</span>"
+    ]);
+  }
+
+  function renderMenu(){
+    var blSummary = BACKLIGHT_CHANNELS.map(function(ch){ return ch+":"+BACKLIGHT_LEVELS[st.backlight[ch]].charAt(0); }).join(" ");
+    var items = ["Time Sync","Alignment",(SHARED.parked?"Unpark":"Park"),"Wi-Fi / Web Access","Location","Backlight ("+blSummary+")","Sudo Password","System","About"];
+    var lines = ["MENU"];
+    var i0 = Math.max(0, Math.min(st.menuIndex, items.length-VISIBLE_ROWS));
+    for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, items.length); i++){
+      lines.push((i===st.menuIndex?"&gt; ":"  ")+items[i]);
+    }
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function renderBacklight(){
+    var lines = ["Backlight (RGB)"];
+    BACKLIGHT_CHANNELS.forEach(function(ch,i){
+      var mark = (i===st.backlightChanIndex) ? "&gt; " : "  ";
+      lines.push(mark+ch+": "+BACKLIGHT_LEVELS[st.backlight[ch]]);
+    });
+    lines.push("<span class=\"dim\">rotate=channel  push=cycle  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleBacklight(key){
+    var n = BACKLIGHT_CHANNELS.length;
+    if(key === "ENC_UP"){ st.backlightChanIndex = (st.backlightChanIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.backlightChanIndex = (st.backlightChanIndex+1)%n; return render(); }
+    if(key === "ENC_PUSH"){
+      var ch = BACKLIGHT_CHANNELS[st.backlightChanIndex];
+      st.backlight[ch] = (st.backlight[ch]+1) % BACKLIGHT_LEVELS.length;
+      logAction("Backlight "+ch+": "+BACKLIGHT_LEVELS[st.backlight[ch]]);
+      updateBacklightVisual();
+      return render();
+    }
+    if(key === "9"){
+      st.screen = "MENU";
+      return render();
+    }
+  }
+
+  function renderAlignChoose(){
+    var items = ["Smart (plate-solve)","Manual (2 stars)"];
+    var lines = ["ALIGNMENT — choose mode"];
+    items.forEach(function(it,i){ lines.push((i===st.alignIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function renderAlignJog(){
+    setLines([
+      "Point to "+st.jogTarget,
+      "Speed: "+st.speed+"x  (7 = change)",
+      st.jogNote ? ("<span class=\"dim\">"+st.jogNote+"</span>") : "2/4/6/8 = fine adjustment",
+      "push = confirm point   9 = back"
+    ]);
+  }
+
+  function renderCatalogMenu(){
+    var items = ["SmartSearch","My Catalog (from Web UI)","Basic Objects","Messier","NGC","Caldwell"];
+    var lines = ["CATALOG"];
+    var i0 = Math.max(0, Math.min(st.catIndex, items.length-VISIBLE_ROWS));
+    for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, items.length); i++){
+      lines.push((i===st.catIndex?"&gt; ":"  ")+items[i]);
+    }
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function renderList(){
+    var lines = [st.listTitle+" ("+st.listItems.length+")"];
+    if(st.listItems.length === 0){
+      lines.push("empty");
+    } else {
+      var i0 = Math.max(0, Math.min(st.listIndex, st.listItems.length-VISIBLE_ROWS));
+      for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, st.listItems.length); i++){
+        var o = st.listItems[i];
+        var mark = (i===st.listIndex) ? "&gt;" : " ";
+        lines.push(mark+" "+o.name+" [Alt:"+o.alt+"°]");
+      }
+    }
+    lines.push("<span class=\"dim\">rotate=scroll  push=goto  9=back</span>");
+    setLines(lines);
+  }
+
+  function renderWifiAccess(){
+    setLines([
+      "Web UI access code:",
+      "<b>"+st.wifiCode+"</b>",
+      "Valid: "+formatMMSS(st.wifiSeconds),
+      "<span class=\"dim\">9 = back</span>"
+    ]);
+  }
+  function formatMMSS(s){
+    var m = Math.floor(s/60), sec = s%60;
+    return (m<10?"0":"")+m+":"+(sec<10?"0":"")+sec;
+  }
+
+  function renderDevtools(){
+    var slots = st.devDigits.map(function(d,i){
+      if(d !== null) return d;
+      if(i === st.devPos) return st.devCurrent;
+      return "_";
+    }).join(" ");
+    setLines([
+      "Dev Tools — enter code",
+      "[ "+slots+" ]",
+      "<span class=\"dim\">rotate = digit (0-9)</span>",
+      "<span class=\"dim\">push = lock in   9 = back</span>"
+    ]);
+  }
+
+  function renderSudoSet(){
+    var slots = st.sudoDigits.map(function(d,i){
+      if(d !== null) return d;
+      if(i === st.sudoPos) return st.sudoCurrent;
+      return "_";
+    }).join(" ");
+    setLines([
+      "Set sudo password",
+      "[ "+slots+" ]",
+      "<span class=\"dim\">rotate = digit (0-9)</span>",
+      "<span class=\"dim\">push = lock in   9 = cancel</span>"
+    ]);
+  }
+
+  function handleSudoSet(key){
+    if(key === "9"){ st.screen="MENU"; return render(); }
+    if(key === "ENC_UP"){ st.sudoCurrent = (st.sudoCurrent+1)%10; return render(); }
+    if(key === "ENC_DOWN"){ st.sudoCurrent = (st.sudoCurrent+9)%10; return render(); }
+    if(key === "ENC_PUSH"){
+      st.sudoDigits[st.sudoPos] = st.sudoCurrent;
+      st.sudoPos++;
+      st.sudoCurrent = 0;
+      if(st.sudoPos >= 4){
+        SHARED.sudoPassword = st.sudoDigits.join("");
+        logAction("Sudo password changed");
+        render();
+        addTimer(setTimeout(function(){
+          setLines(["Password updated.","<span class=\"dim\">…</span>"]);
+          addTimer(setTimeout(function(){ st.screen="MENU"; render(); }, 1400));
+        }, 200));
+        return;
+      }
+      return render();
+    }
+  }
+
+  function renderSpeedAdjust(){
+    setLines([
+      "Jog speed",
+      "<b>"+st.speed+"x</b>",
+      "<span class=\"dim\">rotate = change</span>",
+      "<span class=\"dim\">push / 9 = back</span>"
+    ]);
+  }
+
+  function renderWifiSetup(){
+    setLines([
+      "Wi-Fi Setup",
+      "Connect to hotspot:",
+      "<b>JapyScope-Setup</b>",
+      "<span class=\"dim\">then open the Web UI · 9=back</span>"
+    ]);
+  }
+
+  function startWifiSetup(){
+    SHARED.wifiSetupActive = true;
+    st.screen = "WIFI_SETUP";
+    render();
+    var wt = addTimer(setInterval(function(){
+      if(st.screen !== "WIFI_SETUP"){ clearInterval(wt); return; }
+      if(SHARED.wifiJustConfigured){
+        clearInterval(wt);
+        SHARED.wifiJustConfigured = false;
+        logAction("Wi-Fi configured: "+SHARED.homeSSID);
+        setLines(["Wi-Fi configured!","Joined: "+SHARED.homeSSID,"<span class=\"dim\">…</span>"]);
+        addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 1800));
+      }
+    }, 400));
+  }
+
+  /* ---------- key handling ---------- */
+
+  function press(key){
+    if(st.backlightAutoOff){
+      st.backlightAutoOff = false;
+      updateBacklightVisual();
+      logAction("Backlight resumed (key press)");
+    }
+    st.lastActivity = Date.now();
+    highlightKey(key);
+    pressRaw(key);
+  }
+
+  function pressRaw(key){
+    switch(st.screen){
+      case "BOOT": return;
+      case "IDLE": return handleIdle(key);
+      case "TYPE": return handleType(key);
+      case "RESULTS": return handleResults(key);
+      case "WARN": return handleWarn(key);
+      case "SLEW": return handleSlew(key);
+      case "SLEW_ABORTED": return handleSlewAborted(key);
+      case "TRACK": return handleTrack(key);
+      case "MENU": return handleMenu(key);
+      case "ALIGN_CHOOSE": return handleAlignChoose(key);
+      case "ALIGN_STAR_PICK": return handleAlignStarPick(key);
+      case "ALIGN_SMART_NA": if(key==="9" || key==="ENC_PUSH"){ st.screen="ALIGN_CHOOSE"; render(); } return;
+      case "ALIGN_JOG": return handleAlignJog(key);
+      case "ALIGN_MORE": return handleAlignMore(key);
+      case "ALIGN_CONFIRM": return handleAlignConfirm(key);
+      case "CATALOG_MENU": return handleCatalogMenu(key);
+      case "LIST": return handleList(key);
+      case "WIFI_ACCESS": if(key==="9" || key==="ENC_PUSH"){ st.screen="MENU"; render(); } return;
+      case "LOCATION": if(key==="9" || key==="ENC_PUSH"){ st.screen="MENU"; render(); } return;
+      case "ABOUT": if(key==="9" || key==="ENC_PUSH"){ st.screen="MENU"; render(); } return;
+      case "SYSTEM_CONFIRM": return handleSystemConfirm(key);
+      case "DEVTOOLS": return handleDevtools(key);
+      case "SPEED_ADJUST": return handleSpeedAdjust(key);
+      case "WIFI_SETUP": if(key==="9"){ SHARED.wifiSetupActive=false; st.screen="IDLE"; render(); } return;
+      case "BACKLIGHT": return handleBacklight(key);
+      case "PARK_CONFIRM": return handleParkConfirm(key);
+      case "PARKED": return handlePark(key);
+      case "DRIVER_SELECT": return handleDriverSelect(key);
+      case "IFACE_SELECT": return handleIfaceSelect(key);
+      case "SUDO_SET": return handleSudoSet(key);
+      default: return;
+    }
+  }
+
+  function highlightKey(key){
+    if(!key) return;
+    var el = deviceEl.querySelector("[data-key=\""+CSS.escape(key)+"\"]");
+    if(!el) return;
+    el.classList.add("pressed");
+    setTimeout(function(){ el.classList.remove("pressed"); }, 110);
+  }
+
+  function startTyping(){
+    st.typeBuf = "";
+    st.curKey = null;
+    st.curPos = 0;
+    st.screen = "TYPE";
+    render();
+  }
+
+  function enterSpeedAdjust(fromScreen){
+    st.speedReturn = fromScreen;
+    st.screen = "SPEED_ADJUST";
+    render();
+  }
+
+  function handleSpeedAdjust(key){
+    var idx = SPEED_STEPS.indexOf(st.speed);
+    if(idx === -1) idx = 0;
+    if(key === "ENC_UP"){ idx = Math.min(SPEED_STEPS.length-1, idx+1); st.speed = SPEED_STEPS[idx]; return render(); }
+    if(key === "ENC_DOWN"){ idx = Math.max(0, idx-1); st.speed = SPEED_STEPS[idx]; return render(); }
+    if(key === "ENC_PUSH" || key === "9"){ st.screen = st.speedReturn || "IDLE"; return render(); }
+  }
+
+  function handleIdle(key){
+    if(key === "ENC_UP"){ st.homeIndex = (st.homeIndex+HOME_ITEMS.length-1)%HOME_ITEMS.length; return render(); }
+    if(key === "ENC_DOWN"){ st.homeIndex = (st.homeIndex+1)%HOME_ITEMS.length; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.homeIndex === 0){ logAction("Menu"); st.screen="MENU"; st.menuIndex=0; return render(); }
+      if(st.homeIndex === 1){ logAction("Catalog"); st.screen="CATALOG_MENU"; st.catIndex=0; return render(); }
+      logAction("Dev Tools"); st.screen="DEVTOOLS"; st.devDigits=[null,null,null,null]; st.devPos=0; st.devCurrent=0; return render();
+    }
+    if(key === "7"){ return enterSpeedAdjust("IDLE"); }
+    if(key === "FN2"){
+      logAction("Easter egg: FN2 on home screen");
+      st.screen = "FN2_EASTER";
+      render();
+      addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2400));
+      return;
+    }
+    var dirs = {"2":"Up","4":"Left","6":"Right","8":"Down"};
+    if(dirs[key]){
+      logAction("Jog "+dirs[key]+" ("+st.speed+"x)");
+      return noteJog(dirs[key]+" · "+st.speed+"x");
+    }
+  }
+
+  function handleType(key){
+    if(key === "ENC_PUSH"){
+      if(!st.typeBuf) return;
+      var q = normalize(st.typeBuf);
+      logAction("SmartSearch: "+st.typeBuf);
+      var all = SHARED.myCatalog.concat(BASIC_OBJECTS, MESSIER_OBJECTS, NGC_OBJECTS, CALDWELL_OBJECTS);
+      st.results = all.filter(function(o){ return normalize(o.name).indexOf(q) !== -1; });
+      st.resIndex = 0;
+      st.screen = "RESULTS";
+      return render();
+    }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "BKSP"){
+      if(st.typeBuf){ st.typeBuf = st.typeBuf.slice(0,-1); st.curKey = null; }
+      return render();
+    }
+    if(key === "0"){
+      if(st.curTimeout) clearTimeout(st.curTimeout);
+      st.curKey = null;
+      st.typeBuf += "0";
+      return render();
+    }
+    if(LETTERS[key]){
+      if(st.curTimeout) clearTimeout(st.curTimeout);
+      if(st.curKey === key){
+        st.curPos = (st.curPos+1) % LETTERS[key].length;
+        st.typeBuf = st.typeBuf.slice(0,-1) + LETTERS[key][st.curPos];
+      } else {
+        st.curKey = key; st.curPos = 0;
+        st.typeBuf += LETTERS[key][0];
+      }
+      st.curTimeout = addTimer(setTimeout(function(){ st.curKey = null; }, 650));
+      return render();
+    }
+  }
+
+  function handleResults(key){
+    if(key === "ENC_UP"){ st.resIndex = Math.max(0, st.resIndex-1); return render(); }
+    if(key === "ENC_DOWN"){ st.resIndex = Math.min(st.results.length-1, st.resIndex+1); return render(); }
+    if(key === "9"){ st.screen="IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      st.selected = st.results[st.resIndex];
+      logAction("Selected: "+st.selected.name);
+      return confirmSlew(st.selected, "RESULTS");
+    }
+  }
+
+  function confirmSlew(obj, backScreen){
+    var warnings = [];
+    if(!SHARED.aligned) warnings.push("Not aligned yet — pointing may be off");
+    if(obj.alt < 0) warnings.push("Low altitude ("+obj.alt+"°) — near horizon");
+    if(warnings.length === 0) return beginSlew(obj);
+    st.selected = obj;
+    st.slewWarnings = warnings;
+    st.slewWarnBack = backScreen;
+    st.screen = "WARN";
+    render();
+  }
+
+  function handleWarn(key){
+    if(key === "ENC_PUSH"){ return beginSlew(st.selected); }
+    if(key === "9"){ st.screen = st.slewWarnBack || "IDLE"; return render(); }
+  }
+
+  function beginSlew(obj){
+    st.selected = obj;
+    st.slewGlyphs = "";
+    st.screen = "SLEW";
+    render();
+    var glyphs = ["↑","↓","←","→"];
+    var n = 0;
+    st.slewTimer = addTimer(setInterval(function(){
+      if(st.screen !== "SLEW"){ clearInterval(st.slewTimer); return; }
+      st.slewGlyphs += glyphs[Math.floor(Math.random()*glyphs.length)];
+      if(st.slewGlyphs.length > 18) st.slewGlyphs = st.slewGlyphs.slice(-18);
+      n++;
+      render();
+      if(n >= 8){ clearInterval(st.slewTimer); beginTrack(obj); }
+    }, 200));
+  }
+
+  function handleSlew(key){
+    if(key === "7"){
+      if(st.slewTimer) clearInterval(st.slewTimer);
+      logAction("Slew aborted: "+st.selected.name);
+      st.screen = "SLEW_ABORTED";
+      return render();
+    }
+  }
+
+  function handleSlewAborted(key){
+    if(key === "ENC_PUSH"){ return beginSlew(st.selected); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+  }
+
+  function beginTrack(obj){
+    logAction("Tracking: "+obj.name);
+    st.trackObj = obj;
+    st.trackSec = 0;
+    st.screen = "TRACK";
+    render();
+    addTimer(setInterval(function(){
+      st.trackSec++;
+      if(st.screen === "TRACK") render();
+    }, 1000));
+  }
+
+  function handleTrack(key){
+    if(key === "7"){ return enterSpeedAdjust("TRACK"); }
+    var dirs = {"2":"Up","4":"Left","6":"Right","8":"Down"};
+    if(dirs[key]){
+      logAction("Jog "+dirs[key]+" ("+st.speed+"x) while tracking");
+      return noteJog(dirs[key]+" · "+st.speed+"x");
+    }
+    if(key === "9"){ st.screen="IDLE"; return render(); }
+  }
+
+  function handleMenu(key){
+    var count = 9;
+    if(key === "ENC_UP"){ st.menuIndex = (st.menuIndex+count-1)%count; return render(); }
+    if(key === "ENC_DOWN"){ st.menuIndex = (st.menuIndex+1)%count; return render(); }
+    if(key === "9"){ st.screen="IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.menuIndex===0){
+        st.screen="TIME_SYNC"; render();
+        addTimer(setTimeout(function(){ st.screen="MENU"; render(); }, 1200));
+      } else if(st.menuIndex===1){
+        st.screen="ALIGN_CHOOSE"; st.alignIndex=0; render();
+      } else if(st.menuIndex===2){
+        if(SHARED.parked){
+          SHARED.parked = false;
+          logAction("Unparked from menu");
+          st.screen = "IDLE"; render();
+        } else {
+          st.parkConfirmIndex = 0;
+          st.screen = "PARK_CONFIRM"; render();
+        }
+      } else if(st.menuIndex===3){
+        st.wifiCode = String(Math.floor(100000+Math.random()*900000));
+        st.wifiSeconds = 600;
+        SHARED.webAccessCode = st.wifiCode;
+        SHARED.webAccessValid = true;
+        st.screen="WIFI_ACCESS"; render();
+        var t = addTimer(setInterval(function(){
+          st.wifiSeconds--;
+          if(st.wifiSeconds <= 0){
+            clearInterval(t);
+            SHARED.webAccessValid = false;
+            if(st.screen==="WIFI_ACCESS"){ st.screen="MENU"; render(); }
+            return;
+          }
+          if(st.screen === "WIFI_ACCESS") render();
+        }, 1000));
+      } else if(st.menuIndex===4){
+        st.screen="LOCATION"; render();
+      } else if(st.menuIndex===5){
+        st.screen="BACKLIGHT"; render();
+      } else if(st.menuIndex===6){
+        st.sudoDigits=[null,null,null,null]; st.sudoPos=0; st.sudoCurrent=0;
+        st.screen="SUDO_SET"; render();
+      } else if(st.menuIndex===7){
+        st.screen="SYSTEM_CONFIRM"; render();
+      } else {
+        st.screen="ABOUT"; render();
+      }
+    }
+  }
+
+  function renderParkConfirm(){
+    var items = ["Yes, park","Cancel"];
+    var lines = ["Park the mount?"];
+    items.forEach(function(it,i){ lines.push((i===st.parkConfirmIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleParkConfirm(key){
+    if(key === "ENC_UP" || key === "ENC_DOWN"){ st.parkConfirmIndex = 1-st.parkConfirmIndex; return render(); }
+    if(key === "9"){ st.screen = "MENU"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.parkConfirmIndex === 1){ st.screen = "MENU"; return render(); }
+      logAction("Parking mount");
+      st.screen = "PARKING";
+      render();
+      addTimer(setTimeout(function(){
+        SHARED.parked = true;
+        logAction("Parked");
+        st.parkedIndex = 0;
+        st.screen = "PARKED";
+        render();
+      }, 1400));
+    }
+  }
+
+  function handlePark(key){
+    if(key === "ENC_UP" || key === "ENC_DOWN"){ st.parkedIndex = 1-st.parkedIndex; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.parkedIndex === 0){
+        SHARED.parked = false;
+        logAction("Unparked");
+        st.screen = "IDLE";
+        return render();
+      }
+      logAction("Powering off simulator (while parked)");
+      st.screen = "SHUTDOWN";
+      render();
+      clearTimers();
+      return;
+    }
+  }
+
+  function parkPositionLabel(){
+    var pp = SHARED.parkPosition || {mode:"zenith"};
+    if(pp.mode === "home") return "Home (Alt 0°, Az 0°)";
+    if(pp.mode === "custom") return "Custom (Alt "+pp.alt+"°, Az "+pp.az+"°)";
+    return "Zenith (straight up)";
+  }
+
+  function renderParked(){
+    var items = ["Unpark","Power off"];
+    var lines = ["PARKED", parkPositionLabel()];
+    items.forEach(function(it,i){ lines.push((i===st.parkedIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select</span>");
+    setLines(lines);
+  }
+
+  function renderDriverSelect(){
+    var lines = ["Select mount driver"];
+    DRIVERS.forEach(function(d,i){ lines.push((i===st.driverIndex?"&gt; ":"  ")+d); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleDriverSelect(key){
+    var n = DRIVERS.length;
+    if(key === "ENC_UP"){ st.driverIndex = (st.driverIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.driverIndex = (st.driverIndex+1)%n; return render(); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Driver selected: "+DRIVERS[st.driverIndex]);
+      st.screen = "IDLE";
+      return render();
+    }
+  }
+
+  function renderIfaceSelect(){
+    var lines = ["Select comm. interface"];
+    INTERFACES.forEach(function(d,i){ lines.push((i===st.interfaceIndex?"&gt; ":"  ")+d); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleIfaceSelect(key){
+    var n = INTERFACES.length;
+    if(key === "ENC_UP"){ st.interfaceIndex = (st.interfaceIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.interfaceIndex = (st.interfaceIndex+1)%n; return render(); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Interface selected: "+INTERFACES[st.interfaceIndex]);
+      st.screen = "IDLE";
+      return render();
+    }
+  }
+
+  function handleAlignChoose(key){
+    if(key === "ENC_UP" || key === "ENC_DOWN"){ st.alignIndex = 1-st.alignIndex; return render(); }
+    if(key === "9"){ st.screen="MENU"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.alignIndex===0){ st.screen="ALIGN_SMART_NA"; return render(); }
+      st.starIdx = 0; st.speed = 1;
+      return enterStarPick();
+    }
+  }
+
+  function enterStarPick(){
+    st.starPickIndex = 0;
+    st.screen = "ALIGN_STAR_PICK";
+    render();
+  }
+
+  function renderAlignStarPick(){
+    var lines = ["Point "+(st.starIdx+1)+"/2 — choose star"];
+    var i0 = Math.max(0, Math.min(st.starPickIndex, STARS.length-VISIBLE_ROWS));
+    for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, STARS.length); i++){
+      lines.push((i===st.starPickIndex?"&gt; ":"  ")+STARS[i]);
+    }
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleAlignStarPick(key){
+    var count = STARS.length;
+    if(key === "ENC_UP"){ st.starPickIndex = (st.starPickIndex+count-1)%count; return render(); }
+    if(key === "ENC_DOWN"){ st.starPickIndex = (st.starPickIndex+1)%count; return render(); }
+    if(key === "9"){ st.screen="ALIGN_CHOOSE"; return render(); }
+    if(key === "ENC_PUSH"){
+      st.jogTarget = STARS[st.starPickIndex];
+      st.screen = "ALIGN_JOG";
+      return render();
+    }
+  }
+
+  function handleAlignJog(key){
+    if(key === "7"){ return enterSpeedAdjust("ALIGN_JOG"); }
+    var dirs2 = {"2":"Up","4":"Left","6":"Right","8":"Down"};
+    if(dirs2[key]){
+      logAction("Fine adjust "+dirs2[key]);
+      return noteJog("adjust "+dirs2[key]);
+    }
+    if(key === "9"){ st.screen="ALIGN_CHOOSE"; return render(); }
+    if(key === "ENC_PUSH"){
+      st.starIdx++;
+      logAction("Alignment point confirmed ("+st.jogTarget+")");
+      if(st.starIdx < 2){ return enterStarPick(); }
+      st.alignMoreIndex = 0;
+      st.screen = "ALIGN_MORE";
+      return render();
+    }
+  }
+
+  function renderAlignMore(){
+    var items = ["Add another point","Finish alignment"];
+    var lines = ["Alignment points: "+st.starIdx];
+    items.forEach(function(it,i){ lines.push((i===st.alignMoreIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleAlignMore(key){
+    if(key === "ENC_UP" || key === "ENC_DOWN"){ st.alignMoreIndex = 1-st.alignMoreIndex; return render(); }
+    if(key === "9"){ st.screen = "ALIGN_CHOOSE"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.alignMoreIndex === 0){ return enterStarPick(); }
+      st.screen = "ALIGN_SAVE";
+      render();
+      addTimer(setTimeout(function(){ st.alignConfirmIndex=0; st.screen="ALIGN_CONFIRM"; render(); }, 1600));
+    }
+  }
+
+  function renderAlignConfirm(){
+    var items = ["Yes, done","Fine-tune (1 more point)"];
+    var lines = ["Looks right in the eyepiece?"];
+    items.forEach(function(it,i){ lines.push((i===st.alignConfirmIndex?"&gt; ":"  ")+it); });
+    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
+    setLines(lines);
+  }
+
+  function handleAlignConfirm(key){
+    if(key === "ENC_UP" || key === "ENC_DOWN"){ st.alignConfirmIndex = 1-st.alignConfirmIndex; return render(); }
+    if(key === "9"){ st.screen = "ALIGN_CHOOSE"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.alignConfirmIndex === 0){
+        logAction("Alignment complete");
+        SHARED.aligned = true;
+        st.screen = "IDLE";
+        return render();
+      }
+      return enterStarPick();
+    }
+  }
+
+  function handleCatalogMenu(key){
+    var count = 6;
+    if(key === "ENC_UP"){ st.catIndex = (st.catIndex+count-1)%count; return render(); }
+    if(key === "ENC_DOWN"){ st.catIndex = (st.catIndex+1)%count; return render(); }
+    if(key === "9"){ st.screen="IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      if(st.catIndex === 0){ return startTyping(); }
+      var sets = [null, SHARED.myCatalog, BASIC_OBJECTS, MESSIER_OBJECTS, NGC_OBJECTS, CALDWELL_OBJECTS];
+      var titles = [null, "My Catalog", "Basic Objects", "Messier", "NGC", "Caldwell"];
+      st.listItems = sets[st.catIndex];
+      st.listTitle = titles[st.catIndex];
+      st.listIndex = 0;
+      st.screen = "LIST";
+      return render();
+    }
+  }
+
+  function handleList(key){
+    var n = st.listItems.length;
+    if(key === "ENC_UP"){ st.listIndex = Math.max(0, st.listIndex-1); return render(); }
+    if(key === "ENC_DOWN"){ st.listIndex = Math.min(n-1, st.listIndex+1); return render(); }
+    if(key === "9"){ st.screen="CATALOG_MENU"; return render(); }
+    if(key === "ENC_PUSH" && n > 0){
+      var obj = st.listItems[st.listIndex];
+      logAction("Goto from catalog: "+obj.name);
+      return confirmSlew(obj, "LIST");
+    }
+  }
+
+  function handleSystemConfirm(key){
+    if(key === "9"){ st.screen="MENU"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Powering off simulator");
+      st.screen = "SHUTDOWN";
+      render();
+      clearTimers();
+      return;
+    }
+  }
+
+  function handleDevtools(key){
+    if(key === "9"){ st.screen="IDLE"; return render(); }
+    if(key === "ENC_UP"){ st.devCurrent = (st.devCurrent+1)%10; return render(); }
+    if(key === "ENC_DOWN"){ st.devCurrent = (st.devCurrent+9)%10; return render(); }
+    if(key === "ENC_PUSH"){
+      st.devDigits[st.devPos] = st.devCurrent;
+      st.devPos++;
+      st.devCurrent = 0;
+      if(st.devPos >= 4){
+        var code = st.devDigits.join("");
+        render();
+        if(code === "0000"){
+          logAction("Dev Tools: exit code");
+          addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 500));
+        } else if(code === "9999"){
+          logAction("Dev Tools: easter egg");
+          addTimer(setTimeout(function(){
+            setLines(["Why did the astronomer","break up with the Moon?","Because it needed space.","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+          }, 300));
+        } else if(code === "1234"){
+          logAction("Dev Tools: system info");
+          addTimer(setTimeout(function(){
+            setLines(["System Info","IP 192.168.4.1 · japyscope.local","INDI 2.1.0 · uptime 2h14m","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2600));
+          }, 300));
+        } else if(code === "1111"){
+          logAction("Dev Tools: restart INDI server");
+          addTimer(setTimeout(function(){
+            setLines(["Restarting INDI server…","","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 1800));
+          }, 300));
+        } else if(code === "5000"){
+          logAction("Dev Tools: Wi-Fi setup wizard");
+          addTimer(setTimeout(function(){ startWifiSetup(); }, 300));
+        } else if(code === "4200"){
+          logAction("Dev Tools: easter egg");
+          addTimer(setTimeout(function(){
+            setLines(["42.","Now point it at something","interesting.","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+          }, 300));
+        } else if(code === "1957"){
+          logAction("Dev Tools: easter egg");
+          addTimer(setTimeout(function(){
+            setLines(["1957 — Sputnik beeped.","This one just tracks quietly.","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+          }, 300));
+        } else if(code === "0905"){
+          logAction("Dev Tools: easter egg");
+          addTimer(setTimeout(function(){
+            setLines(["Protocol 09:","the code stays free.","— JapySoft","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+          }, 300));
+        } else if(code === "5555"){
+          logAction("Dev Tools: select driver");
+          addTimer(setTimeout(function(){ st.driverIndex=0; st.screen="DRIVER_SELECT"; render(); }, 300));
+        } else if(code === "9600"){
+          logAction("Dev Tools: select communication interface");
+          addTimer(setTimeout(function(){ st.interfaceIndex=0; st.screen="IFACE_SELECT"; render(); }, 300));
+        } else {
+          addTimer(setTimeout(function(){
+            setLines(["Invalid code."]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 1000));
+          }, 300));
+        }
+        return;
+      }
+      return render();
+    }
+  }
+
+  /* ---------- input wiring ---------- */
+  deviceEl.addEventListener("click", function(e){
+    var t = e.target.closest("[data-key]");
+    if(!t) return;
+    press(t.dataset.key);
+  });
+
+  var sideEncoderEl = document.getElementById("sideEncoder");
+  var wheelCooldown = false;
+  sideEncoderEl.addEventListener("wheel", function(e){
+    e.preventDefault();
+    if(wheelCooldown) return;
+    wheelCooldown = true;
+    setTimeout(function(){ wheelCooldown = false; }, 90);
+    press(e.deltaY > 0 ? "ENC_DOWN" : "ENC_UP");
+  }, {passive:false});
+
+  document.addEventListener("keydown", function(e){
+    if(!document.getElementById("tab-hw").classList.contains("active")) return;
+    var map = {
+      "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","7":"7","8":"8","9":"9","0":"0",
+      "ArrowUp":"ENC_UP","ArrowDown":"ENC_DOWN","Enter":"ENC_PUSH",
+      "Backspace":"BKSP","f":"FN2","F":"FN2"
+    };
+    if(map[e.key] !== undefined){
+      e.preventDefault();
+      press(map[e.key]);
+    }
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", function(){
+    logEl.innerHTML = "";
+    resetState();
+  });
+
+  /* ---------- build keypad DOM ---------- */
+  var keysEl = document.getElementById("keys");
+  var LAYOUT = [
+    {key:"1", letters:"abc"}, {key:"2", letters:"def", arrow:"up"}, {key:"3", letters:"ghi"},
+    {key:"4", letters:"jkl", arrow:"left"}, {key:"5", letters:"mno"}, {key:"6", letters:"pqrs", arrow:"right"},
+    {key:"7", letters:"tuv"}, {key:"8", letters:"wxyz", arrow:"down"}, {key:"9", letters:"fn"},
+    {key:"FN2", letters:"", label:"FN2"},
+    {key:"0", letters:"", label:"0"},
+    {key:"BKSP", letters:"", label:"⌫"}
+  ];
+  LAYOUT.forEach(function(def){
+    var d = document.createElement("div");
+    d.className = "key";
+    d.dataset.key = def.key;
+    if(def.arrow){
+      var a = document.createElement("div");
+      a.className = "arrow "+def.arrow;
+      d.appendChild(a);
+    }
+    var letters = document.createElement("span");
+    letters.className = "letters";
+    letters.textContent = def.letters;
+    var digit = document.createElement("span");
+    digit.className = "digit";
+    digit.textContent = (def.label !== undefined) ? def.label : def.key;
+    d.appendChild(letters);
+    d.appendChild(digit);
+    keysEl.appendChild(d);
+  });
+
+  resetState();
+})();
+</script>
+
+<script>
+(function(){
+  "use strict";
+
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; });
+  }
+
+  var pages = [
+    ["login","Login"],
+    ["status","Status"],
+    ["catalog","Catalog"],
+    ["settings","Settings"],
+    ["diag","Diagnostics"],
+    ["system","System"]
+  ];
+  var nav = document.getElementById("wu-nav");
+  pages.forEach(function(p, i){
+    var a = document.createElement("a");
+    a.href = "#" + p[0];
+    a.textContent = p[1];
+    a.dataset.key = p[0];
+    nav.appendChild(a);
+    if(i < pages.length-1) nav.appendChild(document.createTextNode(" | "));
+  });
+
+  function show(key){
+    document.querySelectorAll(".webui-page .page").forEach(function(el){
+      el.classList.toggle("active", el.dataset.key === key);
+    });
+    nav.querySelectorAll("a").forEach(function(a){
+      a.classList.toggle("current", a.dataset.key === key);
+    });
+    if(key === "catalog") renderCatalogTable();
+    if(key === "status") renderStatusPage();
+  }
+
+  function renderStatusPage(){
+    var el = document.getElementById("status-align");
+    if(el) el.textContent = SHARED.aligned ? "aligned (model saved)" : "not aligned";
+    var pk = document.getElementById("status-parked");
+    if(pk) pk.textContent = SHARED.parked ? "yes" : "no";
+  }
+  nav.addEventListener("click", function(e){
+    if(e.target.tagName === "A"){
+      location.hash = e.target.dataset.key;
+    }
+  });
+  function resolveKey(key){
+    if(SHARED.wifiSetupActive) return "wifisetup";
+    if(key === "wifisetup") return "login";
+    if(key !== "login" && !SHARED.loggedIn) return "login";
+    return key;
+  }
+
+  window.addEventListener("hashchange", function(){
+    var key = location.hash.replace("#","") || "login";
+    show(resolveKey(key));
+  });
+
+  setInterval(function(){
+    var desired = resolveKey(location.hash.replace("#","") || "login");
+    var current = document.querySelector(".webui-page .page.active");
+    if(!current || current.dataset.key !== desired) show(desired);
+  }, 400);
+
+  function renderCatalogTable(){
+    var tbody = document.getElementById("cat-rows");
+    if(SHARED.myCatalog.length === 0){
+      tbody.innerHTML = "<tr><td colspan=\"8\" class=\"muted\">No objects yet.</td></tr>";
+      return;
+    }
+    tbody.innerHTML = SHARED.myCatalog.map(function(o, i){
+      return "<tr><td>"+(i+1)+"</td><td>"+esc(o.name)+"</td><td>"+esc(o.ra)+"</td><td>"+esc(o.dec)+"</td><td>"+esc(o.type)+"</td><td>"+esc(o.note)+"</td><td>"+esc(o.src)+"</td>"+
+        "<td><a data-i=\""+i+"\" class=\"cat-del\">delete</a></td></tr>";
+    }).join("");
+  }
+  document.getElementById("cat-rows").addEventListener("click", function(e){
+    var a = e.target.closest(".cat-del");
+    if(!a) return;
+    var i = parseInt(a.dataset.i, 10);
+    SHARED.myCatalog.splice(i, 1);
+    renderCatalogTable();
+  });
+
+  document.getElementById("add-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var name = document.getElementById("c-name").value.trim();
+    if(!name) return;
+    SHARED.myCatalog.push({
+      name: name,
+      ra: document.getElementById("c-ra").value.trim() || "—",
+      dec: document.getElementById("c-dec").value.trim() || "—",
+      type: document.getElementById("c-type").value.trim(),
+      note: document.getElementById("c-note").value.trim(),
+      alt: 40,
+      src: "webui"
+    });
+    this.reset();
+    renderCatalogTable();
+    var note = document.getElementById("add-note");
+    note.textContent = "Added — now available on the controller under Catalog → My Catalog.";
+    clearTimeout(note._t);
+    note._t = setTimeout(function(){ note.textContent = ""; }, 4000);
+  });
+
+  document.getElementById("import-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var note = document.getElementById("import-note");
+    var fileInput = document.getElementById("imp-file");
+    var file = fileInput.files && fileInput.files[0];
+    if(!file){
+      note.className = "warn";
+      note.textContent = "Choose a .csv file first.";
+      return;
+    }
+    var reader = new FileReader();
+    reader.onerror = function(){
+      note.className = "warn";
+      note.textContent = "Could not read that file.";
+    };
+    reader.onload = function(){
+      var text = String(reader.result || "");
+      var rawLines = text.split(/\r\n|\n|\r/).map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
+      if(rawLines.length && /^name\s*,/i.test(rawLines[0])){
+        rawLines = rawLines.slice(1);
+      }
+      var added = 0, skipped = 0;
+      rawLines.forEach(function(line){
+        var cols = line.split(",").map(function(c){ return c.trim(); });
+        var name = cols[0] || "";
+        if(!name){ skipped++; return; }
+        SHARED.myCatalog.push({
+          name: name,
+          ra: cols[1] || "—",
+          dec: cols[2] || "—",
+          type: cols[3] || "other",
+          note: cols[4] || "",
+          alt: Math.floor(Math.random()*90),
+          src: "import"
+        });
+        added++;
+      });
+      renderCatalogTable();
+      note.className = added ? "ok" : "warn";
+      note.textContent = added
+        ? ("Imported "+added+" object"+(added===1?"":"s")+(skipped ? " ("+skipped+" line(s) skipped — missing name)." : ".")+" Now on the controller under Catalog → My Catalog.")
+        : "Nothing importable found in that file — expected CSV rows like: name,ra,dec,type,note";
+      fileInput.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  var loginAttempts = 0;
+  var lockUntil = 0;
+  document.getElementById("login-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var msg = document.getElementById("login-msg");
+    var now = Date.now();
+    if(now < lockUntil){
+      msg.textContent = "Locked out — try again in "+Math.ceil((lockUntil-now)/1000)+"s.";
+      return;
+    }
+    var entered = document.getElementById("code").value.trim();
+    if(!SHARED.webAccessCode){
+      msg.textContent = "No access code yet — on the controller: Menu → Wi-Fi / Web Access.";
+      return;
+    }
+    if(!SHARED.webAccessValid){
+      msg.textContent = "That code has expired. Generate a new one on the controller.";
+      return;
+    }
+    if(entered !== SHARED.webAccessCode){
+      loginAttempts++;
+      if(loginAttempts >= 5){
+        lockUntil = now + 30000;
+        loginAttempts = 0;
+        msg.textContent = "5 wrong attempts — locked out for 30s.";
+      } else {
+        msg.textContent = "Wrong code ("+loginAttempts+"/5 attempts).";
+      }
+      return;
+    }
+    loginAttempts = 0;
+    msg.textContent = "";
+    SHARED.loggedIn = true;
+    location.hash = "status";
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", function(){
+    SHARED.loggedIn = false;
+    location.hash = "login";
+  });
+
+  document.getElementById("sync-time-btn").addEventListener("click", function(){
+    var now = new Date();
+    document.getElementById("sync-time-note").textContent = "Synced at "+now.toLocaleTimeString()+".";
+  });
+
+  document.getElementById("reset-align-btn").addEventListener("click", function(){
+    SHARED.aligned = false;
+    document.getElementById("reset-align-note").textContent = "Alignment model cleared — align again from the controller (Menu → Alignment).";
+    if(document.querySelector(".webui-page .page.active[data-key=\"status\"]")) renderStatusPage();
+  });
+
+  var parkModeEl = document.getElementById("s-park-mode");
+  var parkCustomEl = document.getElementById("s-park-custom");
+  function syncParkCustomVisibility(){
+    parkCustomEl.style.display = (parkModeEl.value === "custom") ? "" : "none";
+  }
+  parkModeEl.value = SHARED.parkPosition.mode;
+  document.getElementById("s-park-alt").value = SHARED.parkPosition.alt;
+  document.getElementById("s-park-az").value = SHARED.parkPosition.az;
+  syncParkCustomVisibility();
+  parkModeEl.addEventListener("change", syncParkCustomVisibility);
+  document.getElementById("save-park-btn").addEventListener("click", function(){
+    SHARED.parkPosition = {
+      mode: parkModeEl.value,
+      alt: parseFloat(document.getElementById("s-park-alt").value) || 0,
+      az: parseFloat(document.getElementById("s-park-az").value) || 0
+    };
+    document.getElementById("save-park-note").textContent = "Saved — the controller will park to this position next time.";
+  });
+
+  document.getElementById("wifi-wizard-btn").addEventListener("click", function(){
+    SHARED.wifiSetupActive = true;
+    document.getElementById("wifi-wizard-note").textContent = "Wizard restarted on the controller — its display now shows hotspot instructions.";
+    location.hash = "wifisetup";
+  });
+
+  document.getElementById("wifisetup-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var ssid = document.getElementById("wf-ssid").value.trim();
+    if(!ssid) return;
+    SHARED.homeSSID = ssid;
+    SHARED.wifiJustConfigured = true;
+    SHARED.wifiSetupActive = false;
+    document.getElementById("wifisetup-msg").textContent = "Connecting to \""+ssid+"\"… you can close this tab and reconnect to your normal Wi-Fi.";
+  });
+
+  renderCatalogTable();
+  show(resolveKey(location.hash.replace("#","") || "login"));
+})();
+</script>
+
+<script>
+  var tabButtons = document.querySelectorAll(".tab-btn");
+  tabButtons.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      tabButtons.forEach(function(b){ b.classList.toggle("active", b === btn); });
+      document.getElementById("tab-hw").classList.toggle("active", btn.dataset.tab === "hw");
+      document.getElementById("tab-webui").classList.toggle("active", btn.dataset.tab === "webui");
+    });
+  });
+</script>
