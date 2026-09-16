@@ -1,0 +1,10 @@
+[Unit]
+Description=Check and apply JapyScope OTA update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/japyscope/current
+ExecStart=/opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py apply

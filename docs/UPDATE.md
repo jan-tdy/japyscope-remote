@@ -1,14 +1,33 @@
-# Update (OTA) manual — placeholder
+# OTA updates and rollback
 
-Not written yet — `install/update.py` doesn't exist yet either (see
-[ARCHITECTURE.md → Remaining work, item 6](ARCHITECTURE.md#remaining-work-for-v0-handoff)).
+`install/update.py` installs GitHub Releases transactionally. The release must
+contain exactly one `.tar.gz` application asset. It must also have either a
+GitHub asset `sha256:` digest or a companion `<asset>.sha256` release asset.
+Unsigned source archives without either checksum are rejected.
 
-Known design (to be documented in detail once built):
+The archive must contain `firmware/main.py`, `webui/app.py`, and the generated
+`requirements.lock`. Dependencies, including PyIndi, are installed only from
+that fully pinned SHA-256 hash lock. The updater rejects absolute paths, traversal, links, and
+device nodes before extraction, creates a fresh virtual environment in a new
+versioned release directory, then atomically flips `/opt/japyscope/current`.
 
-- Polls this repo's GitHub Releases API for the latest tag.
-- Downloads the release tarball, verifies it, installs to a versioned
-  directory under `/opt/japyscope/releases/`, flips a `current` symlink.
-- Health-checks the new version after restart; rolls the symlink back and
-  restarts on failure.
-- Triggered from the controller's menu ("Check for updates") and/or a
-  periodic systemd timer.
+## Commands
+
+```sh
+sudo /opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py check
+sudo /opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py apply
+```
+
+The enabled `japyscope-update.timer` runs `apply` once per day with a randomized
+delay. `apply` is idempotent when the latest tag is already active.
+
+## Rollback behavior
+
+The previous symlink target is retained. If dependency installation,
+byte-compilation, service restart, or the 30-second systemd health check fails,
+the updater restores the previous symlink and restarts both application
+services. The failed version is left in `releases/` for diagnosis and will not
+be overwritten automatically.
+
+Relevant log codes are `OTA-001` (network/API/update failure), `OTA-002`
+(checksum mismatch), and `OTA-003` (new release failed and rollback ran).

@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}System · JapyScope{% endblock %}
+{% block content %}<h2>System</h2><p>No mount controls are available here.</p>
+{% for action, label in [('restart-controller','Restart controller service'),('wifi-setup','Restart Wi-Fi setup'),('reboot','Reboot Raspberry Pi'),('poweroff','Power off Raspberry Pi')] %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ action }}"><button {% if action in ['reboot','poweroff'] %}class="danger"{% endif %}>{{ label }}</button></form>{% endfor %}
+<form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Log out</button></form>{% endblock %}

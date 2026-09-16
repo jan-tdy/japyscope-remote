@@ -5,12 +5,13 @@ no SPI/e-ink hardware present.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from .profiles import DisplayProfile, get_active_profile
 
 
 class DisplayHAL(ABC):
-    def __init__(self, profile: DisplayProfile | None = None):
+    def __init__(self, profile: Optional[DisplayProfile] = None):
         self.profile = profile or get_active_profile()
 
     @property

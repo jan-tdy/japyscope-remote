@@ -1,0 +1,14 @@
+[Unit]
+Description=JapyScope Wi-Fi setup access point
+After=sys-subsystem-net-devices-wlan0.device
+Wants=sys-subsystem-net-devices-wlan0.device
+Before=japyscope-webui.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/japyscope-wifi-ap
+ExecStop=/bin/systemctl stop hostapd.service dnsmasq.service
+
+[Install]
+WantedBy=multi-user.target

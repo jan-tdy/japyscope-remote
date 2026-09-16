@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}Status · JapyScope{% endblock %}
+{% block head %}{% if live %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block content %}<h2>Status</h2>
+<table><tr><th>Item</th><th>Value</th></tr>{% for key in ['indi_connected','ra','dec','alt','az','tracking','aligned','parked'] %}<tr><td>{{ key|replace('_',' ')|title }}</td><td>{{ state.get(key, 'unknown') }}</td></tr>{% endfor %}</table>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ 'stop' if live else 'start' }}"><button>{{ 'Stop live view' if live else 'Start live view' }}</button></form>
+<p class="muted">{% if live %}Live view is active; this page refreshes every two seconds.{% else %}Showing last-known static values. Live position does not start until requested.{% endif %}</p>{% endblock %}

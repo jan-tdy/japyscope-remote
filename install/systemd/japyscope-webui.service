@@ -1,0 +1,22 @@
+[Unit]
+Description=JapyScope Web UI
+After=network-online.target japyscope-app.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=japyscope
+Group=japyscope
+WorkingDirectory=/opt/japyscope/current
+EnvironmentFile=-/etc/japyscope/environment
+ExecStart=/opt/japyscope/current/.venv/bin/python -m webui.app --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/japyscope
+
+[Install]
+WantedBy=multi-user.target
