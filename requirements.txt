@@ -1,0 +1,15 @@
+# Firmware (Raspberry Pi Zero W, real hardware backends)
+RPi.GPIO==0.7.1
+spidev==3.6
+Pillow==10.4.0
+
+# Firmware + shared
+requests==2.32.3
+
+# Web UI
+Flask==3.0.3
+
+# INDI client bindings (LGPL, used as a runtime dependency — see docs/CODES.md
+# licensing note). Install separately per docs/INSTALL.md if your distro
+# doesn't carry a prebuilt wheel; not required for --simulate.
+# pyindi-client
