@@ -131,6 +131,11 @@ class CatalogRepo:
             "SELECT * FROM catalogs ORDER BY name"
         ).fetchall()
 
+    def get_catalog(self, catalog_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM catalogs WHERE id = ?", (catalog_id,)
+        ).fetchone()
+
     def create_catalog(self, name: str) -> int:
         cur = self.conn.execute(
             "INSERT INTO catalogs(name, created_at) VALUES (?, ?)",
@@ -155,6 +160,11 @@ class CatalogRepo:
             (catalog_id,),
         ).fetchall()
 
+    def get_item(self, item_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM catalog_items WHERE id = ?", (item_id,)
+        ).fetchone()
+
     def add_item(
         self,
         catalog_id: int,
@@ -176,6 +186,23 @@ class CatalogRepo:
 
     def delete_item(self, item_id: int) -> None:
         self.conn.execute("DELETE FROM catalog_items WHERE id = ?", (item_id,))
+        self.conn.commit()
+
+    def update_item(
+        self,
+        item_id: int,
+        name: str,
+        ra: str = "",
+        dec: str = "",
+        type_: str = "",
+        note: str = "",
+    ) -> None:
+        self.conn.execute(
+            """UPDATE catalog_items
+               SET name = ?, ra = ?, dec = ?, type = ?, note = ?
+               WHERE id = ?""",
+            (name, ra, dec, type_, note, item_id),
+        )
         self.conn.commit()
 
 

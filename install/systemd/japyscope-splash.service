@@ -1,0 +1,16 @@
+[Unit]
+Description=JapyScope static e-paper boot splash
+After=local-fs.target
+Before=japyscope-app.service
+
+[Service]
+Type=oneshot
+User=japyscope
+Group=japyscope
+SupplementaryGroups=spi gpio
+WorkingDirectory=/opt/japyscope/current
+EnvironmentFile=-/etc/japyscope/environment
+ExecStart=/opt/japyscope/current/.venv/bin/python -m firmware.splash
+
+[Install]
+WantedBy=multi-user.target

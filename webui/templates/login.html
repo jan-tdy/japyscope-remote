@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Access · JapyScope{% endblock %}
+{% block content %}<h2>Access</h2><p>Enter the six-digit code shown on the controller.</p>
+<form method="post"><label>Code <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus></label><button>Enter</button></form>
+<p class="muted">Generate a code under Menu → Wi-Fi / Web Access. Five wrong attempts cause a 30-second lockout.</p>{% endblock %}

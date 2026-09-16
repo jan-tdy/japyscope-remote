@@ -1,7 +1,8 @@
 # Firmware (Raspberry Pi Zero W, real hardware backends)
 RPi.GPIO==0.7.1
 spidev==3.6
-Pillow==12.3.0
+# Image rasterization stays deferred with the unselected e-paper panel.
+# Pillow 12 dropped Bullseye's Python 3.9; do not add an incompatible pin.
 
 # Firmware + shared
 requests==2.32.3

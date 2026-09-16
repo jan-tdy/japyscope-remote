@@ -1,0 +1,23 @@
+[Unit]
+Description=JapyScope hand controller
+After=japyscope-splash.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=japyscope
+Group=japyscope
+SupplementaryGroups=spi gpio dialout
+WorkingDirectory=/opt/japyscope/current
+EnvironmentFile=-/etc/japyscope/environment
+ExecStart=/opt/japyscope/current/.venv/bin/python -m firmware.main
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/japyscope
+
+[Install]
+WantedBy=multi-user.target

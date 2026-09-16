@@ -53,17 +53,14 @@ class EPaperDisplay(DisplayHAL):
         raise NotImplementedError("See _reset().")
 
     def _render_text_to_bitmap(self, lines: list[str]) -> bytes:
-        """Render `lines` (Pillow, monospace font sized to fit
-        self.profile.visible_rows) into a 1bpp bitmap sized for
-        self.profile.width x self.profile.height."""
-        from PIL import Image, ImageDraw  # noqa: PLC0415
+        """Render lines after the panel and rasterizer are selected.
 
-        img = Image.new("1", (self.profile.width, self.profile.height), 1)
-        draw = ImageDraw.Draw(img)
-        line_height = self.profile.height // max(self.profile.visible_rows, 1)
-        for i, line in enumerate(lines[: self.profile.visible_rows]):
-            draw.text((4, i * line_height), line, fill=0)
-        return img.tobytes()
+        Pillow 12 no longer supports Bullseye's Python 3.9, while older
+        releases have known image-decoder vulnerabilities.  Do not pin an
+        unsafe/incompatible dependency for a method that cannot yet reach
+        hardware; implement the final rasterizer with the panel protocol.
+        """
+        raise NotImplementedError("Text rasterizer is selected with the physical e-paper panel")
 
     def draw_lines(self, lines: list[str]) -> None:
         self._ensure_hardware()

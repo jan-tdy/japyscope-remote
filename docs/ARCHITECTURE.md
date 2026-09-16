@@ -8,10 +8,8 @@ logic-level shifter) and drives INDI's existing Sky-Watcher Alt-Az mount
 driver directly — no custom motor-protocol code needed.
 
 No hardware exists yet (still Fáza 0/1beta), but firmware v0 is being built
-now so installation, OTA updates, and INDI process management are designed
-up front — INDI process management is already implemented, installation and
-OTA are planned (see Remaining work) — rather than improvised once the
-first prototype is wired up. The UX for both the hand
+now so installation, OTA updates, and INDI process management are implemented
+before the first prototype is wired up. The UX for both the hand
 controller and its companion Web UI is fully defined by the interactive
 HTML/JS mockup published as part of this site (`docs/mockup.html` — open
 the [Mockup tab](index.html#mockup) via GitHub Pages) plus the decisions
@@ -25,9 +23,9 @@ below, which supersede the mockup where they conflict with it.
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Not finalized** — leaning 2.13" e-paper but nothing bought yet, 4.26" not ruled out. Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py` |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
-| Install | An install script (`install/install.sh`, **not yet written**, see Remaining work) run on a clean Raspberry Pi OS Bullseye Lite image — not a prebuilt SD image, not Docker, not a PyQt5 desktop installer (considered and rejected as overkill — a `.sh` script + `docs/INSTALL.md` is enough) |
+| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
-| OTA updates | GitHub Releases-based update with rollback (**not yet written**, see Remaining work): poll the repo's Releases API, download a release tarball, verify it, install to a new versioned directory, health-check after restart, roll back the `current` symlink on failure |
+| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure |
 | Firmware language | Python 3 |
 | Web UI stack | Flask + Jinja2, server-rendered plain HTML (no JS framework) |
 | Repo layout | Monorepo (this repo) |
@@ -56,32 +54,29 @@ japyscope-remote/
       input/          # DONE — keys.py, base.py, simulator.py, keypad.py
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog
-      client.py       # STUB — PyIndi-client wrapper, methods raise NotImplementedError pending real hardware
-    ui/                # NOT STARTED — screen/state-machine logic ported from docs/mockup.html
-    main.py             # NOT STARTED — entrypoint wiring HAL + indi + ui together
-  webui/                # NOT STARTED — Flask app + templates
+      client.py       # STUB — PyIndi property mapping awaits real hardware
+    ui/                # DONE — Python state machine + local/online SmartSearch
+    main.py             # DONE — simulation/hardware entrypoint and shutdown
+  webui/                # DONE — Flask app + server-rendered templates
   shared/
     db.py               # DONE — SQLite models: catalogs (multi-catalog), settings, state, access_codes
   install/
-    install.sh           # NOT STARTED
-    update.py             # NOT STARTED
-    systemd/               # NOT STARTED
-  docs/                     # this file, WIRING.md, CODES.md — DONE; INSTALL.md/UPDATE.md/TROUBLESHOOTING.md — STUBS pending install.sh/update.py; index.html — nav shell/wiki site, DONE; mockup.html — the interactive mockup, DONE
-  tests/                     # DONE for what exists (db, display HAL, indi manager); needs more once ui/webui/install exist
+    install.sh           # DONE — Bullseye armhf bootstrap
+    update.py             # DONE — verified GitHub Releases OTA + rollback
+    systemd/               # DONE — app/Web UI/splash/Wi-Fi AP/update units
+  docs/                     # architecture, install/update/troubleshooting, wiring, mockup
+  tests/                     # database, HAL, INDI, UI, Web UI, and updater coverage
 ```
 
-## Remaining work for v0 (handoff)
+## Implemented v0 software scope
 
-This pass deliberately stopped at the infrastructure layer (HAL, INDI
-process management, data model, docs) with working tests, and left the
-following for a follow-up session — everything below has enough context in
-this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
+The software-side handoff items are implemented:
 
-1. **`firmware/ui/`** — port every screen from `docs/mockup.html`'s JS state
+1. **`firmware/ui/`** — ports the screens from `docs/mockup.html`'s JS state
    machine (`st.screen` switch in the mockup's `<script>`) to Python,
    driven by `firmware.hal.display.DisplayHAL` / `firmware.hal.input.InputHAL`
-   from this pass. Include the five behavior changes listed above — they are
-   not in the mockup's JS and must be added fresh, not ported.
+   from this pass. The five behavior changes listed above are implemented in
+   addition to the mockup's original states.
 2. **`firmware/main.py`** — argument parsing (`--simulate`), constructs
    `make_display()` / `make_input()` / `IndiServerManager` / the `ui` state
    machine, runs the main loop, handles clean shutdown (stop indiserver).
@@ -89,28 +84,32 @@ this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
    `#tab-webui` (Wi-Fi AP setup, code-gated login with 5-attempt lockout,
    status with opt-in live position, multi-catalog CRUD + CSV import,
    settings, diagnostics, system), backed by `shared/db.py`.
-4. **`install/install.sh`** — bootstrap on a clean Raspberry Pi OS Bullseye
-   Lite image: apt install INDI (confirm exact package/driver binary name
-   for the Sky-Watcher Alt-Az driver — `firmware/indi/manager.py`'s
-   `DEFAULT_DRIVER_BINARY` is a placeholder), Python deps
+4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye
+   Lite image: apt installs Bullseye's `indi-bin` package, whose armhf file
+   list confirms the `indi_skywatcherAltAzMount` driver binary, Python deps
    (`requirements.txt`), venv, systemd units.
-5. **`install/systemd/*.service`** — `japyscope-app.service`,
+5. **`install/systemd/*.service`** — includes `japyscope-app.service`,
    `japyscope-webui.service`, and a `japyscope-splash.service` oneshot that
    draws a static boot logo via partial refresh (per project memory: no
    kernel-level boot splash, e-ink is too slow for that).
-6. **`install/update.py`** — OTA per the table above: GitHub Releases API →
+6. **`install/update.py`** — implements GitHub Releases API →
    download → verify → versioned install dir → symlink flip → health-check
-   → rollback on failure. Triggered from the controller's menu and/or a
-   systemd timer.
-7. **`docs/INSTALL.md`, `docs/UPDATE.md`, `docs/TROUBLESHOOTING.md`** —
-   write these alongside items 4–6 respectively, once the actual scripts
-   exist (writing them earlier would just be speculation).
-8. **Deferred beyond v0 entirely**: a polished end-user manual as a PDF
+   → rollback on failure. Triggered by a systemd timer (and available as a
+   manual command).
+7. **`docs/INSTALL.md`, `docs/UPDATE.md`, `docs/TROUBLESHOOTING.md`** document
+   the scripts and their operational/error-code behavior.
+
+**Still hardware-blocked:** fill in the selected e-paper controller protocol,
+map PyIndi properties against the live Sky-Watcher driver, confirm the physical
+RJ12 pinout, and exercise install/OTA on a real Bullseye Pi Zero W. These are
+not safely guessable without the prototype.
+
+**Deferred beyond v0 entirely**: a polished end-user manual as a PDF
    (use the PDF skill once on-device flows are stable).
 
 ## Verification
 
-1. `firmware/main.py --simulate` (once item 2 above exists) running the full
+1. `python -m firmware.main --simulate` running the full
    controller state machine on a dev machine.
 2. `webui/app.py` run locally (Flask dev server) against a SQLite fixture.
 3. `install/install.sh` and `install/update.py` tested against a Raspberry
@@ -121,5 +120,5 @@ this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
    **not** reflect the behavior changes above — it's kept as the original
    interaction-design reference).
 5. `docs/WIRING.md` cross-checked against the physical build at each Fáza.
-6. `pytest` for everything already covered (`tests/`) — 12 tests passing as
-   of this pass (`shared/db.py`, display HAL, INDI manager lifecycle).
+6. `pytest` for covered behavior — 23 tests passing as of this pass (database,
+   HAL, INDI manager, UI state machine/search, Web UI, and OTA extraction).

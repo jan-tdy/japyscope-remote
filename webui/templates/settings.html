@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}Settings · JapyScope{% endblock %}
+{% block content %}<h2>Settings</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Latitude <input name="latitude" value="{{ settings.latitude }}"></label><label>Longitude <input name="longitude" value="{{ settings.longitude }}"></label><label>Elevation (m) <input name="elevation_m" type="number" value="{{ settings.elevation_m }}"></label><label>Timezone <input name="timezone" value="{{ settings.timezone }}"></label>
+<label>Park mode <select name="park_mode">{% for mode in ['zenith','home','custom'] %}<option {% if settings.park_mode == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label><label>Custom park altitude <input name="park_alt" type="number" value="{{ settings.park_alt }}"></label><label>Custom park azimuth <input name="park_az" type="number" value="{{ settings.park_az }}"></label><button>Save</button></form>
+<p class="muted">Mount movement and alignment remain controller-only.</p>{% endblock %}

@@ -4,10 +4,8 @@ never talks to INDI directly (no mount control in the Web UI, per the
 mockup/plan) — it only reads state the firmware app writes to
 shared.db.StateRepo.
 
-`driver_binary` is a placeholder — confirm the exact indi-full package/
-binary name for the Sky-Watcher Alt-Az driver against the installed system
-once hardware exists (see docs/ARCHITECTURE.md open items), then update the
-default here and in install/install.sh.
+Bullseye's armhf ``indi-bin`` package contains the default driver executable
+used here. Its live property names still need validation against the mount.
 """
 from __future__ import annotations
 
