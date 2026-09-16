@@ -11,9 +11,11 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from urllib.parse import quote
-from xml.etree import ElementTree
+from xml.etree.ElementTree import ParseError
 
 import requests
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ class SmartSearch:
         local = [item for item in local_objects if needle in _normalise(item.name)]
         try:
             online = self.resolve_online(query)
-        except (requests.RequestException, ElementTree.ParseError, ValueError) as exc:
+        except (requests.RequestException, ParseError, DefusedXmlException, ValueError) as exc:
             logger.warning("SEARCH-001 online lookup failed; local results only: %s", exc)
             return local, False
         if online and all(_normalise(item.name) != _normalise(online.name) for item in local):

@@ -120,5 +120,5 @@ not safely guessable without the prototype.
    **not** reflect the behavior changes above — it's kept as the original
    interaction-design reference).
 5. `docs/WIRING.md` cross-checked against the physical build at each Fáza.
-6. `pytest` for covered behavior — 23 tests passing as of this pass (database,
+6. `pytest` for covered behavior — 32 tests passing as of this pass (database,
    HAL, INDI manager, UI state machine/search, Web UI, and OTA extraction).

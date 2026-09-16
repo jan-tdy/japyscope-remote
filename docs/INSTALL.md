@@ -22,8 +22,10 @@ The installer enables the daily OTA timer. Disable automatic application with
 
 ## First connection
 
-When no saved Wi-Fi connection is active, join the open `JapyScope-Setup`
-network and browse to `http://192.168.4.1:8080/setup`. Enter the home Wi-Fi
+When no saved Wi-Fi connection is active, join the WPA2-protected
+`JapyScope-Setup` network. Its unique password is shown on the controller and
+can also be read locally with `sudo cat /etc/japyscope/setup-ap-password`.
+Browse to `http://192.168.4.1:8080/setup`. Enter the home Wi-Fi
 credentials, then reconnect the client device to that network. The password is
 passed directly to `wpa_supplicant`; it is not stored in the JapyScope database.
 

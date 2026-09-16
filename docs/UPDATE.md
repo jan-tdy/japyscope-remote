@@ -5,8 +5,9 @@ contain exactly one `.tar.gz` application asset. It must also have either a
 GitHub asset `sha256:` digest or a companion `<asset>.sha256` release asset.
 Unsigned source archives without either checksum are rejected.
 
-The archive must contain `firmware/main.py`, `webui/app.py`, and
-`requirements.txt`. The updater rejects absolute paths, traversal, links, and
+The archive must contain `firmware/main.py`, `webui/app.py`, and the generated
+`requirements.lock`. Dependencies, including PyIndi, are installed only from
+that fully pinned SHA-256 hash lock. The updater rejects absolute paths, traversal, links, and
 device nodes before extraction, creates a fresh virtual environment in a new
 versioned release directory, then atomically flips `/opt/japyscope/current`.
 

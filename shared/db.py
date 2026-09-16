@@ -18,7 +18,12 @@ benefit.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
 import os
+import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -26,6 +31,8 @@ from dataclasses import dataclass
 from typing import Iterator, Optional
 
 DEFAULT_DB_PATH = os.environ.get("JAPYSCOPE_DB_PATH", "/var/lib/japyscope/japyscope.db")
+PASSWORD_SCHEME = "pbkdf2_sha256"
+PASSWORD_ITERATIONS = 210_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS catalogs (
@@ -73,11 +80,46 @@ DEFAULT_SETTINGS = {
     "park_mode": "zenith",  # zenith | home | custom
     "park_alt": "45",
     "park_az": "180",
-    "sudo_password": "1234",
     "backlight_r": "1",  # index into ("Off","Med","High")
     "backlight_g": "0",
     "backlight_b": "0",
 }
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS
+    )
+    return (
+        f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}$"
+        f"{_encode_base64(salt)}${_encode_base64(digest)}"
+    )
+
+
+def _encode_base64(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _decode_base64(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        scheme, iterations_text, salt_text, digest_text = encoded.split("$", 3)
+        if scheme != PASSWORD_SCHEME:
+            return False
+        iterations = int(iterations_text)
+        if iterations != PASSWORD_ITERATIONS:
+            return False
+        expected = _decode_base64(digest_text)
+        actual = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), _decode_base64(salt_text), iterations
+        )
+    except (binascii.Error, TypeError, ValueError):
+        return False
+    return hmac.compare_digest(actual, expected)
 
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -93,6 +135,19 @@ def init_db(conn: sqlite3.Connection) -> None:
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
+        )
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'sudo_password'"
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES ('sudo_password', ?)",
+            (hash_password("1234"),),
+        )
+    elif not row["value"].startswith(PASSWORD_SCHEME + "$"):
+        conn.execute(
+            "UPDATE settings SET value = ? WHERE key = 'sudo_password'",
+            (hash_password(row["value"]),),
         )
     conn.commit()
 
@@ -184,6 +239,24 @@ class CatalogRepo:
         self.conn.commit()
         return cur.lastrowid
 
+    def add_items(
+        self,
+        catalog_id: int,
+        items: list[tuple[str, str, str, str, str]],
+        source: str = "import",
+    ) -> None:
+        created_at = time.time()
+        with self.conn:
+            self.conn.executemany(
+                """INSERT INTO catalog_items
+                   (catalog_id, name, ra, dec, type, note, source, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (catalog_id, name, ra, dec, type_, note, source, created_at)
+                    for name, ra, dec, type_, note in items
+                ],
+            )
+
     def delete_item(self, item_id: int) -> None:
         self.conn.execute("DELETE FROM catalog_items WHERE id = ?", (item_id,))
         self.conn.commit()
@@ -223,6 +296,13 @@ class SettingsRepo:
             (key, value),
         )
         self.conn.commit()
+
+    def set_password(self, key: str, password: str) -> None:
+        self.set(key, hash_password(password))
+
+    def verify_password(self, key: str, password: str) -> bool:
+        encoded = self.get(key)
+        return encoded is not None and verify_password(password, encoded)
 
     def all(self) -> dict[str, str]:
         return {row["key"]: row["value"] for row in self.conn.execute("SELECT * FROM settings")}

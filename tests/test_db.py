@@ -20,7 +20,18 @@ def conn():
 def test_default_settings_seeded(conn):
     settings = SettingsRepo(conn)
     assert settings.get("timezone") == "UTC"
-    assert settings.get("sudo_password") == "1234"
+    assert settings.get("sudo_password") != "1234"
+    assert settings.verify_password("sudo_password", "1234") is True
+
+
+def test_passwords_are_salted_and_verified(conn):
+    settings = SettingsRepo(conn)
+    settings.set_password("sudo_password", "9876")
+    first = settings.get("sudo_password")
+    settings.set_password("sudo_password", "9876")
+    assert settings.get("sudo_password") != first
+    assert settings.verify_password("sudo_password", "9876") is True
+    assert settings.verify_password("sudo_password", "1234") is False
 
 
 def test_settings_roundtrip(conn):

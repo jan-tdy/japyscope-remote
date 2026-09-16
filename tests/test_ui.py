@@ -86,3 +86,25 @@ def test_smartsearch_network_failure_returns_local_results():
     results, online = SmartSearch(session=Offline()).search("vega", [SearchResult("Vega")])
     assert [result.name for result in results] == ["Vega"]
     assert online is False
+
+
+def test_smartsearch_rejects_xml_entities():
+    class Response:
+        text = '<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><Sesame><Resolver><oname>&xxe;</oname></Resolver></Sesame>'
+        def raise_for_status(self): pass
+    class Session:
+        def get(self, *args, **kwargs): return Response()
+    results, online = SmartSearch(session=Session()).search("vega", [SearchResult("Vega")])
+    assert [result.name for result in results] == ["Vega"]
+    assert online is False
+
+
+def test_slew_without_coordinates_shows_error():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        ui._confirm_slew(SearchResult("Moon"), "LIST")
+        assert ui.state.screen == "ERROR"
+        assert ui.state.transition_at == 0
+        assert ui.indi.goto_target is None
+    finally: conn.close(); os.unlink(path)

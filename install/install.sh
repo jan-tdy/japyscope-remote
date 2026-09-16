@@ -19,7 +19,7 @@ if [[ $arch != armhf ]]; then echo "Expected the 32-bit armhf image, found $arch
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
+apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -34,10 +34,10 @@ version=$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +
 release_dir=/opt/japyscope/releases/$version
 if [[ -e $release_dir ]]; then echo "Release directory already exists: $release_dir" >&2; exit 1; fi
 install -d -o root -g root -m 755 "$release_dir"
-cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$release_dir/"
+cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$source_dir/requirements.lock" "$release_dir/"
 python3 -m venv "$release_dir/.venv"
 "$release_dir/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-"$release_dir/.venv/bin/python" -m pip install -r "$release_dir/requirements.txt" pyindi-client
+"$release_dir/.venv/bin/python" -m pip install --require-hashes -r "$release_dir/requirements.lock"
 chown -R root:root "$release_dir"
 ln -sfn "$release_dir" /opt/japyscope/.current.new
 mv -Tf /opt/japyscope/.current.new /opt/japyscope/current
@@ -49,7 +49,25 @@ if [[ ! -f /etc/japyscope/environment ]]; then
 fi
 install -o root -g root -m 755 "$source_dir/install/wifi-config.sh" /usr/local/sbin/japyscope-wifi
 install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap
-install -o root -g root -m 600 "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf
+ap_password_file=/etc/japyscope/setup-ap-password
+if [[ ! -s $ap_password_file ]]; then
+  umask 077
+  python3 -c 'import secrets; print(secrets.token_hex(12))' > "$ap_password_file"
+  chown root:japyscope "$ap_password_file"
+  chmod 640 "$ap_password_file"
+fi
+python3 - "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf "$ap_password_file" <<'PY'
+import pathlib
+import sys
+
+template = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+password = pathlib.Path(sys.argv[3]).read_text(encoding="ascii").strip()
+pathlib.Path(sys.argv[2]).write_text(
+    template.replace("__JAPYSCOPE_SETUP_PSK__", password), encoding="utf-8"
+)
+PY
+chown root:root /etc/hostapd/japyscope.conf
+chmod 600 /etc/hostapd/japyscope.conf
 install -o root -g root -m 644 "$source_dir/install/dnsmasq.conf" /etc/dnsmasq.d/japyscope.conf
 sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/japyscope.conf"|' /etc/default/hostapd
 printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
@@ -61,4 +79,5 @@ systemctl unmask hostapd.service
 systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
 systemctl restart japyscope-wifi-ap.service
 systemctl restart japyscope-app.service japyscope-webui.service
+echo "Wi-Fi setup password: sudo cat $ap_password_file"
 echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"

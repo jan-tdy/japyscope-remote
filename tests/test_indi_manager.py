@@ -15,6 +15,7 @@ def test_start_and_stop():
     mgr.start()
     try:
         assert mgr.is_running() is True
+        assert mgr._process.stdout is None
     finally:
         mgr.stop()
     assert mgr.is_running() is False

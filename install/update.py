@@ -84,7 +84,11 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
         bundle.extractall(destination)
     roots = [entry for entry in destination.iterdir() if entry.name != archive.name]
     root = roots[0] if len(roots) == 1 and roots[0].is_dir() else destination
-    if not (root / "firmware" / "main.py").is_file() or not (root / "webui" / "app.py").is_file():
+    if (
+        not (root / "firmware" / "main.py").is_file()
+        or not (root / "webui" / "app.py").is_file()
+        or not (root / "requirements.lock").is_file()
+    ):
         raise UpdateError("release does not contain a JapyScope application tree")
     return root
 
@@ -135,14 +139,14 @@ class Updater:
             try:
                 subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=60)
                 subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "-r", str(target / "requirements.txt"), "pyindi-client"],
+                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
                     check=True, timeout=900,
                 )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=60)
                 self._flip(target)
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, subprocess.SubprocessError, UpdateError) as exc:
                 logger.error("OTA-003 new release failed health check; rolling back: %s", exc)
                 if previous is not None:
                     self._flip(previous)
@@ -160,8 +164,13 @@ class Updater:
     def _health_check() -> None:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            result = subprocess.run(["systemctl", "is-active", "--quiet", "japyscope-app.service", "japyscope-webui.service"], check=False)
-            if result.returncode == 0:
+            service_results = [
+                subprocess.run(
+                    ["systemctl", "is-active", "--quiet", service], check=False
+                ).returncode
+                for service in ("japyscope-app.service", "japyscope-webui.service")
+            ]
+            if all(returncode == 0 for returncode in service_results):
                 try:
                     with urlopen("http://127.0.0.1:8080/healthz", timeout=2) as response:
                         if response.status == 200: return

@@ -6,9 +6,8 @@ if [[ $EUID -ne 0 || $# -ne 1 ]]; then
   exit 2
 fi
 ssid=$1
-IFS= read -r wifi_password
-if (( ${#ssid} < 1 || ${#ssid} > 32 || ${#wifi_password} < 8 || ${#wifi_password} > 63 )); then
-  echo "invalid SSID or WPA passphrase length" >&2
+if (( ${#ssid} < 1 || ${#ssid} > 32 )); then
+  echo "invalid SSID length" >&2
   exit 2
 fi
 
@@ -17,7 +16,7 @@ config_tmp=$(mktemp /etc/wpa_supplicant/.japyscope.XXXXXX)
 trap 'rm -f "$config_tmp"' EXIT
 {
   printf '%s\n' 'ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev' 'update_config=1'
-  printf '%s\n' "$wifi_password" | wpa_passphrase "$ssid"
+  wpa_passphrase "$ssid" | sed '/^[[:space:]]*#psk=/d'
 } > "$config_tmp"
 chown root:root "$config_tmp"
 chmod 600 "$config_tmp"

@@ -1,3 +1,5 @@
+import io
+
 from shared.db import AccessCodeRepo, CatalogRepo, db_session
 from webui.app import create_app
 
@@ -40,6 +42,67 @@ def test_multi_catalog_create_and_item_add(tmp_path):
     client.post(f"/catalog/{catalog_id}/items", data={"csrf_token": csrf(client), "name": "V445 Her", "ra": "18:24"})
     response = client.get("/catalog")
     assert b"Variables" in response.data and b"V445 Her" in response.data
+
+
+def test_duplicate_catalog_rename_returns_message(tmp_path):
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn:
+        repo = CatalogRepo(conn); first = repo.create_catalog("First"); repo.create_catalog("Second")
+    response = client.post(
+        f"/catalog/{first}/rename",
+        data={"csrf_token": csrf(client), "name": "Second"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"already exists" in response.data
+
+
+def test_invalid_csv_import_is_atomic(tmp_path):
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn: catalog_id = CatalogRepo(conn).create_catalog("Import")
+    response = client.post(
+        f"/catalog/{catalog_id}/import",
+        data={
+            "csrf_token": csrf(client),
+            "file": (io.BytesIO(b"name,ra\nValid,12:00\nBad,1,2,3,4,5\n"), "objects.csv"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    with db_session(db_path) as conn: assert CatalogRepo(conn).list_items(catalog_id) == []
+
+
+def test_malformed_csv_import_is_atomic(tmp_path):
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn: catalog_id = CatalogRepo(conn).create_catalog("Import")
+    response = client.post(
+        f"/catalog/{catalog_id}/import",
+        data={
+            "csrf_token": csrf(client),
+            "file": (io.BytesIO(b'name,ra\nValid,12:00\n"unterminated\n'), "objects.csv"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    with db_session(db_path) as conn: assert CatalogRepo(conn).list_items(catalog_id) == []
+
+
+def test_setup_requires_csrf(tmp_path):
+    configured = []
+    app = create_app(
+        str(tmp_path / "setup.db"),
+        wifi_configurator=lambda ssid, password: configured.append((ssid, password)),
+    )
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    assert client.post("/setup", data={"ssid": "Home", "password": "password"}).status_code == 400
+    client.get("/setup")
+    response = client.post(
+        "/setup",
+        data={"csrf_token": csrf(client), "ssid": "Home", "password": "password"},
+    )
+    assert response.status_code == 200
+    assert configured == [("Home", "password")]
 
 
 def test_login_locks_after_five_failures(tmp_path):

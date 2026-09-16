@@ -8,10 +8,12 @@ INDI implementations are injected so the same code runs on a Pi or in
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from firmware.hal.display.base import DisplayHAL
@@ -86,6 +88,7 @@ class UIState:
     access_last_remaining: int = -1
     transition_at: float = 0.0
     last_status_at: float = 0.0
+    error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
 
 
@@ -198,7 +201,7 @@ class ControllerUI:
             aligned = self._truth(self.runtime.get("aligned", "false"))
             lines = self._visible(
                 f"JapyScope {datetime.now():%H:%M:%S}", self.HOME,
-                "aligned" if aligned else "Not aligned · 2/4/6/8 jog",
+                "aligned" if aligned else "Not aligned",
             )
         elif screen == "MENU":
             lines = self._visible("MENU", self.MENU)
@@ -237,7 +240,7 @@ class ControllerUI:
         elif screen == "ALIGN_STAR_PICK":
             lines = self._visible(f"Point {s.align_points + 1}", STARS)
         elif screen == "ALIGN_JOG":
-            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/4/6/8=fine jog", "push=confirm · 9=back"]
+            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "7=change speed", "push=confirm · 9=back"]
         elif screen == "ALIGN_MORE":
             lines = self._visible(f"Points: {s.align_points}", ["Add another point", "Finish alignment"])
         elif screen == "ALIGN_CONFIRM":
@@ -256,7 +259,14 @@ class ControllerUI:
             remain = max(0, int(s.access_expires - self.clock()))
             lines = ["Web UI access code", s.access_code, f"Valid {remain // 60:02}:{remain % 60:02}", "push/9=back"]
         elif screen == "WIFI_SETUP":
-            lines = ["Wi-Fi Setup", "Join JapyScope-Setup", "Open 192.168.4.1:8080", "9=back"]
+            password_path = os.environ.get(
+                "JAPYSCOPE_AP_PASSWORD_FILE", "/etc/japyscope/setup-ap-password"
+            )
+            try:
+                password = Path(password_path).read_text(encoding="ascii").strip()
+            except OSError:
+                password = "see local admin"
+            lines = ["Join JapyScope-Setup", f"Password: {password}", "Open 192.168.4.1:8080", "9=back"]
         elif screen == "BACKLIGHT":
             levels = ("Off", "Med", "High")
             labels = [f"{ch}: {levels[s.backlight[i]]}" for i, ch in enumerate("RGB")]
@@ -281,6 +291,8 @@ class ControllerUI:
             lines = ["SHUTTING DOWN…"]
         elif screen == "FN2_EASTER":
             lines = ["Made in Piconcillo.", "Solder and stubbornness.", "", "push/9=back"]
+        elif screen == "ERROR":
+            lines = ["Cannot slew", s.error_message, "", "push/9=back"]
         else:
             lines = [screen]
         self.display.draw_lines(lines[: self.display.visible_rows])
@@ -441,6 +453,9 @@ class ControllerUI:
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
             if key in ("9", ENC_PUSH): self._set("MENU")
             return
+        if s.screen == "ERROR" and key in ("9", ENC_PUSH):
+            self._set(s.return_screen)
+            return
         if s.screen in {"WIFI_SETUP", "DRIVER_SELECT", "IFACE_SELECT"} and key in ("9", ENC_PUSH):
             self._set("MENU" if s.screen == "WIFI_SETUP" else "IDLE")
             return
@@ -503,13 +518,17 @@ class ControllerUI:
 
     def _begin_slew(self) -> None:
         obj = self.state.selected
-        if obj and obj.ra and obj.dec:
-            try:
-                self.indi.goto(obj.ra, obj.dec)
-            except (NotImplementedError, ConnectionError) as exc:
-                logger.error("INDI-002 goto failed: %s", exc)
-                self._set(self.state.return_screen)
-                return
+        if obj is None or not obj.ra or not obj.dec:
+            self.state.error_message = "Missing RA / Dec"
+            logger.warning("Cannot slew without both RA and Dec coordinates")
+            self._set("ERROR")
+            return
+        try:
+            self.indi.goto(obj.ra, obj.dec)
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 goto failed: %s", exc)
+            self._set(self.state.return_screen)
+            return
         self.state.transition_at = self.clock() + 1.5
         self._set("SLEW")
 
@@ -521,6 +540,6 @@ class ControllerUI:
         if key == ENC_PUSH:
             s.digits.append(s.digit_value); s.digit_value = 0
             if len(s.digits) == 4:
-                if s.screen == "SUDO_SET": self.settings.set("sudo_password", "".join(map(str, s.digits)))
+                if s.screen == "SUDO_SET": self.settings.set_password("sudo_password", "".join(map(str, s.digits)))
                 self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU")
             else: self.render()

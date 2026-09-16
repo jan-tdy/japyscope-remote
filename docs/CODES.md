@@ -75,7 +75,8 @@ code becomes genuinely destructive (e.g. a future factory-reset code).
 
 ## Sudo password
 
-- Default: `1234` (factory default, stored in `shared.db` `settings.sudo_password`).
+- Default: `1234` (factory default, stored as a salted PBKDF2 hash in
+  `shared.db` `settings.sudo_password`).
 - Set via Menu → Sudo Password (same rotary-dial 4-digit entry as Dev Tools codes).
 - Intended to guard destructive Dev Tools actions — none of the current codes need it (see table above), since none are destructive yet.
 - **Not a real security boundary** — same spirit as the Web UI access code below: a deterrent, not encryption-grade auth. Don't build anything safety-critical behind it without upgrading the mechanism first.

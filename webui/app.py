@@ -62,7 +62,7 @@ def create_app(
 
     @app.before_request
     def verify_csrf():
-        if request.method != "POST" or request.endpoint in {"login", "setup"}:
+        if request.method != "POST" or request.endpoint == "login":
             return None
         supplied = request.form.get("csrf_token", "")
         expected = session.get("csrf_token", "")
@@ -176,10 +176,13 @@ def create_app(
     def catalog_rename(catalog_id: int):
         name = request.form.get("name", "").strip()
         if not name or len(name) > 80: abort(400)
-        with db_session(app.config["DATABASE"]) as conn:
-            repo = CatalogRepo(conn)
-            if repo.get_catalog(catalog_id) is None: abort(404)
-            repo.rename_catalog(catalog_id, name)
+        try:
+            with db_session(app.config["DATABASE"]) as conn:
+                repo = CatalogRepo(conn)
+                if repo.get_catalog(catalog_id) is None: abort(404)
+                repo.rename_catalog(catalog_id, name)
+        except sqlite3.IntegrityError:
+            flash("A catalog with that name already exists.", "error")
         return redirect(url_for("catalog"))
 
     @app.route("/catalog/<int:catalog_id>/delete", methods=["POST"])
@@ -227,19 +230,30 @@ def create_app(
     def catalog_import(catalog_id: int):
         upload = request.files.get("file")
         if upload is None: abort(400, "Choose a CSV file")
-        text = io.TextIOWrapper(upload.stream, encoding="utf-8-sig", errors="strict", newline="")
-        reader = csv.reader(text)
-        added = skipped = 0
+        try:
+            decoded = upload.read().decode("utf-8-sig", errors="strict")
+            rows = list(csv.reader(io.StringIO(decoded, newline=""), strict=True))
+        except (UnicodeDecodeError, csv.Error):
+            abort(400, "The upload must be valid UTF-8 CSV")
+        items: list[tuple[str, str, str, str, str]] = []
+        for number, row in enumerate(rows, start=1):
+            if number == 1 and row and row[0].strip().casefold() == "name":
+                continue
+            if not row or all(not value.strip() for value in row):
+                continue
+            if len(row) > 5:
+                abort(400, f"CSV row {number} has more than five columns")
+            values = [value.strip() for value in row] + [""] * (5 - len(row))
+            if not values[0] or len(values[0]) > 120:
+                abort(400, f"CSV row {number} has an invalid object name")
+            if any(len(value) > 1000 for value in values[1:]):
+                abort(400, f"CSV row {number} contains an overlong field")
+            items.append((values[0], values[1], values[2], values[3], values[4]))
         with db_session(app.config["DATABASE"]) as conn:
             repo = CatalogRepo(conn)
             if repo.get_catalog(catalog_id) is None: abort(404)
-            for number, row in enumerate(reader):
-                if number == 0 and row and row[0].strip().casefold() == "name": continue
-                if not row or not row[0].strip() or len(row) > 5: skipped += 1; continue
-                values = [value.strip() for value in row] + [""] * (5 - len(row))
-                repo.add_item(catalog_id, values[0], values[1], values[2], values[3], values[4], "import")
-                added += 1
-        flash(f"Imported {added} object(s); skipped {skipped} row(s).", "ok")
+            repo.add_items(catalog_id, items)
+        flash(f"Imported {len(items)} object(s).", "ok")
         return redirect(url_for("catalog"))
 
     @app.route("/settings", methods=["GET", "POST"])

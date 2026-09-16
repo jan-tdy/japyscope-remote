@@ -50,7 +50,6 @@ class IndiServerManager:
             logger.info("Starting indiserver with driver %s", self.driver_binary)
             self._process = subprocess.Popen(
                 self._command,
-                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
         if self._watchdog_thread is None:
@@ -99,6 +98,5 @@ class IndiServerManager:
                     continue  # a concurrent start()/restart() already replaced it
                 self._process = subprocess.Popen(
                     self._command,
-                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                 )
