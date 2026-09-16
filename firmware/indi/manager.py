@@ -64,20 +64,23 @@ class IndiServerManager:
         return self._process is not None and self._process.poll() is None
 
     def stop(self) -> None:
+        # Signal the watchdog first and always join it below — regardless of
+        # whether a process happens to be running right now — so a stale
+        # watchdog can never keep running (and spawning replacements)
+        # alongside a later start()'s fresh one.
         self._stop.set()
         with self._lock:
-            if self._process is None:
-                return
-            logger.info("Stopping indiserver")
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
-            self._process = None
+            if self._process is not None:
+                logger.info("Stopping indiserver")
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait()
+                self._process = None
         if self._watchdog_thread is not None:
-            self._watchdog_thread.join(timeout=2)
+            self._watchdog_thread.join()
             self._watchdog_thread = None
 
     def restart(self) -> None:
@@ -85,16 +88,19 @@ class IndiServerManager:
         self.start()
 
     def _watchdog_loop(self) -> None:
-        while not self._stop.is_set():
-            time.sleep(HEALTH_CHECK_INTERVAL_S)
-            if self._stop.is_set():
+        while not self._stop.wait(HEALTH_CHECK_INTERVAL_S):
+            if self.is_running():
+                continue
+            logger.warning("indiserver exited unexpectedly, restarting")
+            if self._stop.wait(RESTART_BACKOFF_S):
                 return
-            if not self.is_running():
-                logger.warning("indiserver exited unexpectedly, restarting")
-                time.sleep(RESTART_BACKOFF_S)
-                with self._lock:
-                    self._process = subprocess.Popen(
-                        self._command,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                    )
+            with self._lock:
+                if self._stop.is_set():
+                    return
+                if self._process is not None and self._process.poll() is None:
+                    continue  # a concurrent start()/restart() already replaced it
+                self._process = subprocess.Popen(
+                    self._command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )

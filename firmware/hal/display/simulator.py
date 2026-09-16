@@ -14,7 +14,7 @@ class SimulatorDisplay(DisplayHAL):
         width = min(shutil.get_terminal_size((80, 24)).columns, self.profile.width // 6 or 40)
         print("\n" + "=" * width)
         print(f"[{self.profile.name} {self.profile.width}x{self.profile.height}]")
-        for line in lines:
+        for line in lines[: self.visible_rows]:
             print(line)
         print("=" * width)
 

@@ -100,4 +100,5 @@ class KeypadInput(InputHAL):
 
     def close(self) -> None:
         self._stop.set()
+        self._thread.join()
         self._gpio.cleanup()

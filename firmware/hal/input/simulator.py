@@ -9,6 +9,7 @@ real keypad.
 from __future__ import annotations
 
 import queue
+import select
 import sys
 import termios
 import threading
@@ -20,6 +21,8 @@ from .keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, FN2
 
 _ESCAPE_UP = "\x1b[A"
 _ESCAPE_DOWN = "\x1b[B"
+_POLL_TIMEOUT_S = 0.2
+_ESCAPE_FOLLOWUP_TIMEOUT_S = 0.01
 
 
 class SimulatorInput(InputHAL):
@@ -37,13 +40,26 @@ class SimulatorInput(InputHAL):
         self._thread.start()
 
     def _read_loop(self) -> None:
+        # Poll with a timeout instead of a blocking read() so close() can
+        # signal _stop and have this thread actually notice and exit,
+        # rather than sitting blocked until one more key is pressed.
         while not self._stop.is_set():
+            ready, _, _ = select.select([self._fd], [], [], _POLL_TIMEOUT_S)
+            if not ready:
+                continue
             ch = sys.stdin.read(1)
             if not ch:
                 return
             if ch == "\x1b":
-                ch += sys.stdin.read(2)
-            self._queue.put(self._translate(ch))
+                # Only consume the rest of an arrow-key sequence if it's
+                # actually arriving as a burst — a lone Escape press must
+                # not block waiting for two bytes that will never come.
+                more_ready, _, _ = select.select([self._fd], [], [], _ESCAPE_FOLLOWUP_TIMEOUT_S)
+                if more_ready:
+                    ch += sys.stdin.read(2)
+            key = self._translate(ch)
+            if key is not None:
+                self._queue.put(key)
 
     @staticmethod
     def _translate(ch: str) -> Optional[str]:
@@ -70,5 +86,6 @@ class SimulatorInput(InputHAL):
 
     def close(self) -> None:
         self._stop.set()
+        self._thread.join(timeout=_POLL_TIMEOUT_S * 2)
         if self._old_settings is not None:
             termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)

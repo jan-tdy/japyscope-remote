@@ -5,7 +5,7 @@ nothing bought yet, 4.26" not ruled out. Every part of the firmware that
 draws to the screen must go through a DisplayProfile rather than assuming a
 resolution, so switching panels later is a one-line config change.
 
-Select via the JAPYSCOPE_DISPLAY_PROFILE env var (defaults to "2.13").
+Select via the JAPYSCOPE_DISPLAY_PROFILE env var (defaults to "2.13in").
 """
 from __future__ import annotations
 

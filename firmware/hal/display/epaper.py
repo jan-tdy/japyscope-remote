@@ -78,6 +78,8 @@ class EPaperDisplay(DisplayHAL):
 
     def set_backlight(self, r: int, g: int, b: int) -> None:
         raise NotImplementedError(
-            "Custom JapySoft RGB edge-lighting — switching mechanism still "
-            "TBD per project memory; wire up once the LED driver circuit is decided."
+            "Custom JapySoft RGB edge-lighting: plain GPIO drive, one 5mm "
+            "LED + series resistor per channel (no MOSFET, no driver IC), "
+            "Off/Med/High via software PWM. Exact GPIO pins not yet assigned "
+            "— see docs/WIRING.md's Backlight section, update both once wired."
         )

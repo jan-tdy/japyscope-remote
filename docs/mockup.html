@@ -1,3 +1,8 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JapyScope Remote Simulator</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -222,6 +227,8 @@
     .webui-page table{ font-size:.85rem; }
   }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <div>
@@ -690,7 +697,7 @@
     for(var i=i0r; i<Math.min(i0r+VISIBLE_ROWS, st.results.length); i++){
       var r = st.results[i];
       var mark = (i===st.resIndex) ? "&gt;" : " ";
-      lines.push(mark+" ["+(i+1)+"] "+r.name+"  [Alt:"+r.alt+"°]");
+      lines.push(mark+" ["+(i+1)+"] "+escapeHtml(r.name)+"  [Alt:"+r.alt+"°]");
     }
     lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
@@ -713,7 +720,7 @@
   function renderSlew(){
     setLines([
       "SLEWING TO",
-      st.selected.name,
+      escapeHtml(st.selected.name),
       "Alt "+st.selected.alt+"°   Az "+pseudoAz(st.selected.name)+"°",
       "["+st.slewGlyphs+"]",
       "<span class=\"dim\">7 = abort</span>"
@@ -723,7 +730,7 @@
   function renderSlewAborted(){
     setLines([
       "SLEW ABORTED",
-      st.selected.name,
+      escapeHtml(st.selected.name),
       "<span class=\"dim\">push = continue   9 = back</span>"
     ]);
   }
@@ -731,7 +738,7 @@
   function renderTrack(){
     setLines([
       "TRACKING",
-      st.trackObj.name,
+      escapeHtml(st.trackObj.name),
       "RA "+st.trackObj.ra+"  Dec "+st.trackObj.dec,
       "Alt "+st.trackObj.alt+"°   Az "+pseudoAz(st.trackObj.name)+"°",
       "↑ "+formatMMSS(st.trackSec),
@@ -815,7 +822,7 @@
       for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, st.listItems.length); i++){
         var o = st.listItems[i];
         var mark = (i===st.listIndex) ? "&gt;" : " ";
-        lines.push(mark+" "+o.name+" [Alt:"+o.alt+"°]");
+        lines.push(mark+" "+escapeHtml(o.name)+" [Alt:"+o.alt+"°]");
       }
     }
     lines.push("<span class=\"dim\">rotate=scroll  push=goto  9=back</span>");
@@ -1122,9 +1129,10 @@
     st.trackSec = 0;
     st.screen = "TRACK";
     render();
-    addTimer(setInterval(function(){
+    st.trackTimer = addTimer(setInterval(function(){
+      if(st.screen !== "TRACK"){ clearInterval(st.trackTimer); return; }
       st.trackSec++;
-      if(st.screen === "TRACK") render();
+      render();
     }, 1000));
   }
 
@@ -1817,3 +1825,5 @@
     });
   });
 </script>
+</body>
+</html>

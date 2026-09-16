@@ -8,8 +8,10 @@ logic-level shifter) and drives INDI's existing Sky-Watcher Alt-Az mount
 driver directly — no custom motor-protocol code needed.
 
 No hardware exists yet (still Fáza 0/1beta), but firmware v0 is being built
-now so installation, OTA updates, and INDI process management are already
-solved before the first prototype is wired up. The UX for both the hand
+now so installation, OTA updates, and INDI process management are designed
+up front — INDI process management is already implemented, installation and
+OTA are planned (see Remaining work) — rather than improvised once the
+first prototype is wired up. The UX for both the hand
 controller and its companion Web UI is fully defined by the interactive
 HTML/JS mockup published as part of this site (`docs/mockup.html` — open
 the [Mockup tab](index.html#mockup) via GitHub Pages) plus the decisions
@@ -78,7 +80,7 @@ this doc, `docs/CODES.md`, and `docs/WIRING.md` to be picked up cold:
 1. **`firmware/ui/`** — port every screen from `docs/mockup.html`'s JS state
    machine (`st.screen` switch in the mockup's `<script>`) to Python,
    driven by `firmware.hal.display.DisplayHAL` / `firmware.hal.input.InputHAL`
-   from this pass. Include the four behavior changes listed above — they are
+   from this pass. Include the five behavior changes listed above — they are
    not in the mockup's JS and must be added fresh, not ported.
 2. **`firmware/main.py`** — argument parsing (`--simulate`), constructs
    `make_display()` / `make_input()` / `IndiServerManager` / the `ui` state

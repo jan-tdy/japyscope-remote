@@ -74,10 +74,17 @@ same regardless of panel size (`firmware/hal/display/epaper.py`):
 
 Not a bonded/commercial frontlight — a custom JapySoft side/edge-mounted RGB
 LED solution (2× 5mm LED per side of the display, per project notes).
-**Switching mechanism still TBD** (confirmed: no MOSFET, contrary to an
-earlier assumption) — update this section once the driving circuit is
-decided; `firmware/hal/display/epaper.py::set_backlight()` is stubbed
-pending this.
+
+**Switching mechanism confirmed**: plain GPIO drive — each 5mm LED wired
+with its own series current-limiting resistor straight to a Pi Zero W GPIO
+pin, no MOSFET and no dedicated LED driver IC. Off/Med/High per channel
+(R/G/B) is done with software PWM on those GPIO pins, not separate
+resistor values.
+
+**TODO**: exact GPIO pin assignment per channel/LED and resistor values —
+update this table once wired, and update
+`firmware/hal/display/epaper.py::set_backlight()` (currently a stub) to
+drive them.
 
 ## Power / enclosure notes (not wiring, kept here for context)
 

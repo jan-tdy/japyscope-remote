@@ -1,7 +1,7 @@
 # Firmware (Raspberry Pi Zero W, real hardware backends)
 RPi.GPIO==0.7.1
 spidev==3.6
-Pillow==10.4.0
+Pillow==12.3.0
 
 # Firmware + shared
 requests==2.32.3
