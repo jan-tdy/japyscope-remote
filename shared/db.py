@@ -1,0 +1,254 @@
+"""Shared SQLite data layer used by both the firmware app and the Web UI.
+
+A single SQLite file (default: /var/lib/japyscope/japyscope.db on the device,
+overridable via the JAPYSCOPE_DB_PATH env var) is the source of truth for:
+
+- user-created catalogs (the controller's "My Catalog" screen shows one of
+  these per catalog; the Web UI creates/edits them) — NOT the built-in
+  reference catalogs (Basic/Messier/NGC/Caldwell), which are static data
+  shipped with the firmware, not stored here.
+- settings (location, timezone, park position, sudo password hash, ...)
+- runtime state written by the firmware app and read by the Web UI
+  (aligned, parked, current RA/Dec/Alt/Az, ...)
+- Web UI access codes shown on the controller and entered on the login page
+
+Kept as plain stdlib sqlite3 (no ORM) — this runs on a Pi Zero W, and the
+schema is small enough that an ORM would add dependency weight for no
+benefit.
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Iterator, Optional
+
+DEFAULT_DB_PATH = os.environ.get("JAPYSCOPE_DB_PATH", "/var/lib/japyscope/japyscope.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS catalogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS catalog_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    catalog_id INTEGER NOT NULL REFERENCES catalogs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    ra TEXT NOT NULL DEFAULT '',
+    dec TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'webui',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_items_catalog_id ON catalog_items(catalog_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS access_codes (
+    code TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+"""
+
+DEFAULT_SETTINGS = {
+    "latitude": "0.0",
+    "longitude": "0.0",
+    "elevation_m": "0",
+    "timezone": "UTC",
+    "park_mode": "zenith",  # zenith | home | custom
+    "park_alt": "45",
+    "park_az": "180",
+    "sudo_password": "1234",
+    "backlight_r": "1",  # index into ("Off","Med","High")
+    "backlight_g": "0",
+    "backlight_b": "0",
+}
+
+
+def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA)
+    for key, value in DEFAULT_SETTINGS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
+        )
+    conn.commit()
+
+
+@contextmanager
+def db_session(db_path: str = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        yield conn
+    finally:
+        conn.close()
+
+
+@dataclass
+class CatalogItem:
+    id: int
+    catalog_id: int
+    name: str
+    ra: str
+    dec: str
+    type: str
+    note: str
+    source: str
+
+
+class CatalogRepo:
+    """Multiple named user catalogs (see docs/ARCHITECTURE.md — v0 no longer
+    assumes a single flat 'My Catalog')."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def list_catalogs(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM catalogs ORDER BY name"
+        ).fetchall()
+
+    def create_catalog(self, name: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO catalogs(name, created_at) VALUES (?, ?)",
+            (name, time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def rename_catalog(self, catalog_id: int, new_name: str) -> None:
+        self.conn.execute(
+            "UPDATE catalogs SET name = ? WHERE id = ?", (new_name, catalog_id)
+        )
+        self.conn.commit()
+
+    def delete_catalog(self, catalog_id: int) -> None:
+        self.conn.execute("DELETE FROM catalogs WHERE id = ?", (catalog_id,))
+        self.conn.commit()
+
+    def list_items(self, catalog_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM catalog_items WHERE catalog_id = ? ORDER BY name",
+            (catalog_id,),
+        ).fetchall()
+
+    def add_item(
+        self,
+        catalog_id: int,
+        name: str,
+        ra: str = "",
+        dec: str = "",
+        type_: str = "",
+        note: str = "",
+        source: str = "webui",
+    ) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO catalog_items
+               (catalog_id, name, ra, dec, type, note, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (catalog_id, name, ra, dec, type_, note, source, time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def delete_item(self, item_id: int) -> None:
+        self.conn.execute("DELETE FROM catalog_items WHERE id = ?", (item_id,))
+        self.conn.commit()
+
+
+class SettingsRepo:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self.conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO settings(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
+
+    def all(self) -> dict[str, str]:
+        return {row["key"]: row["value"] for row in self.conn.execute("SELECT * FROM settings")}
+
+
+class StateRepo:
+    """Runtime status written by the firmware app, read (never written) by
+    the Web UI. Deliberately separate from `settings`, which is user-editable
+    configuration."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO state(key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, time.time()),
+        )
+        self.conn.commit()
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self.conn.execute(
+            "SELECT value FROM state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def all(self) -> dict[str, str]:
+        return {row["key"]: row["value"] for row in self.conn.execute("SELECT * FROM state")}
+
+
+class AccessCodeRepo:
+    """Dynamic Web UI login codes shown on the controller (Menu -> Wi-Fi /
+    Web Access). Deliberately low-security (a deterrent, not a real auth
+    system) per the mockup/memory."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def issue(self, code: str, ttl_seconds: int) -> None:
+        now = time.time()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO access_codes(code, created_at, expires_at) VALUES (?, ?, ?)",
+            (code, now, now + ttl_seconds),
+        )
+        self.conn.commit()
+
+    def is_valid(self, code: str) -> bool:
+        row = self.conn.execute(
+            "SELECT expires_at FROM access_codes WHERE code = ?", (code,)
+        ).fetchone()
+        return bool(row) and row["expires_at"] >= time.time()
+
+    def purge_expired(self) -> None:
+        self.conn.execute("DELETE FROM access_codes WHERE expires_at < ?", (time.time(),))
+        self.conn.commit()
