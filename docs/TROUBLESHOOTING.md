@@ -46,6 +46,41 @@ already-upgraded `setuptools`/`wheel`) instead of fetching its own
 (incompatible) copy of `swig` into an isolated sandbox. `git pull` if
 you're hitting this on an old checkout.
 
+## `pyindi-client` build fails on SWIG: "Unable to find 'indipropertyview.h'" (and friends)
+
+Next stage after the `swig` fix above: SWIG itself now runs, but can't find
+`indimacros.h`, `indiwidgettraits.h`, `indipropertyview.h`,
+`indipropertybasic.h`, `indipropertytext.h`, `indipropertynumber.h`,
+`indipropertyswitch.h`, `indipropertylight.h`, `indipropertyblob.h`, or
+`indiproperties.h`. Confirmed root cause: Bullseye's apt `libindi-dev` is
+**1.8.8+dfsg-1**, which predates the `INDI::PropertyView`-family headers
+current `pyindi-client`'s SWIG interface (`indiclientpython.i`) requires —
+those headers simply don't exist anywhere in that package. There is no apt
+repository shipping a newer `libindi-dev` for armhf/Bullseye (the INDI forum
+has an open thread literally titled "INDI needs a new apt repository for
+Debian ARM"), and building INDI core from source *on* a Pi Zero W (single
+ARM11 core, 512 MB RAM, already SD-card-constrained — see "Filesystem went
+read-only" below) is impractical and risky.
+
+Fixed without compiling anything on the Pi: `.github/workflows/build-libindi-armhf.yml`
+cross-builds INDI core on GitHub's infrastructure, booting the actual
+Raspberry Pi OS Bullseye armhf image under QEMU (via `pguyot/arm-runner-action`,
+`cpu: arm1176`) — not a generic Debian/Ubuntu docker image, which would
+produce ARMv7 binaries that illegal-instruction-crash on the Zero W's ARMv6
+CPU. It packages just the new headers and the client library (not
+`indiserver` or any driver — those keep running from apt's `indi-bin`/
+`libindi-dev`, untouched) and attaches the tarball to a GitHub Release.
+`install.sh` downloads it (pinned tag + SHA-256 in `install/libindi-core.env`)
+into `/usr/local` — already one of `indiclientpython.i`'s own SWIG search
+paths, so no interface-file change was needed — before the existing
+`--no-deps --no-build-isolation` `pyindi-client` install. `git pull` if
+you're hitting this on an old checkout.
+
+If `install/libindi-core.env` still says `PENDING`, the prebuilt tarball
+hasn't been published yet; trigger the workflow manually (Actions → "Build
+libindi core (armhf, Bullseye, ARMv6)") or push a `libindi-armhf-vX.Y.Z` tag,
+then update that file with the resulting tag/asset/SHA-256.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
