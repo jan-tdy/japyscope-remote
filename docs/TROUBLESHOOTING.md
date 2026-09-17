@@ -30,6 +30,22 @@ If you ever regenerate `requirements.lock` with `pip-compile`, it will
 pull `pyindi-client` (and `bottle`/`dbus-python`) back in — remove those
 three again afterward, per the comment at the top of `requirements.lock`.
 
+## `pyindi-client` build fails on `swig`: "GLIBC_2.33/2.34 not found"
+
+Same class of problem as the `ninja`/`dbus-python` one above, just a
+different build-time dependency: `pyindi-client`'s `build-system.requires`
+also lists the PyPI `swig` package (not just the system tool), and *its*
+bundled `swig` binary is compiled against a newer glibc than Bullseye ships
+(2.33/2.34 vs. Bullseye's 2.31) — it fails to even execute.
+
+Fixed by installing `swig` via apt (system tool, correctly built for
+Bullseye's glibc) and passing `--no-build-isolation` to the
+`requirements-pyindi.lock` install, so pip builds against the
+already-installed environment (system `swig` on `PATH`, plus the venv's
+already-upgraded `setuptools`/`wheel`) instead of fetching its own
+(incompatible) copy of `swig` into an isolated sandbox. `git pull` if
+you're hitting this on an old checkout.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after

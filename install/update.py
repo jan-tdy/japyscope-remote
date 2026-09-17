@@ -231,14 +231,22 @@ class Updater:
             try:
                 subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=60)
                 subprocess.run(
+                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+                    check=True, timeout=120,
+                )
+                subprocess.run(
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
                     check=True, timeout=900,
                 )
-                # Separate, --no-deps install — see requirements-pyindi.lock
-                # and install.sh for why pyindi-client can't go through the
-                # main hash-locked install on this hardware.
+                # Separate, --no-deps, --no-build-isolation install — see
+                # requirements-pyindi.lock and install.sh for why
+                # pyindi-client can't go through the main hash-locked
+                # install on this hardware (bottle/dbus-python unused and
+                # unbuildable; --no-build-isolation makes its swig build
+                # dependency resolve to the system swig, not a PyPI-bundled
+                # binary that needs a newer glibc than Bullseye has).
                 subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "-r", str(target / "requirements-pyindi.lock")],
+                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
                     check=True, timeout=300,
                 )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=60)

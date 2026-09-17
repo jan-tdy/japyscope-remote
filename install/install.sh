@@ -70,7 +70,7 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -104,7 +104,11 @@ else
   # Separate, --no-deps install: pyindi-client's declared bottle/dbus-python
   # dependencies are unused by the actual PyIndi module and dbus-python
   # can't be built on the Pi Zero W — see requirements-pyindi.lock.
-  "$release_dir/.venv/bin/python" -m pip install --require-hashes --no-deps -r "$release_dir/requirements-pyindi.lock"
+  # --no-build-isolation: its build-system.requires also lists the PyPI
+  # "swig" package, whose bundled binary needs a newer glibc than Bullseye
+  # has (GLIBC_2.33/2.34 vs. Bullseye's 2.31) — use the system swig (apt,
+  # above) instead by building against the already-installed environment.
+  "$release_dir/.venv/bin/python" -m pip install --require-hashes --no-deps --no-build-isolation -r "$release_dir/requirements-pyindi.lock"
   chown -R root:root "$release_dir"
   touch "$marker"
 fi
