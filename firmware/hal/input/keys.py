@@ -12,3 +12,18 @@ ENC_DOWN = "ENC_DOWN"
 ENC_PUSH = "ENC_PUSH"
 
 ALL_KEYS = [*DIGITS, BKSP, FN2, ENC_UP, ENC_DOWN, ENC_PUSH]
+
+# Which physical device produces each code — used by CompositeInput to route
+# events correctly when the keypad and encoder are independently real/
+# simulated (see docs/WIRING.md: they're wired up separately, at different
+# points in bring-up).
+KEYPAD_KEYS = frozenset({*DIGITS, BKSP, FN2})
+ENCODER_KEYS = frozenset({ENC_UP, ENC_DOWN, ENC_PUSH})
+
+
+def is_keypad_key(key: str) -> bool:
+    return key in KEYPAD_KEYS
+
+
+def is_encoder_key(key: str) -> bool:
+    return key in ENCODER_KEYS

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from firmware.hal.backlight.base import BacklightHAL
+from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2
@@ -112,10 +114,12 @@ class ControllerUI:
         conn,
         search: Optional[SmartSearch] = None,
         clock: Callable[[], float] = time.time,
+        backlight: Optional[BacklightHAL] = None,
     ):
         self.display = display
         self.input = input_hal
         self.indi = indi_client
+        self.backlight = backlight or SimulatorBacklight()
         self.catalogs = CatalogRepo(conn)
         self.settings = SettingsRepo(conn)
         self.runtime = StateRepo(conn)
@@ -463,7 +467,7 @@ class ControllerUI:
             if self._move(key, 3): return
             if key == ENC_PUSH:
                 s.backlight[s.index] = (s.backlight[s.index] + 1) % 3
-                self.display.set_backlight(*s.backlight); self.render()
+                self.backlight.set(*s.backlight); self.render()
             elif key == "9": self._set("MENU", 5)
             return
         if s.screen == "LANGUAGE":

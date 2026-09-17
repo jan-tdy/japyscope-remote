@@ -3,6 +3,7 @@ import tempfile
 
 import requests
 
+from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, FN2
@@ -12,9 +13,14 @@ from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 class Display(DisplayHAL):
     def __init__(self):
-        super().__init__(); self.lines = []; self.backlight = None
+        super().__init__(); self.lines = []
     def draw_lines(self, lines): self.lines = lines
-    def set_backlight(self, r, g, b): self.backlight = (r, g, b)
+
+
+class Backlight(BacklightHAL):
+    def __init__(self):
+        self.value = None
+    def set(self, r, g, b): self.value = (r, g, b)
 
 
 class Input(InputHAL):
@@ -31,7 +37,7 @@ class Indi:
 def make_ui():
     fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
     conn = connect(path); init_db(conn)
-    ui = ControllerUI(Display(), Input(), Indi(), conn)
+    ui = ControllerUI(Display(), Input(), Indi(), conn, backlight=Backlight())
     return ui, conn, path
 
 
@@ -80,6 +86,17 @@ def test_language_screen_preselects_current_choice():
         assert ui.state.screen == "LANGUAGE" and ui.state.index == 1
         ui.handle("9")
         assert ui.state.screen == "MENU" and ui.state.index == 6
+    finally: conn.close(); os.unlink(path)
+
+
+def test_backlight_menu_calls_injected_backlight_hal():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 5; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "BACKLIGHT"
+        assert ui.state.backlight == [1, 0, 0]  # default: R=Med, G=Off, B=Off
+        ui.handle(ENC_PUSH)  # cycle channel 0 (R): Med -> High
+        assert ui.backlight.value == tuple(ui.state.backlight) == (2, 0, 0)
     finally: conn.close(); os.unlink(path)
 
 

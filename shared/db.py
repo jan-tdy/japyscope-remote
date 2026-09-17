@@ -72,6 +72,13 @@ CREATE TABLE IF NOT EXISTS access_codes (
 );
 """
 
+# Independently overridable hardware components during bring-up (see the
+# hw_sim_* settings below) — shared between firmware/main.py (which reads
+# them to pick real vs. simulated backends) and webui/app.py's Settings
+# page (which lets you flip them without needing firmware's own heavier
+# imports, e.g. RPi.GPIO attempts).
+HARDWARE_COMPONENTS = ("keypad", "encoder", "display", "backlight", "mount")
+
 DEFAULT_SETTINGS = {
     "latitude": "0.0",
     "longitude": "0.0",
@@ -84,6 +91,16 @@ DEFAULT_SETTINGS = {
     "backlight_g": "0",
     "backlight_b": "0",
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
+    # Per-component hardware bring-up overrides: "1" = simulated, "0"/absent
+    # = real hardware. Independent of --simulate (which forces everything
+    # simulated regardless of these) — for wiring up one piece at a time
+    # (e.g. keypad on real GPIO while the encoder isn't soldered yet).
+    # See firmware/main.py's resolve_simulation_flags().
+    "hw_sim_keypad": "0",
+    "hw_sim_encoder": "0",
+    "hw_sim_display": "0",
+    "hw_sim_backlight": "0",
+    "hw_sim_mount": "0",
 }
 
 

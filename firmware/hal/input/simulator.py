@@ -8,6 +8,7 @@ real keypad.
 """
 from __future__ import annotations
 
+import io
 import queue
 import select
 import sys
@@ -30,16 +31,25 @@ class SimulatorInput(InputHAL):
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._fd = sys.stdin.fileno()
         self._old_settings = None
         try:
-            self._old_settings = termios.tcgetattr(self._fd)
-            tty.setcbreak(self._fd)
-        except (termios.error, ValueError):
-            self._old_settings = None  # not a real TTY (e.g. piped input in tests)
+            self._fd = sys.stdin.fileno()
+        except (OSError, ValueError, io.UnsupportedOperation):
+            # No real stdin fd at all (e.g. under pytest's capture, or a
+            # service with stdin fully detached) — never produces events,
+            # same as the "not a real TTY" case just below.
+            self._fd = None
+        else:
+            try:
+                self._old_settings = termios.tcgetattr(self._fd)
+                tty.setcbreak(self._fd)
+            except (termios.error, ValueError):
+                self._old_settings = None  # not a real TTY (e.g. piped input in tests)
         self._thread.start()
 
     def _read_loop(self) -> None:
+        if self._fd is None:
+            return
         # Poll with a timeout instead of a blocking read() so close() can
         # signal _stop and have this thread actually notice and exit,
         # rather than sitting blocked until one more key is pressed.

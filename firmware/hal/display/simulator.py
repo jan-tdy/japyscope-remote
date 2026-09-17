@@ -17,6 +17,3 @@ class SimulatorDisplay(DisplayHAL):
         for line in lines[: self.visible_rows]:
             print(line)
         print("=" * width)
-
-    def set_backlight(self, r: int, g: int, b: int) -> None:
-        print(f"(backlight R={r} G={g} B={b})")

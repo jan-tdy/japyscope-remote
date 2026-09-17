@@ -1,12 +1,21 @@
-"""Real hardware input backend: a 3x4 matrix keypad (stock SparkFun
-COM-14662, stickers only — see docs/WIRING.md for physical key legend) plus
-a KY-040 rotary encoder, on Raspberry Pi Zero W GPIO.
+"""Real hardware input backend: the 3x4 matrix keypad only (stock SparkFun
+COM-14662, stickers only — see docs/WIRING.md for physical key legend), on
+Raspberry Pi Zero W GPIO. The KY-040 rotary encoder is a separate device on
+separate pins — see encoder.py — since the two are wired up independently
+during bring-up (see shared.db's hw_sim_keypad/hw_sim_encoder settings).
 
 Pin numbers below are placeholders — cross-check/update against
 docs/WIRING.md, the single source of truth, once wiring is finalized.
-Matrix scanning and quadrature decoding are standard techniques and don't
-depend on that confirmation, so they're implemented for real (not stubbed)
-even though this has not been tested against physical hardware yet.
+Matrix scanning is a standard technique and doesn't depend on that
+confirmation, so it's implemented for real (not stubbed) even though this
+has not been tested against physical hardware yet.
+
+Note: RPi.GPIO's setmode()/cleanup() are process-global. If both this class
+and encoder.py's EncoderInput are constructed together (both real), each
+calls GPIO.setmode(GPIO.BCM) — harmless, same mode both times — but
+GPIO.cleanup() with no arguments resets every channel, not just this
+instance's own pins. Not a practical problem today since both are always
+closed together at shutdown, but worth knowing before changing that.
 """
 from __future__ import annotations
 
@@ -16,7 +25,7 @@ import time
 from typing import Optional
 
 from .base import InputHAL
-from .keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2
+from .keys import BKSP, FN2
 
 # 3x4 matrix: rows/cols in BCM numbering — confirm against docs/WIRING.md.
 ROW_PINS = [5, 6, 13, 19]
@@ -28,10 +37,6 @@ KEY_LAYOUT = [
     ["7", "8", "9"],
     [FN2, "0", BKSP],
 ]
-
-ENC_CLK_PIN = 16
-ENC_DT_PIN = 12
-ENC_SW_PIN = 7
 
 _SCAN_INTERVAL_S = 0.02
 _DEBOUNCE_S = 0.05
@@ -48,13 +53,9 @@ class KeypadInput(InputHAL):
             GPIO.output(pin, GPIO.HIGH)
         for pin in COL_PINS:
             GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(ENC_CLK_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(ENC_DT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(ENC_SW_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._stop = threading.Event()
-        self._last_clk = GPIO.input(ENC_CLK_PIN)
         self._last_key_time: dict[str, float] = {}
         self._thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._thread.start()
@@ -76,20 +77,9 @@ class KeypadInput(InputHAL):
                     self._debounced_emit(KEY_LAYOUT[row_idx][col_idx])
             GPIO.output(row_pin, GPIO.HIGH)
 
-    def _scan_encoder(self) -> None:
-        GPIO = self._gpio
-        clk = GPIO.input(ENC_CLK_PIN)
-        if clk != self._last_clk:
-            direction = ENC_DOWN if GPIO.input(ENC_DT_PIN) != clk else ENC_UP
-            self._debounced_emit(direction)
-        self._last_clk = clk
-        if GPIO.input(ENC_SW_PIN) == GPIO.LOW:
-            self._debounced_emit(ENC_PUSH)
-
     def _scan_loop(self) -> None:
         while not self._stop.is_set():
             self._scan_matrix()
-            self._scan_encoder()
             time.sleep(_SCAN_INTERVAL_S)
 
     def poll(self, timeout: float = 0.1) -> Optional[str]:
