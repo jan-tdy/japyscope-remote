@@ -78,11 +78,17 @@ jobs:
             cmake --build /tmp/indi-build -j"$(nproc)"
             mkdir -p /tmp/indi-stage
             DESTDIR=/tmp/indi-stage cmake --install /tmp/indi-build
+            # INDI core is LGPL-2.1 (see COPYING.LGPL) — bundle the license
+            # text and the exact source ref built, satisfying LGPL's source
+            # + notice requirements for redistributing the compiled library.
+            cp /tmp/indi-src/COPYING.LGPL /tmp/indi-stage/usr/local/
+            printf 'Built from https://github.com/indilib/indi at ref %s\n' \
+              "${{ steps.ref.outputs.ref }}" > /tmp/indi-stage/usr/local/SOURCE.txt
             cd /tmp/indi-stage/usr/local
             tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
-              include/libindi lib/libindiclient* lib/libindidriver* lib/cmake/INDI lib/pkgconfig/*indi* 2>/dev/null || \
+              include/libindi lib/libindiclient* lib/libindidriver* lib/cmake/INDI lib/pkgconfig/*indi* COPYING.LGPL SOURCE.txt 2>/dev/null || \
             tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
-              include/libindi lib
+              include/libindi lib COPYING.LGPL SOURCE.txt
 
       - name: Checksum
         run: |
