@@ -86,7 +86,7 @@ jobs:
             apt-get update
             apt-get install -y --no-install-recommends \
               git ca-certificates cmake build-essential pkg-config \
-              libnova-dev libgsl-dev libcfitsio-dev libcurl4-gnutls-dev \
+              libev-dev libnova-dev libgsl-dev libcfitsio-dev libcurl4-gnutls-dev \
               libjpeg-dev zlib1g-dev libusb-1.0-0-dev libftdi-dev
             rm -rf /tmp/indi-src /tmp/indi-stage
             git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" \
