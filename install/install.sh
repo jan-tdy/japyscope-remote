@@ -97,10 +97,14 @@ if [[ -e $release_dir ]]; then
   echo "Release $version is already fully installed — skipping rebuild." >&2
 else
   install -d -o root -g root -m 755 "$release_dir"
-  cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$source_dir/requirements.lock" "$release_dir/"
+  cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$source_dir/requirements.lock" "$source_dir/requirements-pyindi.lock" "$release_dir/"
   python3 -m venv "$release_dir/.venv"
   "$release_dir/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
   "$release_dir/.venv/bin/python" -m pip install --require-hashes -r "$release_dir/requirements.lock"
+  # Separate, --no-deps install: pyindi-client's declared bottle/dbus-python
+  # dependencies are unused by the actual PyIndi module and dbus-python
+  # can't be built on the Pi Zero W — see requirements-pyindi.lock.
+  "$release_dir/.venv/bin/python" -m pip install --require-hashes --no-deps -r "$release_dir/requirements-pyindi.lock"
   chown -R root:root "$release_dir"
   touch "$marker"
 fi

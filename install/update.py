@@ -88,6 +88,7 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
         not (root / "firmware" / "main.py").is_file()
         or not (root / "webui" / "app.py").is_file()
         or not (root / "requirements.lock").is_file()
+        or not (root / "requirements-pyindi.lock").is_file()
     ):
         raise UpdateError("release does not contain a JapyScope application tree")
     return root
@@ -232,6 +233,13 @@ class Updater:
                 subprocess.run(
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
                     check=True, timeout=900,
+                )
+                # Separate, --no-deps install — see requirements-pyindi.lock
+                # and install.sh for why pyindi-client can't go through the
+                # main hash-locked install on this hardware.
+                subprocess.run(
+                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "-r", str(target / "requirements-pyindi.lock")],
+                    check=True, timeout=300,
                 )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=60)
                 self._flip(target)

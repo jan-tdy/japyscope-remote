@@ -19,6 +19,7 @@ def test_safe_extract_accepts_application_tree(tmp_path):
         add_file(bundle, "release/webui/app.py")
         add_file(bundle, "release/requirements.txt")
         add_file(bundle, "release/requirements.lock")
+        add_file(bundle, "release/requirements-pyindi.lock")
     root = _safe_extract(archive, tmp_path / "out")
     assert root.name == "release"
 

@@ -12,6 +12,7 @@ defusedxml==0.7.1
 Flask==3.0.3
 
 # INDI client bindings (LGPL, used as a runtime dependency — see docs/CODES.md
-# licensing note). Install separately per docs/INSTALL.md if your distro
-# doesn't carry a prebuilt wheel; not required for --simulate.
-pyindi-client==2.2.0
+# licensing note); not required for --simulate. Deliberately NOT listed here
+# — see requirements-pyindi.lock, installed separately with --no-deps by
+# install.sh/update.py, since its declared (but unused) bottle/dbus-python
+# dependencies can't be built on the Pi Zero W.

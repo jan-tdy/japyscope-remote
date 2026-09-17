@@ -1,0 +1,26 @@
+#
+# pyindi-client, installed separately with --no-deps (see install.sh and
+# docs/INSTALL.md). Its PyPI metadata declares hard dependencies on
+# bottle and dbus-python that the actual importable `PyIndi` module never
+# uses (verified against the 2.2.0 sdist: no `import bottle`/`import dbus`
+# anywhere in PyIndi/__init__.py or PyIndi/PyIndi.py — those are leftover
+# from the unrelated example scripts). dbus-python cannot be built on the
+# Pi Zero W (no armhf wheel, and its meson-python build needs ninja in a
+# way that doesn't work in pip's isolated build sandbox on this hardware).
+#
+# Regenerate the hash list with:
+#   pip download --no-deps --no-binary :none: pyindi-client==2.2.0 ...
+# or copy the pyindi-client entry back out of a pip-compile run of
+# requirements.txt with pyindi-client re-added, then remove it from
+# requirements.lock again.
+#
+pyindi-client==2.2.0 \
+    --hash=sha256:01139a20d52414a47b8a16e5fc1e8cb7fd004510a4ca81816f6cb9cf67d16e70 \
+    --hash=sha256:2f224edcc52177aa380bece0d82fb65369ac65eeeb526c65d08211687b7f571a \
+    --hash=sha256:4d344a4ee862185cb86cd269423d45b8364806bf75e692b23d50a3a6bbb898bc \
+    --hash=sha256:661b30c16e5d09118b8473aba52674a22b2d413b4a658dac4c307cbd8c4a5be5 \
+    --hash=sha256:9835380ccf57c94c191ea2ff67a7c49e425dfbec6af035d1f5ca0abab4ead2ff \
+    --hash=sha256:9df8b139055097094419114ab89d99ce49dc6c1001a6575ecf6c2b93bf9c7fb4 \
+    --hash=sha256:9e4c3d225fddde493e59aba7ec61ff2119293b66e41f9ecae3c3be75a04da3eb \
+    --hash=sha256:d0614b1f891bc2bcf044c27128041858445eb5a23cc54114cbbf29f1a4c7629e \
+    --hash=sha256:f7cca80e3165a0aaa9697b7011b2c7d03cb0d8de6935d1eb019304817e503547

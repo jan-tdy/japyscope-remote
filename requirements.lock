@@ -4,14 +4,18 @@
 #
 #    pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
 #
+# pyindi-client is intentionally NOT listed here — see
+# requirements-pyindi.lock and docs/INSTALL.md for why: pip-compile pulls
+# in its declared (but actually unused) bottle/dbus-python dependencies,
+# and dbus-python cannot be built on the Pi Zero W (no prebuilt wheel for
+# armhf, and its meson-python build needs a working ninja it can't get in
+# an isolated build sandbox on this hardware — confirmed during real
+# bring-up, several failed attempts). Manually re-add pyindi-client here
+# if this file is ever regenerated with pip-compile, then remove it again.
 blinker==1.9.0 \
     --hash=sha256:b4ce2265a7abece45e7cc896e98dbebe6cead56bcf805a3d23136d145f5445bf \
     --hash=sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc
     # via flask
-bottle==0.13.4 \
-    --hash=sha256:045684fbd2764eac9cdeb824861d1551d113e8b683d8d26e296898d3dd99a12e \
-    --hash=sha256:787e78327e12b227938de02248333d788cfe45987edca735f8f88e03472c3f47
-    # via pyindi-client
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
     --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
@@ -194,9 +198,6 @@ click==8.1.8 \
     --hash=sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2 \
     --hash=sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a
     # via flask
-dbus-python==1.4.0 \
-    --hash=sha256:991666e498f60dbf3e49b8b7678f5559b8a65034fdf61aae62cdecdb7d89c770
-    # via pyindi-client
 defusedxml==0.7.1 \
     --hash=sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
@@ -314,23 +315,10 @@ markupsafe==3.0.3 \
     # via
     #   jinja2
     #   werkzeug
-pyindi-client==2.2.0 \
-    --hash=sha256:01139a20d52414a47b8a16e5fc1e8cb7fd004510a4ca81816f6cb9cf67d16e70 \
-    --hash=sha256:2f224edcc52177aa380bece0d82fb65369ac65eeeb526c65d08211687b7f571a \
-    --hash=sha256:4d344a4ee862185cb86cd269423d45b8364806bf75e692b23d50a3a6bbb898bc \
-    --hash=sha256:661b30c16e5d09118b8473aba52674a22b2d413b4a658dac4c307cbd8c4a5be5 \
-    --hash=sha256:9835380ccf57c94c191ea2ff67a7c49e425dfbec6af035d1f5ca0abab4ead2ff \
-    --hash=sha256:9df8b139055097094419114ab89d99ce49dc6c1001a6575ecf6c2b93bf9c7fb4 \
-    --hash=sha256:9e4c3d225fddde493e59aba7ec61ff2119293b66e41f9ecae3c3be75a04da3eb \
-    --hash=sha256:d0614b1f891bc2bcf044c27128041858445eb5a23cc54114cbbf29f1a4c7629e \
-    --hash=sha256:f7cca80e3165a0aaa9697b7011b2c7d03cb0d8de6935d1eb019304817e503547
-    # via -r requirements.txt
 requests==2.32.3 \
     --hash=sha256:55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760 \
     --hash=sha256:70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6
-    # via
-    #   -r requirements.txt
-    #   pyindi-client
+    # via -r requirements.txt
 rpi-gpio==0.7.1 \
     --hash=sha256:15311d3b063b71dee738cd26570effc9985a952454d162937c34e08c0fc99902 \
     --hash=sha256:29226823da8b5ccb9001d795a944f2e00924eeae583490f0bc7317581172c624 \

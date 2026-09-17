@@ -6,6 +6,30 @@ Start with the combined journal:
 journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
 ```
 
+## `pip install` fails on `dbus-python`: "meson-python: error: Could not find ninja version 1.8.2 or newer"
+
+**Fixed as of this doc** — if you're still hitting this, you have an old
+checkout: `git pull` first. Root cause, confirmed during real Pi Zero W
+bring-up after installing `ninja-build`/`cmake` didn't help across many
+retries: `pyindi-client`'s PyPI metadata declares hard dependencies on
+`bottle` and `dbus-python` that the actual `PyIndi` module never imports
+(verified against its source — nothing in `PyIndi/__init__.py` or
+`PyIndi/PyIndi.py` touches either). `dbus-python` has no prebuilt wheel for
+armhf, and building it needs `meson-python`, which fetches its own `ninja`
+from PyPI into pip's *isolated* build sandbox rather than using the
+perfectly good system `ninja` — and that isolated build doesn't work on
+this hardware, regardless of what's installed system-wide.
+
+The fix: `pyindi-client` is no longer installed via the main
+`requirements.lock` at all. It's installed separately, with `--no-deps`,
+from `requirements-pyindi.lock` — see `install.sh` and `install/update.py`.
+This skips `bottle`/`dbus-python` entirely; nothing is lost since they were
+never used.
+
+If you ever regenerate `requirements.lock` with `pip-compile`, it will
+pull `pyindi-client` (and `bottle`/`dbus-python`) back in — remove those
+three again afterward, per the comment at the top of `requirements.lock`.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
