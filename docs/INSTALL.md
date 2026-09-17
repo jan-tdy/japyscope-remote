@@ -9,6 +9,27 @@ isn't how Bookworm's default NetworkManager-based networking works, and
 that hasn't been ported/tested. The installer enforces this — it refuses to
 run on anything but Bullseye.
 
+## Power and SD card (read this first)
+
+Confirmed twice during real bring-up: a weak power source (phone
+charger/PC USB port) or a low-quality/counterfeit SD card can corrupt the
+filesystem mid-install, under the sustained CPU+write load of `apt`/`pip`/
+`venv` — symptoms are `EXT4-fs` extent-conversion errors, `dpkg` I/O
+errors, and the filesystem going read-only. There's no battery in this
+device to smooth over a brief power sag. Before you start:
+
+- Use a proper **5V/2.5A** power supply with a short, good-quality
+  micro-USB cable — not a phone charger or a PC USB port.
+- Use a **reputable-brand SD card** (SanDisk, Samsung, ...); ideally a
+  "High Endurance"/"Application class" one meant for continuous writes,
+  since this device runs unattended 24/7. Cheap unbranded cards frequently
+  misreport their capacity and fail under real write load.
+
+If you hit filesystem/I-O errors during install anyway, see
+`docs/TROUBLESHOOTING.md`'s "Filesystem went read-only" section before
+retrying — repeatedly retrying on an already-degraded card/filesystem can
+make it worse.
+
 ## Prepare the card
 
 1. Flash Bullseye Lite with Raspberry Pi Imager. Configure a user and enable
