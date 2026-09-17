@@ -86,8 +86,12 @@ jobs:
             apt-get update
             apt-get install -y --no-install-recommends \
               git ca-certificates cmake build-essential pkg-config \
-              libev-dev libnova-dev libgsl-dev libcfitsio-dev libcurl4-gnutls-dev \
-              libjpeg-dev zlib1g-dev libusb-1.0-0-dev libftdi-dev
+              libev-dev libgps-dev libgsl-dev libraw-dev \
+              libusb-dev libusb-1.0-0-dev zlib1g-dev libftdi-dev \
+              libjpeg-dev libkrb5-dev libnova-dev libtiff-dev \
+              libfftw3-dev librtlsdr-dev libcfitsio-dev \
+              libgphoto2-dev libdc1394-dev libboost-regex-dev \
+              libcurl4-gnutls-dev libtheora-dev liberfa-dev
             rm -rf /tmp/indi-src /tmp/indi-stage
             git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" \
               https://github.com/indilib/indi.git /tmp/indi-src
