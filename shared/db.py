@@ -83,6 +83,7 @@ DEFAULT_SETTINGS = {
     "backlight_r": "1",  # index into ("Off","Med","High")
     "backlight_g": "0",
     "backlight_b": "0",
+    "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
 }
 
 

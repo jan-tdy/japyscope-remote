@@ -21,6 +21,8 @@ from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 
+from .i18n import DEFAULT_LANGUAGE, LANGUAGES
+from .i18n import t as translate
 from .search import SearchResult, SmartSearch
 
 logger = logging.getLogger(__name__)
@@ -93,10 +95,12 @@ class UIState:
 
 
 class ControllerUI:
-    HOME = ("Menu", "Catalog", "Dev Tools")
+    # i18n keys, not display text — translated via self._t() at render time.
+    HOME = ("home.menu", "home.catalog", "home.dev_tools")
     MENU = (
-        "Time Sync", "Alignment", "Park / Unpark", "Wi-Fi / Web Access",
-        "Location", "Backlight", "Sudo Password", "System", "About",
+        "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
+        "menu.location", "menu.backlight", "menu.language", "menu.sudo_password",
+        "menu.system", "menu.about",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
 
@@ -181,6 +185,9 @@ class ControllerUI:
     def _truth(value: Optional[str]) -> bool:
         return str(value).lower() in {"1", "true", "yes", "on"}
 
+    def _t(self, key: str, **kwargs: object) -> str:
+        return translate(key, self.settings.get("language", DEFAULT_LANGUAGE), **kwargs)
+
     def _visible(self, title: str, values: Sequence[str], footer: str = "rotate · push · 9=back") -> list[str]:
         rows = max(1, self.display.visible_rows - 2)
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
@@ -194,17 +201,26 @@ class ControllerUI:
         if screen == "BOOT":
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
-            lines = self._visible("In park position?", ["Yes — parked", "No — sync now"], "rotate · push")
+            lines = self._visible(
+                self._t("boot.park_question"),
+                [self._t("boot.park_yes"), self._t("boot.park_no")],
+                self._t("footer.rotate_push"),
+            )
         elif screen == "BOOT_SYNC_FAILED":
-            lines = ["INDI Sync failed", "Position not trusted", "push=retry", "9=park question"]
+            lines = [
+                self._t("boot.sync_failed_1"), self._t("boot.sync_failed_2"),
+                self._t("boot.sync_failed_3"), self._t("boot.sync_failed_4"),
+            ]
         elif screen == "IDLE":
             aligned = self._truth(self.runtime.get("aligned", "false"))
             lines = self._visible(
-                f"JapyScope {datetime.now():%H:%M:%S}", self.HOME,
-                "aligned" if aligned else "Not aligned",
+                f"JapyScope {datetime.now():%H:%M:%S}", [self._t(k) for k in self.HOME],
+                self._t("home.aligned") if aligned else self._t("home.not_aligned"),
             )
         elif screen == "MENU":
-            lines = self._visible("MENU", self.MENU)
+            lines = self._visible(self._t("menu.title"), [self._t(k) for k in self.MENU])
+        elif screen == "LANGUAGE":
+            lines = self._visible(self._t("language.title"), [name for name, _ in LANGUAGES])
         elif screen == "CATALOG_MENU":
             lines = self._visible("CATALOG", self.CATALOG)
         elif screen == "CUSTOM_CATALOGS":
@@ -250,11 +266,16 @@ class ControllerUI:
         elif screen == "SPEED_ADJUST":
             lines = ["Jog speed", f"{s.speed}x", "rotate=change", "push/9=back"]
         elif screen == "PARK_CONFIRM":
-            lines = self._visible("Park the mount?", ["Yes, park", "Cancel"])
+            lines = self._visible(
+                self._t("park.confirm_question"), [self._t("park.confirm_yes"), self._t("park.confirm_cancel")]
+            )
         elif screen == "PARKING":
-            lines = ["PARKING…", "", "", ""]
+            lines = [self._t("park.parking"), "", "", ""]
         elif screen == "PARKED":
-            lines = self._visible("PARKED", ["Unpark", "Power off"], "rotate · push")
+            lines = self._visible(
+                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")],
+                self._t("footer.rotate_push"),
+            )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
             lines = ["Web UI access code", s.access_code, f"Valid {remain // 60:02}:{remain % 60:02}", "push/9=back"]
@@ -278,7 +299,7 @@ class ControllerUI:
         elif screen == "LOCATION":
             lines = ["Location", f"Lat {self.settings.get('latitude')}", f"Lon {self.settings.get('longitude')}", "push/9=back"]
         elif screen == "ABOUT":
-            lines = ["JapyScope Remote", "by JapySoft", "Firmware v0", "push/9=back"]
+            lines = [self._t("about.line1"), self._t("about.line2"), self._t("about.line3"), self._t("footer.push_back")]
         elif screen == "DRIVER_SELECT":
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
@@ -445,9 +466,16 @@ class ControllerUI:
                 self.display.set_backlight(*s.backlight); self.render()
             elif key == "9": self._set("MENU", 5)
             return
+        if s.screen == "LANGUAGE":
+            if self._move(key, len(LANGUAGES)): return
+            if key == "9": self._set("MENU", 6)
+            elif key == ENC_PUSH:
+                self.settings.set("language", LANGUAGES[s.index][1])
+                self._set("MENU", 6)
+            return
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
         if s.screen == "SYSTEM_CONFIRM":
-            if key == "9": self._set("MENU", 7)
+            if key == "9": self._set("MENU", 8)
             elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
             return
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
@@ -478,8 +506,12 @@ class ControllerUI:
             self.codes.issue(s.access_code, 600); self._set("WIFI_ACCESS")
         elif s.index == 4: self._set("LOCATION")
         elif s.index == 5: self._set("BACKLIGHT")
-        elif s.index == 6: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
-        elif s.index == 7: self._set("SYSTEM_CONFIRM")
+        elif s.index == 6:
+            current = self.settings.get("language", DEFAULT_LANGUAGE)
+            codes = [code for _, code in LANGUAGES]
+            self._set("LANGUAGE", codes.index(current) if current in codes else 0)
+        elif s.index == 7: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
+        elif s.index == 8: self._set("SYSTEM_CONFIRM")
         else: self._set("ABOUT")
 
     def _open_catalog(self) -> None:
