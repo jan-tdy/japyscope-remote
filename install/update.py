@@ -93,6 +93,53 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
     return root
 
 
+_APT_LOCK = Path("/var/lib/dpkg/lock-frontend")
+_WRITABLE_PROBE = Path("/var/tmp/.japyscope-write-test")
+
+
+def _check_writable_root() -> None:
+    """Fail fast — and do not retry — on a genuinely read-only root
+    filesystem. Real bring-up hit this from marginal power / a degrading SD
+    card (see docs/TROUBLESHOOTING.md's "Filesystem went read-only");
+    retrying apt against an already-corrupted filesystem risks making it
+    worse, so this is deliberately not one of the self-healing steps below.
+    """
+    try:
+        _WRITABLE_PROBE.write_text("x")
+        _WRITABLE_PROBE.unlink()
+    except OSError as exc:
+        raise UpdateError(
+            "SYS-001 root filesystem is read-only — see docs/TROUBLESHOOTING.md "
+            "'Filesystem went read-only'; this is not safely auto-fixable"
+        ) from exc
+
+
+def _wait_for_apt_lock(timeout: float = 120.0) -> None:
+    """Cooperate with apt/dpkg's own lock (same file, same flock mechanism)
+    instead of racing it — common right after boot if unattended-upgrades
+    or a previous run is still finishing."""
+    if not _APT_LOCK.exists():
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _APT_LOCK.open("w") as lock_file:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                return
+            except BlockingIOError:
+                pass
+        time.sleep(2)
+    raise UpdateError("SYS-001 timed out waiting for another apt/dpkg process to finish")
+
+
+def _heal_dpkg() -> None:
+    """Resolve a half-configured package left by an interrupted previous
+    apt/dpkg run (power loss, a prior crash) before installing anything
+    new. Safe no-op if nothing is broken."""
+    subprocess.run(["dpkg", "--configure", "-a"], check=False)
+
+
 def _apt_upgrade() -> None:
     """Refresh and upgrade system packages within the currently configured
     Bullseye repos. Deliberately just `apt-get update && apt-get upgrade`
@@ -102,21 +149,39 @@ def _apt_upgrade() -> None:
     install/systemd/japyscope-update.service), separate from the
     JapyScope release install below, so a transient apt failure never
     blocks or gets rolled back with an app update.
+
+    Self-heals what's safely fixable (interrupted dpkg, a held lock,
+    a transient apt failure — retried up to 3 times, with a growing pause
+    between attempts rather than hammering a possibly-struggling card/power
+    supply) and fails immediately, without retrying at all, on a read-only
+    root filesystem.
     """
     env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-    try:
-        subprocess.run(["apt-get", "update"], check=True, timeout=300, env=env)
-        subprocess.run(
-            [
-                "apt-get", "-y",
-                "-o", "Dpkg::Options::=--force-confdef",
-                "-o", "Dpkg::Options::=--force-confold",
-                "upgrade",
-            ],
-            check=True, timeout=1800, env=env,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise UpdateError(f"SYS-001 system package upgrade failed: {exc}") from exc
+    upgrade_command = [
+        "apt-get", "-y",
+        "-o", "Dpkg::Options::=--force-confdef",
+        "-o", "Dpkg::Options::=--force-confold",
+        "upgrade",
+    ]
+    # Deliberately spaced out, not a tight loop — a struggling SD card or
+    # power supply needs breathing room, not to be hit again 5 seconds
+    # later. 30s, then 2 minutes; nothing after the final attempt.
+    retry_backoff_s = (30, 120)
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, 4):
+        _check_writable_root()
+        _wait_for_apt_lock()
+        _heal_dpkg()
+        try:
+            subprocess.run(["apt-get", "update"], check=True, timeout=300, env=env)
+            subprocess.run(upgrade_command, check=True, timeout=1800, env=env)
+            return
+        except (OSError, subprocess.SubprocessError) as exc:
+            last_exc = exc
+            logger.warning("system package upgrade attempt %d/3 failed: %s", attempt, exc)
+            if attempt < 3:
+                time.sleep(retry_backoff_s[attempt - 1])
+    raise UpdateError(f"SYS-001 system package upgrade failed after 3 attempts: {last_exc}") from last_exc
 
 
 class Updater:

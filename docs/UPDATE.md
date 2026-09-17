@@ -33,6 +33,16 @@ best-effort step from the JapyScope release install above (see the `-`-prefixed
 `ExecStart` in `japyscope-update.service`): a transient `apt` failure is logged
 as `SYS-001` but never blocks or gets rolled back with an app update.
 
+Before every attempt (up to 3, spaced 30s then 2 minutes apart — not a tight
+loop, so a struggling card/power supply gets breathing room instead of being
+hit again immediately) it also self-heals what a
+previous interrupted run could have left behind: `dpkg --configure -a` fixes
+a half-configured package, and it waits for any held apt/dpkg lock rather
+than racing it. The one thing it deliberately does *not* try to fix is a
+read-only root filesystem — that fails immediately with `SYS-001`, no
+retries, since retrying against corrupted storage can make it worse (see
+`docs/TROUBLESHOOTING.md`).
+
 ## Rollback behavior
 
 The previous symlink target is retained. If dependency installation,

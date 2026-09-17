@@ -12,4 +12,7 @@ WorkingDirectory=/opt/japyscope/current
 # docstring). Leading "-" means a failure here does not fail this unit or
 # block the JapyScope release step below.
 ExecStart=-/opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py system-upgrade
+# Breathing room before the second heavy write step — don't hit the card
+# with two back-to-back apt/pip/venv operations.
+ExecStart=/bin/sleep 30
 ExecStart=/opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py apply

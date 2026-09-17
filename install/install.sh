@@ -18,8 +18,59 @@ arch=$(dpkg --print-architecture)
 if [[ $arch != armhf ]]; then echo "Expected the 32-bit armhf image, found $arch." >&2; exit 1; fi
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
+
+# Real Pi Zero W bring-up hit repeated apt/dpkg failures from marginal power
+# and a degrading SD card (see docs/TROUBLESHOOTING.md's "Filesystem went
+# read-only"). These helpers self-heal what's safely fixable in software
+# (an interrupted previous apt/dpkg run, a held lock, a transient network
+# blip) and fail fast — without retrying — on what isn't: a genuinely
+# read-only root filesystem, which no script should paper over.
+check_writable_root() {
+  local probe=/var/tmp/.japyscope-write-test
+  if ! touch "$probe" 2>/dev/null; then
+    echo "Root filesystem is read-only. This installer will not try to work" >&2
+    echo "around that — it usually means the SD card or power supply" >&2
+    echo "corrupted it. See docs/TROUBLESHOOTING.md ('Filesystem went" >&2
+    echo "read-only') before retrying." >&2
+    return 1
+  fi
+  rm -f "$probe"
+}
+
+wait_for_apt_lock() {
+  local lock=/var/lib/dpkg/lock-frontend waited=0
+  while [[ -e $lock ]] && ! flock -n "$lock" true 2>/dev/null; do
+    waited=$((waited + 2))
+    if (( waited >= 120 )); then
+      echo "Timed out waiting for another apt/dpkg process to finish." >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+heal_dpkg() {
+  # Resolves a half-configured package left by an interrupted previous
+  # apt/dpkg run (power loss, Ctrl-C, a prior crash). Safe no-op otherwise.
+  dpkg --configure -a || true
+}
+
+apt_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    check_writable_root || exit 1
+    wait_for_apt_lock || exit 1
+    heal_dpkg
+    if "$@"; then return 0; fi
+    echo "apt command failed (attempt $attempt/3), retrying in 5s: $*" >&2
+    sleep 5
+  done
+  echo "apt command failed after 3 attempts: $*" >&2
+  return 1
+}
+
+apt_retry apt-get update
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 

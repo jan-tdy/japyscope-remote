@@ -36,19 +36,50 @@ def test_apt_upgrade_never_touches_dist_upgrade(monkeypatch):
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(update_module.subprocess, "run", run)
     _apt_upgrade()
-    assert calls[0] == ["apt-get", "update"]
-    assert calls[1][:3] == ["apt-get", "-y", "-o"]
-    assert "upgrade" in calls[1]
-    assert "dist-upgrade" not in calls[1] and "full-upgrade" not in calls[1]
+    assert calls[0] == ["dpkg", "--configure", "-a"]  # self-heal before touching apt
+    assert calls[1] == ["apt-get", "update"]
+    assert calls[2][:3] == ["apt-get", "-y", "-o"]
+    assert "upgrade" in calls[2]
+    assert "dist-upgrade" not in calls[2] and "full-upgrade" not in calls[2]
 
 
 def test_apt_upgrade_failure_raises_sys_001(monkeypatch):
     import subprocess as subprocess_module
     def run(command, check=False, timeout=None, env=None):
-        raise subprocess_module.CalledProcessError(1, command)
+        if check:  # mirror real subprocess.run: check=False (dpkg heal) never raises
+            raise subprocess_module.CalledProcessError(1, command)
+        return SimpleNamespace(returncode=0)
     monkeypatch.setattr(update_module.subprocess, "run", run)
+    monkeypatch.setattr(update_module.time, "sleep", lambda _seconds: None)
     with pytest.raises(UpdateError, match="SYS-001"):
         _apt_upgrade()
+
+
+def test_apt_upgrade_retries_transient_failure_then_succeeds(monkeypatch):
+    import subprocess as subprocess_module
+    calls = []
+    attempts = {"apt_update": 0}
+    def run(command, check=False, timeout=None, env=None):
+        calls.append(list(command))
+        if command == ["apt-get", "update"]:
+            attempts["apt_update"] += 1
+            if attempts["apt_update"] == 1:
+                raise subprocess_module.CalledProcessError(1, command)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(update_module.subprocess, "run", run)
+    monkeypatch.setattr(update_module.time, "sleep", lambda _seconds: None)
+    _apt_upgrade()  # must not raise — second attempt succeeds
+    assert calls.count(["dpkg", "--configure", "-a"]) == 2  # healed before each attempt
+    assert calls.count(["apt-get", "update"]) == 2
+
+
+def test_apt_upgrade_fails_fast_without_retry_on_readonly_root(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: calls.append(a) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(update_module, "_WRITABLE_PROBE", tmp_path / "missing-dir" / "probe")
+    with pytest.raises(UpdateError, match="SYS-001.*read-only"):
+        _apt_upgrade()
+    assert calls == []  # never even tried apt/dpkg
 
 
 def test_health_check_checks_services_separately(monkeypatch):
