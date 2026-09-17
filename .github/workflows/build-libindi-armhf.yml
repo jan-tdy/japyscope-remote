@@ -95,9 +95,15 @@ jobs:
             rm -rf /tmp/indi-src /tmp/indi-stage
             git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" \
               https://github.com/indilib/indi.git /tmp/indi-src
+            # A newer GCC than INDI 2.2.4 was written against flags a
+            # snprintf bound computation in one bundled driver
+            # (indi_astrotrac_telescope, which this build doesn't need) as
+            # -Werror=stringop-overflow. Downgrade that one warning class to
+            # non-fatal rather than chasing it driver by driver.
             cmake -S /tmp/indi-src -B /tmp/indi-build \
               -DCMAKE_INSTALL_PREFIX=/usr/local \
               -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_FLAGS=-Wno-error=stringop-overflow \
               -DINDI_BUILD_UNITTESTS=OFF \
               -DINDI_BUILD_INTEGTESTS=OFF
             cmake --build /tmp/indi-build -j"$(nproc)"
