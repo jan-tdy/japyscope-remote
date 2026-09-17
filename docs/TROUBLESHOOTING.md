@@ -6,6 +6,16 @@ Start with the combined journal:
 journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
 ```
 
+## `install.sh` says "Release directory already exists" / re-running after a fix
+
+Fixed: `install.sh` used to hard-fail here, because re-running it after
+fixing an earlier error (e.g. a missing apt package) re-derives the exact
+same version string (`git describe` — nothing changed in git) and found
+its own previous, incomplete attempt's directory still there. It now
+detects an incomplete release directory (no `.install-complete` marker),
+removes it, and rebuilds automatically — you can just re-run `install.sh`
+after fixing whatever failed, no manual `rm -rf` needed.
+
 ## Filesystem went read-only / `dpkg`, `apt` fail with I/O or "Read-only file system" errors
 
 Seen during real Pi Zero W bring-up (Fáza 1beta), reproduced twice: once on a

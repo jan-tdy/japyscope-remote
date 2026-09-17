@@ -83,13 +83,27 @@ install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 
 version=$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)
 release_dir=/opt/japyscope/releases/$version
-if [[ -e $release_dir ]]; then echo "Release directory already exists: $release_dir" >&2; exit 1; fi
-install -d -o root -g root -m 755 "$release_dir"
-cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$source_dir/requirements.lock" "$release_dir/"
-python3 -m venv "$release_dir/.venv"
-"$release_dir/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-"$release_dir/.venv/bin/python" -m pip install --require-hashes -r "$release_dir/requirements.lock"
-chown -R root:root "$release_dir"
+marker="$release_dir/.install-complete"
+if [[ -e $release_dir && ! -e $marker ]]; then
+  # Re-running install.sh after an earlier failure (e.g. a missing apt
+  # package mid-way through) always re-derives the same version string —
+  # nothing changed in git — so this is virtually always a stale,
+  # incomplete directory from that failed attempt, not a real conflict.
+  # Safe to remove: it was never marked complete, so nothing depends on it.
+  echo "Removing incomplete release directory from a previous failed install: $release_dir" >&2
+  rm -rf "$release_dir"
+fi
+if [[ -e $release_dir ]]; then
+  echo "Release $version is already fully installed — skipping rebuild." >&2
+else
+  install -d -o root -g root -m 755 "$release_dir"
+  cp -a "$source_dir/firmware" "$source_dir/webui" "$source_dir/shared" "$source_dir/install" "$source_dir/requirements.txt" "$source_dir/requirements.lock" "$release_dir/"
+  python3 -m venv "$release_dir/.venv"
+  "$release_dir/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+  "$release_dir/.venv/bin/python" -m pip install --require-hashes -r "$release_dir/requirements.lock"
+  chown -R root:root "$release_dir"
+  touch "$marker"
+fi
 ln -sfn "$release_dir" /opt/japyscope/.current.new
 mv -Tf /opt/japyscope/.current.new /opt/japyscope/current
 
