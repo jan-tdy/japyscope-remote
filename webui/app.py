@@ -298,6 +298,19 @@ def create_app(
             return redirect(url_for("system"))
         return render_template("system.html")
 
+    if os.environ.get("JAPYSCOPE_DEV_MODE") == "1":
+        @app.cli.command("gen-code")
+        def gen_code_command():
+            """Dev/test only (requires JAPYSCOPE_DEV_MODE=1): generate a
+            Web UI access code over SSH, without the physical e-ink
+            controller. Mirrors exactly what Menu -> Wi-Fi / Web Access
+            does on real hardware (firmware/ui/controller.py) — a random
+            6-digit code, valid 10 minutes."""
+            code = f"{secrets.randbelow(900000) + 100000}"
+            with db_session(app.config["DATABASE"]) as conn:
+                AccessCodeRepo(conn).issue(code, 600)
+            print(f"Web UI access code: {code} (valid 10 minutes)")
+
     return app
 
 

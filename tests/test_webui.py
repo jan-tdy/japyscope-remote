@@ -1,7 +1,27 @@
 import io
+import re
 
 from shared.db import AccessCodeRepo, CatalogRepo, db_session
 from webui.app import create_app
+
+
+def test_gen_code_cli_requires_dev_mode(tmp_path, monkeypatch):
+    monkeypatch.delenv("JAPYSCOPE_DEV_MODE", raising=False)
+    app = create_app(str(tmp_path / "web.db"))
+    result = app.test_cli_runner().invoke(args=["gen-code"])
+    assert result.exit_code != 0  # command doesn't exist without dev mode
+
+
+def test_gen_code_cli_issues_a_working_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("JAPYSCOPE_DEV_MODE", "1")
+    db_path = str(tmp_path / "web.db")
+    app = create_app(db_path)
+    result = app.test_cli_runner().invoke(args=["gen-code"])
+    assert result.exit_code == 0
+    match = re.search(r"access code: (\d{6})", result.output)
+    assert match, result.output
+    with db_session(db_path) as conn:
+        assert AccessCodeRepo(conn).is_valid(match.group(1))
 
 
 def authenticated_client(tmp_path):
