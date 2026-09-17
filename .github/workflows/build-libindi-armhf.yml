@@ -77,6 +77,12 @@ jobs:
           commands: |
             set -eu
             export DEBIAN_FRONTEND=noninteractive
+            # Debian 11 (Bullseye) is EOL: security.debian.org 404s on every
+            # package (deb.debian.org's main pocket still resolves fine, it's
+            # only the separate security infrastructure that's gone dark).
+            # Drop those sources rather than fixing them — this is a
+            # throwaway build sandbox, security patches are irrelevant here.
+            grep -rl security.debian.org /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sed -i '/security.debian.org/d'
             apt-get update
             apt-get install -y --no-install-recommends \
               git ca-certificates cmake build-essential pkg-config \
