@@ -44,6 +44,7 @@ not the mockup's**:
 - **Startup park confirmation → encoder sync** — on boot, before going to IDLE/PARKED, ask "Are you in the park position? Yes/No". Yes → proceed as parked. No → run an INDI **Sync** on the current position before continuing (mount has no absolute encoders, so position is lost across power cycles). New boot-time state `BOOT_PARK_CHECK` between `BOOT` and `IDLE`/`PARKED`.
 - **T9 keymap fix in SmartSearch** — see `docs/CODES.md` for the exact mapping. Summary: "9" becomes a normal T9 letter key (w/x/y/z/9) *only inside SmartSearch*, and **FN2** takes over as "cancel/back out of SmartSearch" for that screen. Everywhere else, "9" keeps meaning "back, never an action."
 - **SmartSearch queries the internet** — this is SmartSearch's whole point: resolve object names against an online astronomical database (recommended: SIMBAD/Sesame name resolver — free, no API key, same one KStars/Stellarium use) in addition to local catalogs, so a newly-discovered/variable star not in any local list can still be found. Must degrade gracefully offline: fall back to local-only results with a note (see `CODES.md`'s `SEARCH-001`), not hang or fail the whole search.
+- **Language selection** — a new **Language** entry in Menu (between Backlight and Sudo Password) opens a list of UI languages (`firmware/ui/i18n.py`'s `LANGUAGES`); picking one persists to `settings.language` and takes effect immediately. v0 translates the highest-visibility screens only (Home, Menu, boot park check, park/unpark, About, shared footers) — anything not yet in `i18n.STRINGS` falls back to English. Not in the mockup at all.
 
 ## Repository layout
 
@@ -76,7 +77,7 @@ The software-side handoff items are implemented:
 1. **`firmware/ui/`** — ports the screens from `docs/mockup.html`'s JS state
    machine (`st.screen` switch in the mockup's `<script>`) to Python,
    driven by `firmware.hal.display.DisplayHAL` / `firmware.hal.input.InputHAL`
-   from this pass. The five behavior changes listed above are implemented in
+   from this pass. The behavior changes listed above are implemented in
    addition to the mockup's original states.
 2. **`firmware/main.py`** — argument parsing (`--simulate`), constructs
    `make_display()` / `make_input()` / `IndiServerManager` / the `ui` state

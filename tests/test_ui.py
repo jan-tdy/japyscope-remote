@@ -7,7 +7,7 @@ from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, FN2
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
-from shared.db import CatalogRepo, StateRepo, connect, init_db
+from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 
 class Display(DisplayHAL):
@@ -55,6 +55,41 @@ def test_boot_sync_failure_does_not_continue():
         ui.start(); ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)
         assert ui.state.screen == "BOOT_SYNC_FAILED"
         assert StateRepo(conn).get("parked") is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_language_selection_persists_and_translates():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 6; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "LANGUAGE" and ui.state.index == 0  # default "en"
+        ui.handle(ENC_DOWN)  # -> Slovenčina
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "MENU" and ui.state.index == 6
+        assert SettingsRepo(conn).get("language") == "sk"
+        ui._set("IDLE")
+        assert any("Katalóg" in line for line in ui.display.lines)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_language_screen_preselects_current_choice():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("language", "sk")
+        ui.state.screen = "MENU"; ui.state.index = 6; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "LANGUAGE" and ui.state.index == 1
+        ui.handle("9")
+        assert ui.state.screen == "MENU" and ui.state.index == 6
+    finally: conn.close(); os.unlink(path)
+
+
+def test_system_menu_still_reachable_after_language_entry_added():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 8; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "SYSTEM_CONFIRM"
+        ui.handle("9")
+        assert ui.state.screen == "MENU" and ui.state.index == 8
     finally: conn.close(); os.unlink(path)
 
 
