@@ -1,9 +1,38 @@
 {% extends "base.html" %}{% block title %}Settings · JapyScope{% endblock %}
 {% block content %}<h2>Settings</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<label>Latitude <input name="latitude" value="{{ settings.latitude }}"></label><label>Longitude <input name="longitude" value="{{ settings.longitude }}"></label><label>Elevation (m) <input name="elevation_m" type="number" value="{{ settings.elevation_m }}"></label><label>Timezone <input name="timezone" value="{{ settings.timezone }}"></label>
+<label>Latitude <input id="latitude" name="latitude" value="{{ settings.latitude }}"></label><label>Longitude <input id="longitude" name="longitude" value="{{ settings.longitude }}"></label><label>Elevation (m) <input id="elevation_m" name="elevation_m" type="number" value="{{ settings.elevation_m }}"></label><label>Timezone <input name="timezone" value="{{ settings.timezone }}"></label>
+<p><button type="button" id="use-location">📍 Use this device's location</button> <span id="location-status" class="muted"></span></p>
 <label>Park mode <select name="park_mode">{% for mode in ['zenith','home','custom'] %}<option {% if settings.park_mode == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label><label>Custom park altitude <input name="park_alt" type="number" value="{{ settings.park_alt }}"></label><label>Custom park azimuth <input name="park_az" type="number" value="{{ settings.park_az }}"></label>
 <h3>Hardware bring-up (development)</h3>
 <p class="muted">Check a component to run it simulated instead of real hardware — for wiring one piece at a time. Restart the controller (System page) after changing these.</p>
 {% for name in hardware_components %}<label><input type="checkbox" name="hw_sim_{{ name }}" value="1" {% if settings['hw_sim_' ~ name] == '1' %}checked{% endif %}> Simulate {{ name }}</label>{% endfor %}
 <button>Save</button></form>
-<p class="muted">Mount movement and alignment remain controller-only.</p>{% endblock %}
+<p class="muted">Mount movement and alignment remain controller-only.</p>
+<script>
+document.getElementById("use-location").addEventListener("click", function () {
+  var status = document.getElementById("location-status");
+  if (!("geolocation" in navigator)) {
+    status.textContent = "This browser doesn't support geolocation.";
+    return;
+  }
+  if (!window.isSecureContext) {
+    status.textContent = "Browsers only allow geolocation over HTTPS (or localhost) — this page is served over plain HTTP, so it will likely be blocked.";
+  }
+  status.textContent = "Requesting location…";
+  navigator.geolocation.getCurrentPosition(
+    function (pos) {
+      document.getElementById("latitude").value = pos.coords.latitude.toFixed(6);
+      document.getElementById("longitude").value = pos.coords.longitude.toFixed(6);
+      if (pos.coords.altitude !== null) {
+        document.getElementById("elevation_m").value = Math.round(pos.coords.altitude);
+      }
+      status.textContent = "Location filled in — review it, then Save.";
+    },
+    function (err) {
+      status.textContent = "Couldn't get location: " + err.message;
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
+</script>
+{% endblock %}
