@@ -35,7 +35,12 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: current GitHub ubuntu-latest (24.04) ships a
+    # qemu-user-static that segfaults immediately on the first command run
+    # inside arm-runner-action's chroot for older ARM CPU models (arm1176) —
+    # a known, still-open upstream issue, not something fixable here. 22.04
+    # is one of the action's own tested runner versions.
+    runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
       - name: Checkout
