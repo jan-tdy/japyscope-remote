@@ -1,0 +1,114 @@
+name: Build libindi core (armhf, Bullseye, ARMv6)
+
+# Raspberry Pi OS Bullseye Lite's own apt libindi-dev (1.8.8+dfsg-1) predates
+# the INDI::PropertyView-family headers (indipropertyview.h,
+# indipropertybasic.h, etc.) that current pyindi-client's SWIG interface
+# needs — see docs/TROUBLESHOOTING.md. There is no apt repository that ships
+# a newer libindi-dev for armhf/Bullseye (confirmed dead end — see the INDI
+# forum thread "INDI needs a new apt repository for Debian ARM"), and
+# compiling INDI core on a Pi Zero W itself (single ARM11 core, 512 MB RAM,
+# already SD-card-constrained) is impractical and risky.
+#
+# This workflow cross-builds INDI core instead, entirely on GitHub's
+# infrastructure: it boots the actual Raspberry Pi OS Bullseye armhf image
+# under QEMU (not a generic Debian docker image — a plain armhf/armv7 image
+# would produce binaries that illegal-instruction-crash on the Zero W's
+# ARMv6 CPU), builds INDI core inside it, and packages just the new headers
+# + client library. install.sh downloads that tarball into /usr/local
+# (already one of pyindi-client's SWIG search paths) instead of building
+# anything on the Pi. The Pi's existing apt indi-bin/libindi-dev (and the
+# indiserver/driver processes using them) are untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      indi_ref:
+        description: "indilib/indi git tag/branch to build"
+        required: true
+        default: "v2.2.4"
+  push:
+    tags:
+      - "libindi-armhf-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve INDI ref
+        id: ref
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            ref="${GITHUB_REF_NAME#libindi-armhf-}"
+          else
+            ref="${{ inputs.indi_ref }}"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Build INDI core under QEMU (Raspberry Pi OS Bullseye armhf, ARMv6)
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: raspi_2_bullseye:20230102
+          cpu: arm1176
+          image_additional_mb: 4096
+          bind_mount_repository: true
+          commands: |
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              git ca-certificates cmake build-essential pkg-config \
+              libnova-dev libgsl-dev libcfitsio-dev libcurl4-gnutls-dev \
+              libjpeg-dev zlib1g-dev libusb-1.0-0-dev libftdi-dev
+            rm -rf /tmp/indi-src /tmp/indi-stage
+            git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" \
+              https://github.com/indilib/indi.git /tmp/indi-src
+            cmake -S /tmp/indi-src -B /tmp/indi-build \
+              -DCMAKE_INSTALL_PREFIX=/usr/local \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DINDI_BUILD_UNITTESTS=OFF \
+              -DINDI_BUILD_INTEGTESTS=OFF
+            cmake --build /tmp/indi-build -j"$(nproc)"
+            mkdir -p /tmp/indi-stage
+            DESTDIR=/tmp/indi-stage cmake --install /tmp/indi-build
+            cd /tmp/indi-stage/usr/local
+            tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
+              include/libindi lib/libindiclient* lib/libindidriver* lib/cmake/INDI lib/pkgconfig/*indi* 2>/dev/null || \
+            tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
+              include/libindi lib
+
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          asset="libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz"
+          sha256sum "$asset" > "$asset.sha256"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
+          else
+            gh release create "$TAG" "$ASSET" "${ASSET}.sha256" \
+              --title "$TAG" --notes "Prebuilt INDI core (headers + client lib) for armhf Raspberry Pi OS Bullseye, ARMv6. See docs/TROUBLESHOOTING.md."
+          fi

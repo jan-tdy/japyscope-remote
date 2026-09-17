@@ -70,9 +70,33 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova2 curl ca-certificates indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
+
+# Bullseye's apt libindi-dev (1.8.8+dfsg-1) predates the
+# INDI::PropertyView-family headers pyindi-client's SWIG interface needs
+# (indipropertyview.h, indipropertybasic.h, ...) and no apt repository ships
+# a newer one for armhf/Bullseye. Fetch a prebuilt INDI core (headers +
+# client lib only — indiserver/drivers keep using apt's libindi-dev
+# unchanged) into /usr/local, one of pyindi-client's own SWIG search paths.
+# Built by .github/workflows/build-libindi-armhf.yml; see
+# docs/TROUBLESHOOTING.md.
+libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
+# shellcheck disable=SC1091
+source "$source_dir/install/libindi-core.env"
+if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_TAG" ]]; then
+  tmp_tarball=$(mktemp)
+  echo "Fetching prebuilt INDI core ($LIBINDI_CORE_TAG) for pyindi-client..." >&2
+  curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
+    "https://github.com/jan-tdy/japyscope-remote/releases/download/$LIBINDI_CORE_TAG/$LIBINDI_CORE_ASSET"
+  echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
+  tar -xzf "$tmp_tarball" -C /usr/local
+  rm -f "$tmp_tarball"
+  ldconfig
+  install -d /usr/local/share/japyscope
+  echo "$LIBINDI_CORE_TAG" > "$libindi_core_marker"
+fi
 
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
