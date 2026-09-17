@@ -75,7 +75,7 @@ jobs:
           image_additional_mb: 4096
           bind_mount_repository: true
           commands: |
-            set -euo pipefail
+            set -eu
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
             apt-get install -y --no-install-recommends \
