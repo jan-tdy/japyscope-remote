@@ -19,7 +19,7 @@ below, which supersede the mockup where they conflict with it.
 
 | Area | Decision |
 |---|---|
-| Target HW | Raspberry Pi Zero W (armv6 — **only Raspberry Pi OS Bullseye Lite (32-bit) is usable**; Bookworm dropped armv6 support entirely) |
+| Target HW | Raspberry Pi Zero W (armv6 — **this project targets Raspberry Pi OS Bullseye Lite (32-bit)**. Correction: Bookworm 32-bit (armhf) *is* officially supported on the original Zero W per Raspberry Pi's own OS compatibility list — the earlier "Bookworm dropped armv6" claim in this doc was wrong. We still require Bullseye because `install/wifi-config.sh` writes directly to `/etc/wpa_supplicant/wpa_supplicant.conf`, which Bookworm's default NetworkManager-based networking doesn't consume the same way — that script (and the AP setup flow built on it) hasn't been ported/verified for Bookworm's network stack. Revisit if there's a reason to move.) |
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Not finalized** — leaning 2.13" e-paper but nothing bought yet, 4.26" not ruled out. Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py` |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |

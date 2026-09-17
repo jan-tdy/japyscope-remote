@@ -1,7 +1,13 @@
 # Installation
 
 JapyScope targets the original Raspberry Pi Zero W (`armv6`). Use **Raspberry
-Pi OS Bullseye Lite, 32-bit**. Do not use Bookworm or a 64-bit image.
+Pi OS Bullseye Lite, 32-bit**. Not a 64-bit image (won't boot on armv6 at
+all) — and not Bookworm either, even though Bookworm's 32-bit (armhf) image
+*does* officially support the Zero W: this project's Wi-Fi AP setup
+(`install/wifi-config.sh`) writes straight to `wpa_supplicant.conf`, which
+isn't how Bookworm's default NetworkManager-based networking works, and
+that hasn't been ported/tested. The installer enforces this — it refuses to
+run on anything but Bullseye.
 
 ## Prepare the card
 
