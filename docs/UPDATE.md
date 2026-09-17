@@ -16,10 +16,22 @@ versioned release directory, then atomically flips `/opt/japyscope/current`.
 ```sh
 sudo /opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py check
 sudo /opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py apply
+sudo /opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py system-upgrade
 ```
 
-The enabled `japyscope-update.timer` runs `apply` once per day with a randomized
-delay. `apply` is idempotent when the latest tag is already active.
+The enabled `japyscope-update.timer` runs both `system-upgrade` and `apply` once
+per day with a randomized delay (`japyscope-update.service` has two `ExecStart`
+lines). `apply` is idempotent when the latest tag is already active.
+
+## System package upgrades
+
+`system-upgrade` runs `apt-get update && apt-get upgrade` — patches within the
+currently configured Bullseye repos only. It never runs `full-upgrade` or
+`dist-upgrade`, and never touches `/etc/apt/sources.list`, so it cannot move
+the device onto Bookworm or any other release on its own. It's a separate,
+best-effort step from the JapyScope release install above (see the `-`-prefixed
+`ExecStart` in `japyscope-update.service`): a transient `apt` failure is logged
+as `SYS-001` but never blocks or gets rolled back with an app update.
 
 ## Rollback behavior
 

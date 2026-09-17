@@ -7,4 +7,9 @@ Wants=network-online.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/japyscope/current
+# Best-effort system package refresh (apt update/upgrade within Bullseye's
+# own repos only — never a distro upgrade; see update.py's _apt_upgrade
+# docstring). Leading "-" means a failure here does not fail this unit or
+# block the JapyScope release step below.
+ExecStart=-/opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py system-upgrade
 ExecStart=/opt/japyscope/current/.venv/bin/python /opt/japyscope/current/install/update.py apply

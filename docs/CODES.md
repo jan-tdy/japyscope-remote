@@ -104,3 +104,4 @@ new failure modes are found during bring-up.
 | `OTA-003` | new release failed its post-install health check, rolled back | same |
 | `WIFI-001` | AP-mode setup hotspot failed to start | `hostapd`/`dnsmasq` journal |
 | `SEARCH-001` | SmartSearch online lookup timed out / no internet — fell back to local catalogs only | `japyscope-app` journal |
+| `SYS-001` | Daily `apt-get update`/`upgrade` step failed (best-effort — never blocks the JapyScope release step) | `japyscope-update` journal |

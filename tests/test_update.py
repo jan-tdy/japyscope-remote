@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import install.update as update_module
-from install.update import UpdateError, Updater, _safe_extract
+from install.update import UpdateError, Updater, _apt_upgrade, _safe_extract
 
 
 def add_file(bundle, name, data=b"x"):
@@ -27,6 +27,28 @@ def test_safe_extract_rejects_traversal(tmp_path):
     archive = tmp_path / "bad.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle: add_file(bundle, "../escape")
     with pytest.raises(UpdateError): _safe_extract(archive, tmp_path / "out")
+
+
+def test_apt_upgrade_never_touches_dist_upgrade(monkeypatch):
+    calls = []
+    def run(command, check=False, timeout=None, env=None):
+        calls.append(command)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(update_module.subprocess, "run", run)
+    _apt_upgrade()
+    assert calls[0] == ["apt-get", "update"]
+    assert calls[1][:3] == ["apt-get", "-y", "-o"]
+    assert "upgrade" in calls[1]
+    assert "dist-upgrade" not in calls[1] and "full-upgrade" not in calls[1]
+
+
+def test_apt_upgrade_failure_raises_sys_001(monkeypatch):
+    import subprocess as subprocess_module
+    def run(command, check=False, timeout=None, env=None):
+        raise subprocess_module.CalledProcessError(1, command)
+    monkeypatch.setattr(update_module.subprocess, "run", run)
+    with pytest.raises(UpdateError, match="SYS-001"):
+        _apt_upgrade()
 
 
 def test_health_check_checks_services_separately(monkeypatch):

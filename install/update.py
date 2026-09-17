@@ -93,6 +93,32 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
     return root
 
 
+def _apt_upgrade() -> None:
+    """Refresh and upgrade system packages within the currently configured
+    Bullseye repos. Deliberately just `apt-get update && apt-get upgrade`
+    — never `full-upgrade`/`dist-upgrade`, and this never touches apt
+    sources — so it cannot pull the device onto Bookworm or any other
+    release on its own. Runs as its own systemd step (see
+    install/systemd/japyscope-update.service), separate from the
+    JapyScope release install below, so a transient apt failure never
+    blocks or gets rolled back with an app update.
+    """
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    try:
+        subprocess.run(["apt-get", "update"], check=True, timeout=300, env=env)
+        subprocess.run(
+            [
+                "apt-get", "-y",
+                "-o", "Dpkg::Options::=--force-confdef",
+                "-o", "Dpkg::Options::=--force-confold",
+                "upgrade",
+            ],
+            check=True, timeout=1800, env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UpdateError(f"SYS-001 system package upgrade failed: {exc}") from exc
+
+
 class Updater:
     def __init__(self, root: Path = Path("/opt/japyscope"), api_url: str = API_URL):
         self.root = root
@@ -182,16 +208,19 @@ class Updater:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("check", "apply"))
+    parser.add_argument("action", choices=("check", "apply", "system-upgrade"))
     parser.add_argument("--root", type=Path, default=Path("/opt/japyscope"))
     parser.add_argument("--api-url", default=API_URL)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        updater = Updater(args.root, args.api_url)
-        if args.action == "check":
-            tag, available = updater.check(); print(f"{tag} {'available' if available else 'current'}")
-        else: print(f"installed {updater.apply()}")
+        if args.action == "system-upgrade":
+            _apt_upgrade(); print("system packages upgraded")
+        else:
+            updater = Updater(args.root, args.api_url)
+            if args.action == "check":
+                tag, available = updater.check(); print(f"{tag} {'available' if available else 'current'}")
+            else: print(f"installed {updater.apply()}")
     except (UpdateError, HTTPError, URLError, TimeoutError) as exc:
         logger.error("OTA-001 update failed: %s", exc); return 1
     return 0

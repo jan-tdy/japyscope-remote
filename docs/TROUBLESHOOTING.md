@@ -37,6 +37,15 @@ This is non-fatal. The controller has already fallen back to built-in and all
 custom catalogs. Check DNS/HTTPS connectivity to CDS Sesame; local search
 remains available while offline.
 
+## `SYS-001`: system package upgrade failed
+
+Best-effort step (`update.py system-upgrade`, run daily alongside `apply` by
+`japyscope-update.timer`) — a failure here never blocks or rolls back a
+JapyScope release install. Run `sudo apt-get update && sudo apt-get upgrade`
+manually to see the actual apt error (network issue, held package, disk
+space). Never resolved by running `full-upgrade`/`dist-upgrade` — that would
+be a distribution upgrade, which this project deliberately avoids.
+
 ## `OTA-001`, `OTA-002`, or `OTA-003`
 
 See `docs/UPDATE.md`. Confirm internet access and that the release contains one

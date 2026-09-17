@@ -25,7 +25,7 @@ below, which supersede the mockup where they conflict with it.
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
 | Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
-| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure |
+| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within Bullseye's own repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
 | Firmware language | Python 3 |
 | Web UI stack | Flask + Jinja2, server-rendered plain HTML (no JS framework) |
 | Web UI port | **8080**, all interfaces (`--host 0.0.0.0 --port 8080`, set in `install/systemd/japyscope-webui.service`) — `http://<device-ip>:8080/` normally, `http://192.168.4.1:8080/setup` while the controller is broadcasting its own Wi-Fi setup hotspot. `install/update.py`'s post-update health check also polls `http://127.0.0.1:8080/healthz` on this port. |
