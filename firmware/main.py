@@ -8,12 +8,19 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from firmware.hal.backlight import make_backlight
 from firmware.hal.display import make_display
 from firmware.hal.input import make_input
 from firmware.indi.client import IndiClient, MountStatus
 from firmware.indi.manager import DEFAULT_DRIVER_BINARY, IndiServerManager
 from firmware.ui import ControllerUI
-from shared.db import DEFAULT_DB_PATH, db_session
+from shared.db import DEFAULT_DB_PATH, HARDWARE_COMPONENTS, SettingsRepo, db_session
+
+
+def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict[str, bool]:
+    if simulate_all:
+        return {name: True for name in HARDWARE_COMPONENTS}
+    return {name: settings.get(f"hw_sim_{name}", "0") == "1" for name in HARDWARE_COMPONENTS}
 
 
 class SimulatedIndiClient:
@@ -57,11 +64,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db_path = args.db or (str(Path.cwd() / "japyscope-sim.db") if args.simulate else DEFAULT_DB_PATH)
-    display = make_display(args.simulate)
-    input_hal = make_input(args.simulate)
-    manager = None if args.simulate else IndiServerManager(driver_binary=args.driver)
-    indi = SimulatedIndiClient() if args.simulate else IndiClient()
     ui = None
+    input_hal = indi = manager = None
 
     def stop(_signum=None, _frame=None) -> None:
         if ui is not None:
@@ -70,19 +74,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     try:
-        if manager is not None:
-            manager.start()
-            connect_indi(indi)
         with db_session(db_path) as conn:
-            ui = ControllerUI(display, input_hal, indi, conn)
+            flags = resolve_simulation_flags(args.simulate, SettingsRepo(conn))
+            display = make_display(flags["display"])
+            input_hal = make_input(flags["keypad"], flags["encoder"])
+            backlight = make_backlight(flags["backlight"])
+            manager = None if flags["mount"] else IndiServerManager(driver_binary=args.driver)
+            indi = SimulatedIndiClient() if flags["mount"] else IndiClient()
+            if manager is not None:
+                manager.start()
+                connect_indi(indi)
+            ui = ControllerUI(display, input_hal, indi, conn, backlight=backlight)
             ui.run()
         return 0
     except (FileNotFoundError, ConnectionError) as exc:
         logging.getLogger(__name__).error("INDI-001/INDI-002 startup failed: %s", exc)
         return 1
     finally:
-        input_hal.close()
-        indi.disconnect()
+        if input_hal is not None:
+            input_hal.close()
+        if indi is not None:
+            indi.disconnect()
         if manager is not None:
             manager.stop()
 

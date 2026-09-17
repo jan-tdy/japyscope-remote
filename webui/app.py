@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 
-from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, db_session
+from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
 
 logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 1_000_000
@@ -264,10 +264,12 @@ def create_app(
             repo = SettingsRepo(conn)
             if request.method == "POST":
                 for key in editable: repo.set(key, request.form.get(key, "").strip())
-                flash("Settings saved.", "ok")
+                for name in HARDWARE_COMPONENTS:
+                    repo.set(f"hw_sim_{name}", "1" if request.form.get(f"hw_sim_{name}") == "1" else "0")
+                flash("Settings saved. Restart the controller for hardware changes to take effect.", "ok")
                 return redirect(url_for("settings"))
             values = repo.all()
-        return render_template("settings.html", settings=values)
+        return render_template("settings.html", settings=values, hardware_components=HARDWARE_COMPONENTS)
 
     @app.route("/diagnostics")
     @auth_required

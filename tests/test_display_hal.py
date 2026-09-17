@@ -16,7 +16,5 @@ def test_simulator_display_does_not_crash_on_empty_and_full_screens(capsys):
     display = SimulatorDisplay(profile=PROFILE_2_13)
     display.clear()
     display.draw_lines(["JapyScope Remote", "Not aligned", "> Menu", "> Catalog"])
-    display.set_backlight(1, 0, 2)
     out = capsys.readouterr().out
     assert "JapyScope Remote" in out
-    assert "backlight" in out

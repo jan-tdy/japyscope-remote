@@ -72,11 +72,3 @@ class EPaperDisplay(DisplayHAL):
             "Full-frame partial-refresh write sequence — implement against "
             f"the {self.profile.controller} datasheet once hardware exists."
         )
-
-    def set_backlight(self, r: int, g: int, b: int) -> None:
-        raise NotImplementedError(
-            "Custom JapySoft RGB edge-lighting: plain GPIO drive, one 5mm "
-            "LED + series resistor per channel (no MOSFET, no driver IC), "
-            "Off/Med/High via software PWM. Exact GPIO pins not yet assigned "
-            "— see docs/WIRING.md's Backlight section, update both once wired."
-        )
