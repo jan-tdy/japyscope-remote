@@ -10,14 +10,17 @@ name: Build libindi core (armhf, Bullseye, ARMv6)
 # already SD-card-constrained) is impractical and risky.
 #
 # This workflow cross-builds INDI core instead, entirely on GitHub's
-# infrastructure: it boots the actual Raspberry Pi OS Bullseye armhf image
-# under QEMU (not a generic Debian docker image — a plain armhf/armv7 image
-# would produce binaries that illegal-instruction-crash on the Zero W's
-# ARMv6 CPU), builds INDI core inside it, and packages just the new headers
-# + client library. install.sh downloads that tarball into /usr/local
-# (already one of pyindi-client's SWIG search paths) instead of building
-# anything on the Pi. The Pi's existing apt indi-bin/libindi-dev (and the
-# indiserver/driver processes using them) are untouched.
+# infrastructure: it boots the actual official Raspberry Pi OS Bullseye
+# armhf image under QEMU (not a generic Debian docker image, and not
+# arm-runner-action's raspi_2_bullseye shortcut either — that one is a
+# plain Debian/ARMv7 build for real Pi 2/3 hardware and produces binaries
+# that illegal-instruction-crash on the Zero W's real ARMv6 CPU, confirmed
+# the hard way on real hardware), builds INDI core inside it, and packages
+# just the new headers + client library. install.sh downloads that
+# tarball into /usr/local (already one of pyindi-client's SWIG search
+# paths) instead of building anything on the Pi. The Pi's existing apt
+# indi-bin/libindi-dev (and the indiserver/driver processes using them)
+# are untouched.
 
 on:
   workflow_dispatch:
@@ -60,7 +63,17 @@ jobs:
       - name: Build INDI core under QEMU (Raspberry Pi OS Bullseye armhf, ARMv6)
         uses: pguyot/arm-runner-action@v2
         with:
-          base_image: raspi_2_bullseye:20230102
+          # NOT raspi_2_bullseye (a past mistake here): that shortcut is
+          # raspi.debian.net's own Debian build for actual Pi 2/3 hardware
+          # (ARMv7, Cortex-A7) — its toolchain defaults to ARMv7, so
+          # anything built with it illegal-instruction-crashes (SIGILL) on
+          # the Zero W's real ARMv6 (ARM1176) CPU, confirmed on real
+          # hardware. raspios_lite:2023-05-03 is the actual official
+          # Raspberry Pi Foundation image
+          # (downloads.raspberrypi.org/.../2023-05-03-raspios-bullseye-armhf-lite.img.xz),
+          # whose armhf toolchain genuinely targets ARMv6+VFP2 to stay
+          # compatible with the Zero W/Pi 1.
+          base_image: raspios_lite:2023-05-03
           # arm1176 (the "most compatible for old Pi models" option) hits a
           # QEMU TCG segfault on the very first emulated command with the
           # qemu-user-static currently on GitHub's runners (reproduced
@@ -69,8 +82,8 @@ jobs:
           # heavily-exercised ARM CPU model and is a strict instruction
           # superset of ARMv6, so it emulates the same real binaries
           # correctly; the actual output instruction set is still governed
-          # by this Raspberry Pi OS image's own toolchain default
-          # (-march=armv6+vfp), not by which CPU QEMU pretends to be.
+          # by this image's own toolchain default (-march=armv6+vfp), not
+          # by which CPU QEMU pretends to be.
           cpu: cortex-a7
           image_additional_mb: 4096
           bind_mount_repository: true
