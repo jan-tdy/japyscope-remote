@@ -64,10 +64,12 @@ read-only" below) is impractical and risky.
 
 Fixed without compiling anything on the Pi: `.github/workflows/build-libindi-armhf.yml`
 cross-builds INDI core on GitHub's infrastructure, booting the actual
-Raspberry Pi OS Bullseye armhf image under QEMU (via `pguyot/arm-runner-action`,
-`cpu: arm1176`) — not a generic Debian/Ubuntu docker image, which would
-produce ARMv7 binaries that illegal-instruction-crash on the Zero W's ARMv6
-CPU. It packages just the new headers and the client library (not
+official Raspberry Pi OS Bullseye armhf image (`raspios_lite:2023-05-03` —
+see the "`status=4/ILL`" section below for why it's *not* the more obvious
+`raspi_2_bullseye` shortcut) under QEMU via `pguyot/arm-runner-action` —
+not a generic Debian/Ubuntu docker image, which would produce ARMv7
+binaries that illegal-instruction-crash on the Zero W's ARMv6 CPU. It
+packages just the new headers and the client library (not
 `indiserver` or any driver — those keep running from apt's `indi-bin`/
 `libindi-dev`, untouched) and attaches the tarball to a GitHub Release.
 `install.sh` downloads it (pinned tag + SHA-256 in `install/libindi-core.env`)
@@ -114,6 +116,34 @@ dependencies, which the target device still needs from apt.
 
 Fixed: `install.sh` now installs `libnova-dev`/`libcfitsio-dev` directly.
 `git pull` if you're hitting this on an old checkout.
+
+## `japyscope-app.service` crashes immediately with `status=4/ILL` after `pyindi-client` finally builds
+
+Everything up to here built and linked successfully, but the app crashes
+(SIGILL — illegal instruction) the moment it actually loads/uses the
+freshly-built `PyIndi` module. Root cause: `build-libindi-armhf.yml` was
+using `arm-runner-action`'s `raspi_2_bullseye` base image, which is
+**not** Raspberry Pi OS — it's `raspi.debian.net`'s own Debian build for
+genuine Pi 2/3 hardware (ARMv7, Cortex-A7). Its toolchain defaults to
+ARMv7, so the prebuilt `libindiclient`/headers — and the `pyindi-client`
+extension compiled against them on-device — silently contained ARMv7
+instructions the Zero W's real ARMv6 (ARM1176) CPU can't execute.
+
+Fixed: switched to `raspios_lite:2023-05-03`, the same action's shortcut
+for the actual official Raspberry Pi Foundation Bullseye Lite armhf image
+(`downloads.raspberrypi.org`), whose toolchain genuinely targets
+ARMv6+VFP2. This needed a full rebuild and republish of the
+`libindi-armhf-v2.2.4` release — `git pull`, then re-run `install.sh` (the
+SHA-256-keyed marker in `install/libindi-core.env` will detect the new
+build and re-fetch it) if you're hitting this on an old checkout.
+
+If you ever need to change `build-libindi-armhf.yml`'s base image again:
+`raspi_N_*` and `dietpi:*` shortcuts in `arm-runner-action` are generic
+Debian/DietPi builds for real Pi hardware of that generation, not
+Raspberry Pi OS — only `raspios_lite:*` (and `raspios_lite_arm64:*`,
+`raspios_oldstable_lite:*`) shortcuts resolve to genuine
+`downloads.raspberrypi.org` images. Double-check the resolved URL in
+`download_image.sh` before trusting a shortcut's name.
 
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
