@@ -70,7 +70,7 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev curl ca-certificates indi-bin libindi-dev hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -78,10 +78,25 @@ command -v indi_skywatcherAltAzMount >/dev/null
 # INDI::PropertyView-family headers pyindi-client's SWIG interface needs
 # (indipropertyview.h, indipropertybasic.h, ...) and no apt repository ships
 # a newer one for armhf/Bullseye. Fetch a prebuilt INDI core (headers +
-# client lib only — indiserver/drivers keep using apt's libindi-dev
-# unchanged) into /usr/local, one of pyindi-client's own SWIG search paths.
-# Built by .github/workflows/build-libindi-armhf.yml; see
-# docs/TROUBLESHOOTING.md.
+# client lib only — indiserver/drivers keep using apt's indi-bin unchanged,
+# that has no dependency on libindi-dev at runtime) into /usr/local, one of
+# pyindi-client's own SWIG search paths. Built by
+# .github/workflows/build-libindi-armhf.yml; see docs/TROUBLESHOOTING.md.
+#
+# apt's libindi-dev must NOT be installed alongside this: pyindi-client's
+# generated SWIG wrapper #includes several INDI headers directly (not
+# through one umbrella header), and each one resolves independently via
+# the compiler's include search path — so if both /usr/include/libindi
+# (old, apt) and /usr/local/include/libindi (new) exist, some headers
+# resolve to one and some to the other, producing duplicate/conflicting
+# class and enum definitions in the same translation unit. Purge it
+# unconditionally (safe no-op if it was never installed, or already
+# removed by a prior run) before laying down the prebuilt headers.
+apt_retry apt-get purge -y libindi-dev
+# Belt-and-braces: this device's dpkg state has a history of corruption
+# (see "Filesystem went read-only" below), so don't trust the purge alone
+# to have actually cleared the directory — remove it directly too.
+rm -rf /usr/include/libindi
 libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
 # shellcheck disable=SC1091
 source "$source_dir/install/libindi-core.env"

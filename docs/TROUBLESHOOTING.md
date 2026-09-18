@@ -81,6 +81,26 @@ hasn't been published yet; trigger the workflow manually (Actions → "Build
 libindi core (armhf, Bullseye, ARMv6)") or push a `libindi-armhf-vX.Y.Z` tag,
 then update that file with the resulting tag/asset/SHA-256.
 
+## `pyindi-client` build fails with "conflicts with a previous declaration" / "redefinition of class ..."
+
+Next stage after the fix above: the prebuilt headers land in
+`/usr/local/include/libindi`, but apt's `libindi-dev` is *also* still
+installed (from an earlier `install.sh` run, before this fix), leaving its
+old headers in `/usr/include/libindi` too. `indiclientpython.i`'s generated
+SWIG wrapper `#include`s several INDI headers directly rather than through
+one umbrella header, and each one resolves independently via the
+compiler's include search path — some end up pulling in the old copy,
+some the new one, and the same classes/enums get defined twice in one
+translation unit.
+
+Fixed: `install.sh` now purges `libindi-dev` (via apt) and additionally
+`rm -rf`s `/usr/include/libindi` directly as a belt-and-braces measure —
+this device's dpkg state has a history of corruption (see "Filesystem
+went read-only" below), so the apt purge alone isn't trusted to have
+actually cleared the directory. `indi-bin` (indiserver + drivers) has no
+runtime dependency on `libindi-dev`, so removing it is safe. `git pull`
+if you're hitting this on an old checkout.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
