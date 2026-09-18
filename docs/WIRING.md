@@ -18,8 +18,43 @@ as an EQDIRECT cable).
 - Mount side TTL is **5V**, Pi Zero W GPIO is **3.3V** → a logic-level
   shifter is required between the two (already in hand per project notes).
 - Pi Zero W UART (`/dev/serial0`) ↔ level shifter ↔ RJ12 pins carrying
-  TX/RX/GND. **TODO**: confirm exact RJ12 pin-to-signal mapping once the cut
-  Ethernet cable is wired through the level shifter (Fáza 1beta step).
+  TX/RX/GND.
+
+**Confirmed** (Fáza 1beta): commercial RJ12 cable, mount-side connector kept
+intact, other end cut and wired through the level shifter. Pinout below —
+clip facing down, contacts up, counted left to right:
+
+| RJ12 pin | Cable color | Signal | Wired? |
+|---|---|---|---|
+| 1 | white | EXPD+ | no |
+| 2 | brown | data line | **yes** |
+| 3 | green | GND | **yes** |
+| 4 | yellow | EXPD-/NC | no |
+| 5 | grey | data line | **yes** |
+| 6 | red | +12V | **no — never wire this to the level shifter** |
+
+Level shifter (4-channel, HV side = 5V mount side, LV side = 3.3V Pi side):
+
+- GND is a single shared node: cable green → shifter HV GND **and** LV GND
+  **and** Pi GND.
+- Shifter HV-VCC → Pi 5V (physical pin 2 or 4).
+- Shifter LV-VCC → Pi 3V3 (physical pin 1).
+- Cable brown → shifter HV1 → LV1.
+- Cable grey → shifter HV2 → LV2.
+
+Shifter → Pi, via separate jumper wires (colors are the jumpers', not the
+RJ12 cable's):
+
+- jumper on GND → Pi GND.
+- jumper on shifter LV1 (fed from cable brown) → Pi TXD (GPIO14) or RXD.
+- jumper on shifter LV2 (fed from cable grey) → Pi RXD (GPIO15) or TXD.
+
+TX/RX direction is the only real ambiguity here and swapping it is harmless
+— if the mount doesn't respond after power-up, swap those two jumpers at
+the Pi end first.
+
+Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
+do not connect pin 6 (+12V) to the level shifter or Pi.
 
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
 
