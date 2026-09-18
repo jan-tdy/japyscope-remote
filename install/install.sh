@@ -100,7 +100,11 @@ rm -rf /usr/include/libindi
 libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
 # shellcheck disable=SC1091
 source "$source_dir/install/libindi-core.env"
-if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_TAG" ]]; then
+# Keyed on the SHA-256, not the tag: a broken build was once re-published
+# under the same tag with fixed content (a GitHub Release tag isn't
+# actually immutable), so a tag-only marker would wrongly think an old,
+# broken extraction was already up to date and skip re-fetching.
+if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA256" ]]; then
   tmp_tarball=$(mktemp)
   echo "Fetching prebuilt INDI core ($LIBINDI_CORE_TAG) for pyindi-client..." >&2
   curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
@@ -110,7 +114,7 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_TAG"
   rm -f "$tmp_tarball"
   ldconfig
   install -d /usr/local/share/japyscope
-  echo "$LIBINDI_CORE_TAG" > "$libindi_core_marker"
+  echo "$LIBINDI_CORE_SHA256" > "$libindi_core_marker"
 fi
 
 getent group gpio >/dev/null || groupadd --system gpio
