@@ -112,6 +112,15 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
   echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
   tar -xzf "$tmp_tarball" -C /usr/local
   rm -f "$tmp_tarball"
+  # The build image installs libs under a multiarch subdirectory
+  # (/usr/local/lib/arm-linux-gnueabihf/) rather than flat /usr/local/lib.
+  # gcc/ld should search that path by default on a real multiarch armhf
+  # system, but symlink the files into flat /usr/local/lib too as a
+  # belt-and-braces measure so pyindi-client's -lindiclient link doesn't
+  # depend on that assumption holding.
+  if [[ -d /usr/local/lib/arm-linux-gnueabihf ]]; then
+    find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
+  fi
   ldconfig
   install -d /usr/local/share/japyscope
   echo "$LIBINDI_CORE_SHA256" > "$libindi_core_marker"
