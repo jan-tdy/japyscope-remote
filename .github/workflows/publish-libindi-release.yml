@@ -1,0 +1,51 @@
+name: Publish libindi-armhf artifact as a Release
+
+# One-off helper: takes an already-built artifact from a successful
+# build-libindi-armhf.yml run (workflow_dispatch runs don't auto-publish —
+# only a tag push does, per that workflow) and publishes it as a GitHub
+# Release, without rebuilding. Use this after a manual "Run workflow" on
+# build-libindi-armhf.yml succeeds, instead of pushing a tag (which would
+# trigger a full ~1h rebuild just to get the publish step).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "build-libindi-armhf.yml run ID to take the artifact from"
+        required: true
+      tag:
+        description: "Release tag to publish (e.g. libindi-armhf-v2.2.4)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dl
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          assets=(dl/**/*.tar.gz dl/**/*.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No .tar.gz/.sha256 files found under dl/" >&2
+            find dl -type f >&2
+            exit 1
+          fi
+          TAG="${{ inputs.tag }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes "Prebuilt INDI core (headers + client lib) for armhf Raspberry Pi OS Bullseye, ARMv6. See docs/TROUBLESHOOTING.md."
+          fi
