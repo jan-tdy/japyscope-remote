@@ -130,6 +130,19 @@ jobs:
               tail -50 /tmp/indi-install.log >&2
               exit 1
             fi
+            # indiversion.h is generated (configure_file) into the build
+            # dir and CMake's own install() rule for it — bundled together
+            # with libs/inicpp.h in one install(FILES ...) call — didn't
+            # actually copy it (cmake --install's log gave no clear reason
+            # and libs/inicpp.h does exist in the source tree, so the exact
+            # cause is unclear). Copy it directly instead of relying on
+            # that rule; indiclientpython.i requires it.
+            generated_version_h=$(find /tmp/indi-build -maxdepth 3 -name indiversion.h | head -1)
+            if [ -z "$generated_version_h" ]; then
+              echo "indiversion.h missing from both cmake --install and the build dir." >&2
+              exit 1
+            fi
+            cp "$generated_version_h" /tmp/indi-stage/usr/local/include/libindi/
             # INDI core is LGPL-2.1 (see COPYING.LGPL) — bundle the license
             # text and the exact source ref built, satisfying LGPL's source
             # + notice requirements for redistributing the compiled library.
