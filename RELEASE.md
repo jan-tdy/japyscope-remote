@@ -12,9 +12,9 @@ is strict on purpose:
 - The GitHub Release for the tag must contain **exactly one** `*.tar.gz`
   asset. More or fewer, and `apply()` refuses to install anything.
 - That tarball must extract to a single top-level directory containing (at
-  minimum) `firmware/main.py`, `webui/app.py`, and `requirements.lock` —
-  i.e. it needs to be this repo's tracked tree at that tag, not some other
-  subset of files.
+  minimum) `firmware/main.py`, `webui/app.py`, `requirements.lock`, and
+  `requirements-pyindi.lock` — i.e. it needs to be this repo's tracked tree at
+  that tag, not some other subset of files.
 - The asset needs a verifiable SHA-256: either GitHub's own asset `digest`
   (present automatically on most uploads) or a sidecar
   `<asset-name>.sha256` file (plain `sha256sum` output format) uploaded

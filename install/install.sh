@@ -38,15 +38,28 @@ check_writable_root() {
 }
 
 wait_for_apt_lock() {
-  local lock=/var/lib/dpkg/lock-frontend waited=0
-  while [[ -e $lock ]] && ! flock -n "$lock" true 2>/dev/null; do
-    waited=$((waited + 2))
-    if (( waited >= 120 )); then
-      echo "Timed out waiting for another apt/dpkg process to finish." >&2
-      return 1
-    fi
-    sleep 2
-  done
+  local lock=/var/lib/dpkg/lock-frontend
+  [[ ! -e $lock ]] && return 0
+  # dpkg uses POSIX record locks, which are independent from flock(2).
+  # Raspberry Pi OS includes Python; if it is missing on a stripped image,
+  # apt-get's DPkg::Lock::Timeout below still provides the safe fallback.
+  command -v python3 >/dev/null || return 0
+  python3 - "$lock" <<'PY'
+import fcntl
+import sys
+import time
+
+deadline = time.monotonic() + 120
+with open(sys.argv[1], "w", encoding="ascii") as lock:
+    while True:
+        try:
+            fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit("Timed out waiting for another apt/dpkg process to finish.")
+            time.sleep(2)
+PY
 }
 
 heal_dpkg() {
@@ -69,8 +82,8 @@ apt_retry() {
   return 1
 }
 
-apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get -o DPkg::Lock::Timeout=120 update
+apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -92,7 +105,7 @@ command -v indi_skywatcherAltAzMount >/dev/null
 # class and enum definitions in the same translation unit. Purge it
 # unconditionally (safe no-op if it was never installed, or already
 # removed by a prior run) before laying down the prebuilt headers.
-apt_retry apt-get purge -y libindi-dev
+apt_retry apt-get -o DPkg::Lock::Timeout=120 purge -y libindi-dev
 # Belt-and-braces: this device's dpkg state has a history of corruption
 # (see "Filesystem went read-only" below), so don't trust the purge alone
 # to have actually cleared the directory — remove it directly too.
@@ -106,12 +119,14 @@ source "$source_dir/install/libindi-core.env"
 # broken extraction was already up to date and skip re-fetching.
 if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA256" ]]; then
   tmp_tarball=$(mktemp)
+  trap 'rm -f "${tmp_tarball:-}"' EXIT
   echo "Fetching prebuilt INDI core ($LIBINDI_CORE_TAG) for pyindi-client..." >&2
   curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
     "https://github.com/jan-tdy/japyscope-remote/releases/download/$LIBINDI_CORE_TAG/$LIBINDI_CORE_ASSET"
   echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
   tar -xzf "$tmp_tarball" -C /usr/local
   rm -f "$tmp_tarball"
+  trap - EXIT
   ldconfig
   install -d /usr/local/share/japyscope
   echo "$LIBINDI_CORE_SHA256" > "$libindi_core_marker"
@@ -120,7 +135,8 @@ fi
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
-usermod -a -G gpio,spi,dialout,netdev japyscope
+# The Web UI diagnostics page reads the service journal directly.
+usermod -a -G gpio,spi,dialout,netdev,systemd-journal japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
 install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 
@@ -169,9 +185,11 @@ ap_password_file=/etc/japyscope/setup-ap-password
 if [[ ! -s $ap_password_file ]]; then
   umask 077
   python3 -c 'import secrets; print(secrets.token_hex(12))' > "$ap_password_file"
-  chown root:japyscope "$ap_password_file"
-  chmod 640 "$ap_password_file"
 fi
+# Always repair these after a partial/power-loss-interrupted prior run; a
+# nonempty root-only file prevents the controller from showing the password.
+chown root:japyscope "$ap_password_file"
+chmod 640 "$ap_password_file"
 python3 - "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf "$ap_password_file" <<'PY'
 import pathlib
 import sys

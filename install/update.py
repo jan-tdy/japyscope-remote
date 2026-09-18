@@ -30,7 +30,13 @@ class UpdateError(RuntimeError): pass
 def _fetch_json(url: str) -> dict:
     request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "japyscope-updater/0"})
     with urlopen(request, timeout=15) as response:
-        return json.load(response)
+        try:
+            payload = json.load(response)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise UpdateError("GitHub releases response is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise UpdateError("GitHub release response is not an object")
+    return payload
 
 
 def _download(url: str, destination: Path) -> None:
@@ -54,20 +60,47 @@ def _sha256(path: Path) -> str:
 
 
 def _select_asset(release: dict) -> tuple[dict, str]:
-    archives = [a for a in release.get("assets", []) if a.get("name", "").endswith(".tar.gz")]
+    assets = release.get("assets", [])
+    if not isinstance(assets, list):
+        raise UpdateError("release assets are not a list")
+    archives = [
+        asset for asset in assets
+        if isinstance(asset, dict) and asset.get("name", "").endswith(".tar.gz")
+    ]
     if len(archives) != 1: raise UpdateError("release must contain exactly one .tar.gz asset")
     asset = archives[0]
     if Path(asset.get("name", "")).name != asset.get("name"):
         raise UpdateError("unsafe release asset name")
-    digest = asset.get("digest", "")
-    if digest.startswith("sha256:"): return asset, digest[len("sha256:"):]
+    asset_url = asset.get("browser_download_url", "")
+    if not isinstance(asset_url, str) or not asset_url:
+        raise UpdateError("release asset lacks a download URL")
+    digest = asset.get("digest") or ""
+    if not isinstance(digest, str):
+        raise UpdateError("invalid GitHub SHA-256 digest")
+    if digest.startswith("sha256:"):
+        expected = digest[len("sha256:"):].lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise UpdateError("invalid GitHub SHA-256 digest")
+        return asset, expected
     checksum_name = asset["name"] + ".sha256"
-    checksum = next((a for a in release.get("assets", []) if a.get("name") == checksum_name), None)
+    checksum = next(
+        (candidate for candidate in assets if isinstance(candidate, dict) and candidate.get("name") == checksum_name),
+        None,
+    )
     if checksum is None: raise UpdateError(f"release lacks GitHub digest or {checksum_name}")
+    checksum_url = checksum.get("browser_download_url", "")
+    if not isinstance(checksum_url, str) or not checksum_url:
+        raise UpdateError("release checksum lacks a download URL")
     with tempfile.TemporaryDirectory() as temp:
         path = Path(temp) / checksum_name
-        _download(checksum["browser_download_url"], path)
-        expected = path.read_text(encoding="ascii").split()[0]
+        _download(checksum_url, path)
+        try:
+            fields = path.read_text(encoding="ascii").split()
+        except UnicodeDecodeError as exc:
+            raise UpdateError("invalid SHA-256 checksum file") from exc
+        if not fields:
+            raise UpdateError("invalid SHA-256 checksum file")
+        expected = fields[0]
     if len(expected) != 64 or any(c not in "0123456789abcdefABCDEF" for c in expected):
         raise UpdateError("invalid SHA-256 checksum file")
     return asset, expected.lower()
@@ -75,13 +108,16 @@ def _select_asset(release: dict) -> tuple[dict, str]:
 
 def _safe_extract(archive: Path, destination: Path) -> Path:
     destination.mkdir(parents=True, exist_ok=False)
-    with tarfile.open(archive, "r:gz") as bundle:
-        members = bundle.getmembers()
-        for member in members:
-            path = Path(member.name)
-            if path.is_absolute() or ".." in path.parts or member.isdev() or member.issym() or member.islnk():
-                raise UpdateError(f"unsafe archive member: {member.name}")
-        bundle.extractall(destination)
+    try:
+        with tarfile.open(archive, "r:gz") as bundle:
+            members = bundle.getmembers()
+            for member in members:
+                path = Path(member.name)
+                if path.is_absolute() or ".." in path.parts or member.isdev() or member.issym() or member.islnk():
+                    raise UpdateError(f"unsafe archive member: {member.name}")
+            bundle.extractall(destination)
+    except (OSError, tarfile.TarError) as exc:
+        raise UpdateError("release asset is not a valid tar.gz archive") from exc
     roots = [entry for entry in destination.iterdir() if entry.name != archive.name]
     root = roots[0] if len(roots) == 1 and roots[0].is_dir() else destination
     if (
@@ -116,7 +152,7 @@ def _check_writable_root() -> None:
 
 
 def _wait_for_apt_lock(timeout: float = 120.0) -> None:
-    """Cooperate with apt/dpkg's own lock (same file, same flock mechanism)
+    """Cooperate with apt/dpkg's POSIX record lock
     instead of racing it — common right after boot if unattended-upgrades
     or a previous run is still finishing."""
     if not _APT_LOCK.exists():
@@ -125,8 +161,8 @@ def _wait_for_apt_lock(timeout: float = 120.0) -> None:
     while time.monotonic() < deadline:
         with _APT_LOCK.open("w") as lock_file:
             try:
-                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                fcntl.lockf(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.lockf(lock_file, fcntl.LOCK_UN)
                 return
             except BlockingIOError:
                 pass
@@ -159,7 +195,7 @@ def _apt_upgrade() -> None:
     """
     env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
     upgrade_command = [
-        "apt-get", "-y",
+        "apt-get", "-y", "-o", "DPkg::Lock::Timeout=120",
         "-o", "Dpkg::Options::=--force-confdef",
         "-o", "Dpkg::Options::=--force-confold",
         "upgrade",
@@ -174,7 +210,10 @@ def _apt_upgrade() -> None:
         _wait_for_apt_lock()
         _heal_dpkg()
         try:
-            subprocess.run(["apt-get", "update"], check=True, timeout=300, env=env)
+            subprocess.run(
+                ["apt-get", "-o", "DPkg::Lock::Timeout=120", "update"],
+                check=True, timeout=300, env=env,
+            )
             subprocess.run(upgrade_command, check=True, timeout=1800, env=env)
             return
         except (OSError, subprocess.SubprocessError) as exc:
@@ -218,7 +257,13 @@ class Updater:
                 raise UpdateError("unsafe release tag")
             if tag == self.current_version(): return tag
             target = self.releases / tag
-            if target.exists(): raise UpdateError(f"release directory already exists: {target}")
+            if target.exists():
+                # Older updater versions deliberately retained a failed target,
+                # which made every later retry fail before doing useful work.
+                # It cannot be current here (checked above), so it is safe to
+                # clear and rebuild transactionally.
+                logger.warning("removing incomplete release from a previous failed update: %s", target)
+                shutil.rmtree(target)
             asset, expected = _select_asset(release)
             previous = self.current.resolve() if self.current.is_symlink() else None
             with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
@@ -228,6 +273,7 @@ class Updater:
                 if actual != expected: raise UpdateError("OTA-002 release checksum verification failed")
                 extracted = _safe_extract(archive, temp / "extract")
                 shutil.move(str(extracted), target)
+            activated = False
             try:
                 subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=60)
                 subprocess.run(
@@ -247,17 +293,25 @@ class Updater:
                 # binary that needs a newer glibc than Bullseye has).
                 subprocess.run(
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
-                    check=True, timeout=300,
+                    check=True, timeout=1800,
                 )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=60)
                 self._flip(target)
+                activated = True
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
             except (OSError, subprocess.SubprocessError, UpdateError) as exc:
                 logger.error("OTA-003 new release failed health check; rolling back: %s", exc)
-                if previous is not None:
-                    self._flip(previous)
-                    subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
+                if activated:
+                    if previous is not None:
+                        self._flip(previous)
+                    elif self.current.is_symlink() and self.current.resolve() == target:
+                        self.current.unlink()
+                    try:
+                        subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
+                    except (OSError, subprocess.SubprocessError) as rollback_exc:
+                        logger.error("OTA-003 service restart after rollback failed: %s", rollback_exc)
+                shutil.rmtree(target, ignore_errors=True)
                 raise UpdateError("OTA-003 update failed and was rolled back") from exc
             return tag
 
@@ -302,7 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.action == "check":
                 tag, available = updater.check(); print(f"{tag} {'available' if available else 'current'}")
             else: print(f"installed {updater.apply()}")
-    except (UpdateError, HTTPError, URLError, TimeoutError) as exc:
+    except (UpdateError, HTTPError, URLError, TimeoutError, OSError, subprocess.SubprocessError) as exc:
         logger.error("OTA-001 update failed: %s", exc); return 1
     return 0
 

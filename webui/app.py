@@ -28,7 +28,7 @@ LOCKOUT_SECONDS = 30
 def _default_wifi_configurator(ssid: str, password: str) -> None:
     subprocess.run(
         ["sudo", "/usr/local/sbin/japyscope-wifi", ssid],
-        input=password + "\n", text=True, check=True, timeout=30,
+        input=(password + "\n").encode("utf-8"), check=True, timeout=30,
     )
 
 
@@ -126,10 +126,12 @@ def create_app(
         if client_ip not in ipaddress.ip_network("192.168.4.0/24") and not app.testing:
             abort(403)
         if request.method == "POST":
-            ssid = request.form.get("ssid", "").strip()
+            ssid = request.form.get("ssid", "")
             password = request.form.get("password", "")
-            if not ssid or len(ssid.encode("utf-8")) > 32 or len(password) < 8:
-                flash("Enter an SSID (up to 32 bytes) and a password of at least 8 characters.", "error")
+            ssid_bytes = len(ssid.encode("utf-8"))
+            password_bytes = len(password.encode("utf-8"))
+            if not 1 <= ssid_bytes <= 32 or not 8 <= password_bytes <= 63 or "\n" in password or "\r" in password:
+                flash("Enter an SSID (up to 32 bytes) and a Wi-Fi password of 8 to 63 bytes.", "error")
             else:
                 try:
                     wifi_configurator(ssid, password)

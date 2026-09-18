@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=oneshot
 User=root
 WorkingDirectory=/opt/japyscope/current
+# apt retries plus dependency compilation on a single-core Pi Zero can take
+# well beyond systemd's default 90-second start timeout. Every child operation
+# has its own timeout in update.py, so allow the complete transaction to finish.
+TimeoutStartSec=4h
 # Best-effort system package refresh (apt update/upgrade within Bullseye's
 # own repos only — never a distro upgrade; see update.py's _apt_upgrade
 # docstring). Leading "-" means a failure here does not fail this unit or

@@ -6,7 +6,8 @@ if [[ $EUID -ne 0 || $# -ne 1 ]]; then
   exit 2
 fi
 ssid=$1
-if (( ${#ssid} < 1 || ${#ssid} > 32 )); then
+ssid_bytes=$(printf %s "$ssid" | wc -c)
+if (( ssid_bytes < 1 || ssid_bytes > 32 )); then
   echo "invalid SSID length" >&2
   exit 2
 fi

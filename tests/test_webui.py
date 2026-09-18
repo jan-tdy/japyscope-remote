@@ -2,7 +2,8 @@ import io
 import re
 
 from shared.db import AccessCodeRepo, CatalogRepo, db_session
-from webui.app import create_app
+import webui.app as app_module
+from webui.app import _default_wifi_configurator, create_app
 
 
 def test_gen_code_cli_requires_dev_mode(tmp_path, monkeypatch):
@@ -37,6 +38,15 @@ def authenticated_client(tmp_path):
 
 def csrf(client):
     with client.session_transaction() as session: return session["csrf_token"]
+
+
+def test_default_wifi_configurator_passes_utf8_bytes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    _default_wifi_configurator("Hvezdaren", "heslo\U0001f52d")
+    assert calls[0][0] == (["sudo", "/usr/local/sbin/japyscope-wifi", "Hvezdaren"],)
+    assert calls[0][1]["input"] == "heslo\U0001f52d\n".encode("utf-8")
+    assert "text" not in calls[0][1]
 
 
 def test_status_live_view_is_opt_in(tmp_path):
@@ -123,6 +133,33 @@ def test_setup_requires_csrf(tmp_path):
     )
     assert response.status_code == 200
     assert configured == [("Home", "password")]
+
+
+def test_setup_preserves_ssid_spaces_and_rejects_invalid_byte_lengths(tmp_path):
+    configured = []
+    app = create_app(
+        str(tmp_path / "setup.db"),
+        wifi_configurator=lambda ssid, password: configured.append((ssid, password)),
+    )
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/setup")
+    token = csrf(client)
+
+    response = client.post(
+        "/setup",
+        data={"csrf_token": token, "ssid": " Home ", "password": "password"},
+    )
+    assert response.status_code == 200
+    assert configured == [(" Home ", "password")]
+
+    for ssid, password in (("\U0001f52d" * 9, "password"), ("Home", "\U0001f52d" * 16), ("Home", "line1\nline2")):
+        response = client.post(
+            "/setup",
+            data={"csrf_token": token, "ssid": ssid, "password": password},
+        )
+        assert response.status_code == 200
+    assert configured == [(" Home ", "password")]
 
 
 def test_login_locks_after_five_failures(tmp_path):
