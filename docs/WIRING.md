@@ -20,38 +20,22 @@ as an EQDIRECT cable).
 - Pi Zero W UART (`/dev/serial0`) ↔ level shifter ↔ RJ12 pins carrying
   TX/RX/GND.
 
-**Confirmed** (Fáza 1beta): commercial RJ12 cable, mount-side connector kept
-intact, other end cut and wired through the level shifter. Pinout below —
-clip facing down, contacts up, counted left to right:
+**Confirmed** (Fáza 1beta), clip facing down / contacts up / counted left to
+right, through a 4-channel level shifter (HV side = 5V mount, LV side =
+3.3V Pi):
 
-| RJ12 pin | Cable color | Signal | Wired? |
+| RJ12 pin | Signal | Via | Pi pin |
 |---|---|---|---|
-| 1 | white | EXPD+ | no |
-| 2 | brown | data line | **yes** |
-| 3 | green | GND | **yes** |
-| 4 | yellow | EXPD-/NC | no |
-| 5 | grey | data line | **yes** |
-| 6 | red | +12V | **no — never wire this to the level shifter** |
+| 1 | EXPD+ | — | not wired |
+| 2 | data | shifter HV1 → LV1 | GPIO14 (TXD) or GPIO15 (RXD) |
+| 3 | GND | shifter HV GND + LV GND (shared) | GND |
+| 4 | EXPD-/NC | — | not wired |
+| 5 | data | shifter HV2 → LV2 | GPIO15 (RXD) or GPIO14 (TXD) |
+| 6 | +12V | — | **not wired — never to shifter or Pi** |
 
-Level shifter (4-channel, HV side = 5V mount side, LV side = 3.3V Pi side):
-
-- GND is a single shared node: cable green → shifter HV GND **and** LV GND
-  **and** Pi GND.
-- Shifter HV-VCC → Pi 5V (physical pin 2 or 4).
-- Shifter LV-VCC → Pi 3V3 (physical pin 1).
-- Cable brown → shifter HV1 → LV1.
-- Cable grey → shifter HV2 → LV2.
-
-Shifter → Pi, via separate jumper wires (colors are the jumpers', not the
-RJ12 cable's):
-
-- jumper on GND → Pi GND.
-- jumper on shifter LV1 (fed from cable brown) → Pi TXD (GPIO14) or RXD.
-- jumper on shifter LV2 (fed from cable grey) → Pi RXD (GPIO15) or TXD.
-
-TX/RX direction is the only real ambiguity here and swapping it is harmless
-— if the mount doesn't respond after power-up, swap those two jumpers at
-the Pi end first.
+Shifter HV-VCC → Pi 5V (physical pin 2/4). Shifter LV-VCC → Pi 3V3
+(physical pin 1). TX/RX direction is the only ambiguity and swapping it is
+harmless — if the mount doesn't respond, swap pins 2/5 at the Pi end.
 
 Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
 do not connect pin 6 (+12V) to the level shifter or Pi.
