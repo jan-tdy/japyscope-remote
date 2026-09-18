@@ -10,6 +10,11 @@ Group=japyscope
 SupplementaryGroups=spi gpio dialout
 WorkingDirectory=/opt/japyscope/current
 EnvironmentFile=-/etc/japyscope/environment
+# Without this, Python fully buffers stdout when it isn't a TTY (which it
+# never is under systemd) — SimulatorDisplay's print() output (and any
+# other stdout logging) can sit unflushed indefinitely, invisible in
+# journalctl/Diagnostics even though the process is running fine.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/japyscope/current/.venv/bin/python -m firmware.main
 Restart=on-failure
 RestartSec=3
