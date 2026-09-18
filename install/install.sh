@@ -70,7 +70,7 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 

@@ -101,6 +101,20 @@ actually cleared the directory. `indi-bin` (indiserver + drivers) has no
 runtime dependency on `libindi-dev`, so removing it is safe. `git pull`
 if you're hitting this on an old checkout.
 
+## `pyindi-client` build fails at link time: "cannot find -lnova" (or `-lcfitsio`)
+
+Next stage after the fix above: SWIG and the C++ compile succeed
+completely, but linking the final `_PyIndi` extension fails — it needs
+`-lnova` and `-lcfitsio`, the unversioned `.so` symlinks that only ship in
+the `-dev` packages (`libnova-dev`, `libcfitsio-dev`), not the runtime
+library packages. The `build-libindi-armhf.yml` CI workflow installs
+these to build INDI core itself, but that doesn't help the Pi — the
+prebuilt tarball only bundles INDI's own libraries, not their system
+dependencies, which the target device still needs from apt.
+
+Fixed: `install.sh` now installs `libnova-dev`/`libcfitsio-dev` directly.
+`git pull` if you're hitting this on an old checkout.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
