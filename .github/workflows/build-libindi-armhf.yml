@@ -76,6 +76,14 @@ jobs:
           bind_mount_repository: true
           commands: |
             set -eu
+            # $GITHUB_WORKSPACE is a path on the actual runner host — this
+            # script runs inside the QEMU chroot, where that path doesn't
+            # exist (the repo is bind-mounted at the current directory
+            # instead). Capture it now, before any `cd` below, and use it
+            # for the output tarball instead — it's the same bind-mounted
+            # directory, so a file written here shows up back on the host
+            # at $GITHUB_WORKSPACE for the later steps to pick up.
+            repo_dir=$(pwd)
             export DEBIAN_FRONTEND=noninteractive
             # Debian 11 (Bullseye) is EOL: security.debian.org 404s on every
             # package (deb.debian.org's main pocket still resolves fine, it's
@@ -129,9 +137,12 @@ jobs:
             printf 'Built from https://github.com/indilib/indi at ref %s\n' \
               "${{ steps.ref.outputs.ref }}" > /tmp/indi-stage/usr/local/SOURCE.txt
             cd /tmp/indi-stage/usr/local
-            tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
-              include/libindi lib/libindiclient* lib/libindidriver* lib/cmake/INDI lib/pkgconfig/*indi* COPYING.LGPL SOURCE.txt 2>/dev/null || \
-            tar czf "$GITHUB_WORKSPACE/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
+            # Plain directories, no globs: lib/cmake/INDI and
+            # lib/pkgconfig/*indi* aren't guaranteed to exist (this build
+            # doesn't force pkgconfig/cmake-package generation), and dash
+            # passes a non-matching glob through literally, which makes tar
+            # abort entirely rather than just skipping it.
+            tar czf "$repo_dir/libindi-core-armhf-bullseye-${{ steps.ref.outputs.ref }}.tar.gz" \
               include/libindi lib COPYING.LGPL SOURCE.txt
 
       - name: Checksum
