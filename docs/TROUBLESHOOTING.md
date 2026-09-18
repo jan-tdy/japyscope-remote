@@ -238,6 +238,27 @@ Run `systemctl status japyscope-wifi-ap hostapd dnsmasq` and then
 `http://192.168.4.1:8080/setup`. The `hostapd` and `dnsmasq` journals contain
 radio or DHCP errors.
 
+## Setup AP starts on every boot even though Wi-Fi is already configured and working
+
+**Fixed** — if you're still hitting this, `git pull` and re-run `install.sh`.
+Root cause: `japyscope-wifi-ap.service` runs right after wlan0's device node
+appears (`After=sys-subsystem-net-devices-wlan0.device`), which is well
+before `wpa_supplicant` has actually finished associating with a configured
+network. The script's "skip the AP if already connected" check
+(`wpa_cli -i wlan0 status` for `wpa_state=COMPLETED`) ran exactly once,
+immediately, so it always saw "not connected yet" — even on a device with
+perfectly good Wi-Fi credentials that would have connected fine a couple of
+seconds later — and started the AP unnecessarily on every single boot,
+kicking any already-associated client off. `install/wifi-ap.sh` now polls
+that check for up to 20 seconds before falling back to starting the AP,
+giving a real association a chance to complete first.
+
+If you're locked out because the AP already came up and you don't know its
+password (e.g. no physical e-ink display yet): it's stored in plain text at
+`/etc/japyscope/setup-ap-password` on the SD card — pull the card and read
+it from another machine (or use physical console access) if you have no
+other way to reach the Pi's shell.
+
 ## `SEARCH-001`: online SmartSearch unavailable
 
 This is non-fatal. The controller has already fallen back to built-in and all
