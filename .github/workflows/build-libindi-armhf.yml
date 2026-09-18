@@ -95,24 +95,33 @@ jobs:
             rm -rf /tmp/indi-src /tmp/indi-stage
             git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" \
               https://github.com/indilib/indi.git /tmp/indi-src
-            # Several bundled drivers this build doesn't need (only
-            # libindiclient + headers matter) set their own -Werror(=X) and
-            # keep hitting different warning classes on a newer GCC than
-            # INDI 2.2.4 was written against (stringop-overflow in
-            # astrotrac, a 32-bit-platform #warning via -Werror=cpp in
-            # planewave/bundled httplib.h). A blanket -Wno-error in
-            # CMAKE_CXX_FLAGS is not reliably later on the command line
-            # than a driver's own -Werror, so strip -Werror at the source
-            # instead of fighting flag order.
-            grep -rl -- '-Werror' /tmp/indi-src --include='CMakeLists.txt' --include='*.cmake' | xargs -r sed -i 's/-Werror\(=[a-zA-Z0-9_-]*\)\?//g'
             cmake -S /tmp/indi-src -B /tmp/indi-build \
               -DCMAKE_INSTALL_PREFIX=/usr/local \
               -DCMAKE_BUILD_TYPE=Release \
               -DINDI_BUILD_UNITTESTS=OFF \
               -DINDI_BUILD_INTEGTESTS=OFF
-            cmake --build /tmp/indi-build -j"$(nproc)"
+            # Some bundled telescope drivers this build doesn't need (only
+            # libindiclient + headers matter — indi_celestron_gps and
+            # others already link fine before these) hit -Werror(=X) on a
+            # newer GCC than INDI 2.2.4 was written against: astrotrac's
+            # stringop-overflow, planewave's bundled httplib.h explicitly
+            # #warning-ing that it doesn't support 32-bit platforms (a real
+            # architecture limitation, but only in a driver we discard).
+            # --keep-going skips those instead of aborting the whole build;
+            # verify the libindiclient artifacts we actually need still got
+            # built before trusting the result.
+            cmake --build /tmp/indi-build -j"$(nproc)" -- --keep-going || true
+            if ! ls /tmp/indi-build/libs/indiclient/libindiclient.* >/dev/null 2>&1; then
+              echo "libindiclient failed to build (not just an unrelated driver) — aborting." >&2
+              exit 1
+            fi
             mkdir -p /tmp/indi-stage
-            DESTDIR=/tmp/indi-stage cmake --install /tmp/indi-build
+            DESTDIR=/tmp/indi-stage cmake --install /tmp/indi-build > /tmp/indi-install.log 2>&1 || true
+            if [ ! -f /tmp/indi-stage/usr/local/include/libindi/baseclient.h ]; then
+              echo "cmake --install did not produce the expected headers." >&2
+              tail -50 /tmp/indi-install.log >&2
+              exit 1
+            fi
             # INDI core is LGPL-2.1 (see COPYING.LGPL) — bundle the license
             # text and the exact source ref built, satisfying LGPL's source
             # + notice requirements for redistributing the compiled library.
