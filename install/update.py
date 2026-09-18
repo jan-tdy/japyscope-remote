@@ -229,10 +229,10 @@ class Updater:
                 extracted = _safe_extract(archive, temp / "extract")
                 shutil.move(str(extracted), target)
             try:
-                subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=60)
+                subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
                 subprocess.run(
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
-                    check=True, timeout=120,
+                    check=True, timeout=300,
                 )
                 subprocess.run(
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
@@ -249,7 +249,7 @@ class Updater:
                     [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
                     check=True, timeout=300,
                 )
-                subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=60)
+                subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=120)
                 self._flip(target)
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
