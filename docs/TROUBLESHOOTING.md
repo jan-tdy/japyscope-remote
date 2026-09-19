@@ -148,6 +148,29 @@ Raspberry Pi OS — only `raspios_lite:*` (and `raspios_lite_arm64:*`,
 `downloads.raspberrypi.org` images. Double-check the resolved URL in
 `download_image.sh` before trusting a shortcut's name.
 
+## `test-bookworm-armhf.yml` fails instantly with "Unknown image raspios_lite:2023-12-11"
+
+The Bookworm CI smoke test never actually booted anything — it failed in
+under a second at the "download base image" step, before `apt-get`,
+`indiserver`, or `import PyIndi` ever ran. Root cause: unlike
+`raspios_lite:2023-05-03` (Bullseye, used by `build-libindi-armhf.yml`),
+`arm-runner-action`'s `raspios_lite:*` alias whitelist has **no Bookworm
+entry at all** — it stops at Bullseye. `raspios_lite:2023-12-11` looked
+like a valid dated shortcut but was simply never registered, so the
+action rejected it outright with "Unknown image" instead of failing later
+on a real dependency/PyIndi problem. This meant the workflow had been
+reporting a misleading "failure" that had nothing to do with Bookworm
+compatibility — and, worse, had never actually verified it either.
+
+Fixed: pass the real `downloads.raspberrypi.org` image URL directly as
+`base_image` instead of relying on an alias — `download_image.sh` uses
+any `http(s):` value verbatim, bypassing the whitelist:
+`https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2023-12-11/2023-12-11-raspios-bookworm-armhf-lite.img.xz`.
+`git pull` if you're hitting this on an old checkout. Don't use
+`raspios_lite:latest` as a "just give me current Bookworm" substitute
+either — it tracks whatever Raspberry Pi OS currently ships (already
+Trixie as of this writing), not Bookworm specifically.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after

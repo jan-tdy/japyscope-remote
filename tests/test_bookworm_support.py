@@ -27,7 +27,12 @@ def test_bookworm_uses_the_pinned_indi_2_client_core_not_its_incompatible_dev_pa
 
 def test_bookworm_ci_smoke_test_builds_the_hash_locked_pip_and_pyindi_stack():
     workflow = read(".github/workflows/test-bookworm-armhf.yml")
-    assert "base_image: raspios_lite:2023-12-11" in workflow
+    # Not the "raspios_lite:2023-12-11" alias: arm-runner-action's alias
+    # whitelist has no Bookworm entry (it stops at 2023-05-03, Bullseye),
+    # so that alias silently failed with "Unknown image" before ever
+    # booting anything. Assert the real image URL is used instead.
+    assert "2023-12-11-raspios-bookworm-armhf-lite.img.xz" in workflow
+    assert "base_image: raspios_lite:2023-12-11" not in workflow
     assert "network-manager" in workflow
     assert "pip install --require-hashes -r requirements.lock" in workflow
     assert "pip install --require-hashes --no-deps --no-build-isolation -r requirements-pyindi.lock" in workflow

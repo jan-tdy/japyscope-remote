@@ -1861,28 +1861,46 @@
     for(var i = 0, p = 0; i < gray.length; i++, p += 4){
       gray[i] = 0.299*src[p] + 0.587*src[p+1] + 0.114*src[p+2];
     }
-    var out = ctx.createImageData(w, h);
-    var od = out.data;
     var gx = [-1,0,1,-2,0,2,-1,0,1];
     var gy = [-1,-2,-1,0,0,0,1,2,1];
     var threshold = 40;
-    for(var y = 0; y < h; y++){
-      for(var x = 0; x < w; x++){
-        var edge = 255;
-        if(x > 0 && x < w-1 && y > 0 && y < h-1){
-          var sx = 0, sy = 0, k = 0;
-          for(var ky = -1; ky <= 1; ky++){
-            for(var kx = -1; kx <= 1; kx++){
-              var v = gray[(y+ky)*w + (x+kx)];
-              sx += v*gx[k];
-              sy += v*gy[k];
-              k++;
-            }
+    /* Computed as a separate pass (rather than straight into the output
+       image) so it can be dilated by a pixel below before rasterizing —
+       this UI's on-screen text and key labels are small enough that a
+       raw 1px-thin edge trace often breaks apart or disappears
+       entirely, which defeats the point for manual illustrations. */
+    var isEdge = new Uint8Array(w * h);
+    for(var y = 1; y < h-1; y++){
+      for(var x = 1; x < w-1; x++){
+        var sx = 0, sy = 0, k = 0;
+        for(var ky = -1; ky <= 1; ky++){
+          for(var kx = -1; kx <= 1; kx++){
+            var v = gray[(y+ky)*w + (x+kx)];
+            sx += v*gx[k];
+            sy += v*gy[k];
+            k++;
           }
-          edge = Math.sqrt(sx*sx + sy*sy) > threshold ? 0 : 255;
         }
-        var o = (y*w + x) * 4;
-        od[o] = od[o+1] = od[o+2] = edge;
+        if(Math.sqrt(sx*sx + sy*sy) > threshold) isEdge[y*w + x] = 1;
+      }
+    }
+    var out = ctx.createImageData(w, h);
+    var od = out.data;
+    for(var y2 = 0; y2 < h; y2++){
+      for(var x2 = 0; x2 < w; x2++){
+        var hit = isEdge[y2*w + x2] === 1;
+        for(var dy = -1; dy <= 1 && !hit; dy++){
+          var ny = y2 + dy;
+          if(ny < 0 || ny >= h) continue;
+          for(var dx = -1; dx <= 1; dx++){
+            var nx = x2 + dx;
+            if(nx < 0 || nx >= w) continue;
+            if(isEdge[ny*w + nx]){ hit = true; break; }
+          }
+        }
+        var o = (y2*w + x2) * 4;
+        var val = hit ? 0 : 255;
+        od[o] = od[o+1] = od[o+2] = val;
         od[o+3] = 255;
       }
     }
