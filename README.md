@@ -1,11 +1,11 @@
 # japyscope-remote
 
-JapyScope Remote — a custom Raspberry Pi Zero W hand controller replacing
-the stock SynScan hand controller on Sky-Watcher Alt-Az GoTo mounts (not
-limited to Dobsonians — developed and tested against a Sky-Watcher
-Flextube 400P Dobsonian), plus its companion Web UI. Connects directly to
-the mount's RJ12 Hand Control port and drives INDI's Sky-Watcher Alt-Az
-mount driver directly.
+JapyScope Remote — a custom Raspberry Pi Zero W hand controller for GoTo
+telescope mounts (not limited to Dobsonians — developed and tested
+against a Sky-Watcher Flextube 400P Dobsonian), plus its companion Web
+UI. Connects directly to the mount's RJ12 Hand Control port, currently
+replacing the stock SynScan hand controller and driving INDI's
+Sky-Watcher Alt-Az mount driver directly.
 
 - **Docs site (wizard + wiki)**: [open the JapyScope documentation](https://jan-tdy.github.io/japyscope-remote/) (published via GitHub Pages/Jekyll)
 - **Architecture, decisions, and current build status**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
