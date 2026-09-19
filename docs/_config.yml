@@ -1,0 +1,7 @@
+title: JapyScope Remote
+description: Build, install, and use a Raspberry Pi Zero W hand controller for a Sky-Watcher Dobsonian mount.
+markdown: kramdown
+permalink: pretty
+exclude:
+  - Gemfile
+  - Gemfile.lock

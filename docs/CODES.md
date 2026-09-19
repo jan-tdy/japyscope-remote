@@ -1,3 +1,9 @@
+---
+layout: default
+title: On-device codes
+permalink: /codes/
+---
+
 # JapyScope Remote — Codes Reference
 
 Living document — extend freely as new codes/diagnostics are introduced.

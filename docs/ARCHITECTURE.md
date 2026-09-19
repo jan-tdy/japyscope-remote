@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture
+permalink: /architecture/
+---
+
 # JapyScope Remote — Firmware v0 Architecture & Handoff
 
 This is the living architecture doc for JapyScope Remote: a custom

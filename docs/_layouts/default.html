@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{{ page.description | default: site.description }}">
+    <title>{% if page.title %}{{ page.title }} · {% endif %}{{ site.title }}</title>
+    <link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="{{ '/' | relative_url }}">JapyScope Remote</a>
+      <nav aria-label="Primary navigation">
+        <a href="{{ '/install/' | relative_url }}">Install wizard</a>
+        <a href="{{ '/about/' | relative_url }}">About</a>
+        <a href="{{ '/guides/' | relative_url }}">Guides</a>
+        <a href="{{ '/mockup.html' | relative_url }}">Mockup</a>
+      </nav>
+    </header>
+    <main class="site-main">
+      {{ content }}
+    </main>
+    <footer class="site-footer">JapySoft · JapyScope Remote</footer>
+  </body>
+</html>
