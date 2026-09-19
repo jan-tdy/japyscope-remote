@@ -7,7 +7,7 @@ permalink: /about/
 <article class="content">
   <span class="eyebrow">Overview</span>
   <h1>What is JapyScope?</h1>
-  <p>JapyScope Remote is a custom, Raspberry Pi Zero W-based hand controller for a Sky-Watcher Flextube 400P Dobsonian mount. It connects directly to the mount’s RJ12 hand-control port and uses INDI’s Sky-Watcher Alt-Az driver.</p>
+  <p>JapyScope Remote is a custom, Raspberry Pi Zero W-based hand controller for Sky-Watcher Alt-Az mounts — not limited to Dobsonian telescopes. It connects directly to the mount’s RJ12 hand-control port and uses INDI’s Sky-Watcher Alt-Az driver.</p>
   <h2>What you get</h2>
   <ul>
     <li>An e-paper controller interface with keypad and side wheel.</li>

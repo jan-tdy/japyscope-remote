@@ -6,7 +6,7 @@ title: Start here
 <section class="hero">
   <span class="eyebrow">JapyScope Remote</span>
   <h1>What would you like to do?</h1>
-  <p>A practical hand controller for a Sky-Watcher Flextube 400P Dobsonian, powered by a Raspberry Pi Zero W.</p>
+  <p>A practical hand controller for Sky-Watcher Alt-Az GoTo mounts — not just Dobsonians — powered by a Raspberry Pi Zero W.</p>
 </section>
 
 <section class="choice-grid" aria-label="Choose a starting point">
