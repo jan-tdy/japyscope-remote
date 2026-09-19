@@ -8,7 +8,7 @@ Before=japyscope-webui.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/japyscope-wifi-ap
-ExecStop=/bin/systemctl stop hostapd.service dnsmasq.service
+ExecStop=/usr/local/sbin/japyscope-wifi-ap --stop
 
 [Install]
 WantedBy=multi-user.target

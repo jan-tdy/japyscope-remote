@@ -143,7 +143,7 @@ def _heal_dpkg() -> None:
 
 def _apt_upgrade() -> None:
     """Refresh and upgrade system packages within the currently configured
-    Bullseye repos. Deliberately just `apt-get update && apt-get upgrade`
+    the installed release's repos. Deliberately just `apt-get update && apt-get upgrade`
     — never `full-upgrade`/`dist-upgrade`, and this never touches apt
     sources — so it cannot pull the device onto Bookworm or any other
     release on its own. Runs as its own systemd step (see

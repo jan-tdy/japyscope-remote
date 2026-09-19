@@ -7,13 +7,11 @@ permalink: /install-reference/
 # Installation
 
 JapyScope targets the original Raspberry Pi Zero W (`armv6`). Use **Raspberry
-Pi OS Bullseye Lite, 32-bit**. Not a 64-bit image (won't boot on armv6 at
-all) — and not Bookworm either, even though Bookworm's 32-bit (armhf) image
-*does* officially support the Zero W: this project's Wi-Fi AP setup
-(`install/wifi-config.sh`) writes straight to `wpa_supplicant.conf`, which
-isn't how Bookworm's default NetworkManager-based networking works, and
-that hasn't been ported/tested. The installer enforces this — it refuses to
-run on anything but Bullseye.
+Pi OS Lite, 32-bit (armhf)**, either **Bullseye** or **Bookworm**. A 64-bit
+image will not boot on the original Zero W. The installer detects the release:
+Bullseye uses its legacy `wpa_supplicant`/hostapd setup, while Bookworm uses
+its default NetworkManager stack for both the saved client network and the
+setup hotspot.
 
 ## Power and SD card (read this first)
 
@@ -38,15 +36,17 @@ make it worse.
 
 ## Prepare the card
 
-1. Flash Bullseye Lite with Raspberry Pi Imager. Configure a user and enable
+1. Flash Bullseye Lite or Bookworm Lite with Raspberry Pi Imager. Configure a user and enable
    SSH in the imager if the controller has no keyboard.
 2. Boot the Pi, copy or clone this repository, and enter its root directory.
 3. Run `sudo install/install.sh`.
 
-The installer refuses non-Bullseye and non-`armhf` systems. It installs the
-Bullseye `indi-bin` package (which includes `indiserver` and the verified
+The installer refuses unsupported releases and non-`armhf` systems. It
+installs `indi-bin` (which includes `indiserver` and the verified
 `indi_skywatcherAltAzMount` executable), build prerequisites, Python
-dependencies, the Wi-Fi setup access point, and systemd units. The installed
+dependencies, the Wi-Fi setup access point, and systemd units. Both releases
+fetch the pinned compatible INDI client core because their packaged headers
+are older than the INDI 2.x API required by `pyindi-client`. The installed
 tree is under `/opt/japyscope/releases/`; `/opt/japyscope/current` points to
 the active version. Persistent data is in `/var/lib/japyscope`.
 
@@ -60,7 +60,7 @@ When no saved Wi-Fi connection is active, join the WPA2-protected
 can also be read locally with `sudo cat /etc/japyscope/setup-ap-password`.
 Browse to `http://192.168.4.1:8080/setup`. Enter the home Wi-Fi
 credentials, then reconnect the client device to that network. The password is
-passed directly to `wpa_supplicant`; it is not stored in the JapyScope database.
+passed directly to the OS network manager; it is not stored in the JapyScope database.
 
 Generate a Web UI access code on the controller under **Menu → Wi-Fi / Web
 Access**, then open `http://japyscope.local:8080/` (or the Pi's IP address).

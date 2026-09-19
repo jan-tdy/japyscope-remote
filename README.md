@@ -17,6 +17,9 @@ directly.
 Firmware v0 is under active development, before any hardware exists yet.
 See `docs/ARCHITECTURE.md` for exactly what's implemented vs. still open.
 
+The installer supports 32-bit Raspberry Pi OS Lite on the original Pi Zero W:
+Bullseye and Bookworm. See [installation](docs/INSTALL.md).
+
 ## Development
 
 ```

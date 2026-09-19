@@ -25,14 +25,14 @@ below, which supersede the mockup where they conflict with it.
 
 | Area | Decision |
 |---|---|
-| Target HW | Raspberry Pi Zero W (armv6 — **this project targets Raspberry Pi OS Bullseye Lite (32-bit)**. Correction: Bookworm 32-bit (armhf) *is* officially supported on the original Zero W per Raspberry Pi's own OS compatibility list — the earlier "Bookworm dropped armv6" claim in this doc was wrong. We still require Bullseye because `install/wifi-config.sh` writes directly to `/etc/wpa_supplicant/wpa_supplicant.conf`, which Bookworm's default NetworkManager-based networking doesn't consume the same way — that script (and the AP setup flow built on it) hasn't been ported/verified for Bookworm's network stack. Revisit if there's a reason to move.) |
+| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye or Bookworm, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm uses NetworkManager profiles.) |
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Not finalized** — leaning 2.13" e-paper but nothing bought yet, 4.26" not ruled out. Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py` |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
 | Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, and mount can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless, for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
-| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye Lite image — not a prebuilt SD image, Docker, or desktop installer |
+| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye or Bookworm Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
-| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within Bullseye's own repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
+| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within the installed release's repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
 | Firmware language | Python 3 |
 | Web UI stack | Flask + Jinja2, server-rendered plain HTML (no JS framework) |
 | Web UI port | **8080**, all interfaces (`--host 0.0.0.0 --port 8080`, set in `install/systemd/japyscope-webui.service`) — `http://<device-ip>:8080/` normally, `http://192.168.4.1:8080/setup` while the controller is broadcasting its own Wi-Fi setup hotspot. `install/update.py`'s post-update health check also polls `http://127.0.0.1:8080/healthz` on this port. |
@@ -93,8 +93,8 @@ The software-side handoff items are implemented:
    `#tab-webui` (Wi-Fi AP setup, code-gated login with 5-attempt lockout,
    status with opt-in live position, multi-catalog CRUD + CSV import,
    settings, diagnostics, system), backed by `shared/db.py`.
-4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye
-   Lite image: apt installs Bullseye's `indi-bin` package, whose armhf file
+4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye or
+   Bookworm Lite image: apt installs the release's `indi-bin` package, whose armhf file
    list confirms the `indi_skywatcherAltAzMount` driver binary, Python deps
    (`requirements.txt`), venv, systemd units.
 5. **`install/systemd/*.service`** — includes `japyscope-app.service`,
@@ -110,7 +110,7 @@ The software-side handoff items are implemented:
 
 **Still hardware-blocked:** fill in the selected e-paper controller protocol,
 map PyIndi properties against the live Sky-Watcher driver, confirm the physical
-RJ12 pinout, and exercise install/OTA on a real Bullseye Pi Zero W. These are
+RJ12 pinout, and exercise install/OTA on real Bullseye and Bookworm Pi Zero W devices. These are
 not safely guessable without the prototype.
 
 **Deferred beyond v0 entirely**: a polished end-user manual as a PDF

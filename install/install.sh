@@ -10,10 +10,13 @@ source_dir=$(cd -- "$script_dir/.." && pwd)
 if [[ ! -r /etc/os-release ]]; then echo "Cannot identify this operating system." >&2; exit 1; fi
 # shellcheck disable=SC1091
 source /etc/os-release
-if [[ ${VERSION_CODENAME:-} != bullseye ]]; then
-  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye Lite (32-bit)." >&2
+case ${VERSION_CODENAME:-} in
+  bullseye|bookworm) ;;
+  *)
+  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye or Bookworm Lite (32-bit)." >&2
   exit 1
-fi
+  ;;
+esac
 arch=$(dpkg --print-architecture)
 if [[ $arch != armhf ]]; then echo "Expected the 32-bit armhf image, found $arch." >&2; exit 1; fi
 
@@ -70,17 +73,16 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
-# Bullseye's apt libindi-dev (1.8.8+dfsg-1) predates the
-# INDI::PropertyView-family headers pyindi-client's SWIG interface needs
-# (indipropertyview.h, indipropertybasic.h, ...) and no apt repository ships
-# a newer one for armhf/Bullseye. Fetch a prebuilt INDI core (headers +
-# client lib only — indiserver/drivers keep using apt's indi-bin unchanged,
-# that has no dependency on libindi-dev at runtime) into /usr/local, one of
-# pyindi-client's own SWIG search paths. Built by
+# pyindi-client 2.2.0 requires INDI Core 2.x. Raspberry Pi OS Bullseye ships
+# 1.8.8 and Bookworm ships 1.9.9, both predating that API. Fetch a prebuilt
+# ARMv6-safe INDI core (headers + client lib only — indiserver/drivers keep
+# using apt's indi-bin unchanged, which has no runtime dependency on
+# libindi-dev) into /usr/local, one of pyindi-client's own SWIG search paths.
+# Built by
 # .github/workflows/build-libindi-armhf.yml; see docs/TROUBLESHOOTING.md.
 #
 # apt's libindi-dev must NOT be installed alongside this: pyindi-client's
@@ -92,18 +94,17 @@ command -v indi_skywatcherAltAzMount >/dev/null
 # class and enum definitions in the same translation unit. Purge it
 # unconditionally (safe no-op if it was never installed, or already
 # removed by a prior run) before laying down the prebuilt headers.
+# Never mix the old distribution headers with the 2.x header set: SWIG
+# includes several files directly, so mixed include paths produce duplicate
+# declarations. This is needed on both supported OS releases.
 apt_retry apt-get purge -y libindi-dev
-# Belt-and-braces: this device's dpkg state has a history of corruption
-# (see "Filesystem went read-only" below), so don't trust the purge alone
-# to have actually cleared the directory — remove it directly too.
 rm -rf /usr/include/libindi
 libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
 # shellcheck disable=SC1091
 source "$source_dir/install/libindi-core.env"
 # Keyed on the SHA-256, not the tag: a broken build was once re-published
-# under the same tag with fixed content (a GitHub Release tag isn't
-# actually immutable), so a tag-only marker would wrongly think an old,
-# broken extraction was already up to date and skip re-fetching.
+# under the same tag with fixed content (a GitHub Release tag isn't actually
+# immutable), so a tag-only marker would wrongly skip re-fetching.
 if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA256" ]]; then
   tmp_tarball=$(mktemp)
   echo "Fetching prebuilt INDI core ($LIBINDI_CORE_TAG) for pyindi-client..." >&2
@@ -112,12 +113,6 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
   echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
   tar -xzf "$tmp_tarball" -C /usr/local
   rm -f "$tmp_tarball"
-  # The build image installs libs under a multiarch subdirectory
-  # (/usr/local/lib/arm-linux-gnueabihf/) rather than flat /usr/local/lib.
-  # gcc/ld should search that path by default on a real multiarch armhf
-  # system, but symlink the files into flat /usr/local/lib too as a
-  # belt-and-braces measure so pyindi-client's -lindiclient link doesn't
-  # depend on that assumption holding.
   if [[ -d /usr/local/lib/arm-linux-gnueabihf ]]; then
     find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
   fi
@@ -126,11 +121,26 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
   echo "$LIBINDI_CORE_SHA256" > "$libindi_core_marker"
 fi
 
+if [[ ${VERSION_CODENAME:-} == bullseye ]]; then
+  apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant
+  network_backend=wpa_supplicant
+else
+  # Bookworm's supported network stack is NetworkManager; do not install
+  # hostapd/dnsmasq alongside it and fight for wlan0.
+  apt_retry apt-get install -y --no-install-recommends network-manager
+  systemctl enable NetworkManager.service
+  systemctl start NetworkManager.service
+  command -v nmcli >/dev/null
+  network_backend=networkmanager
+fi
+
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
 usermod -a -G gpio,spi,dialout,netdev japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
+printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/network-backend
+chmod 644 /etc/japyscope/network-backend
 install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 
 version=$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)
@@ -181,6 +191,7 @@ if [[ ! -s $ap_password_file ]]; then
   chown root:japyscope "$ap_password_file"
   chmod 640 "$ap_password_file"
 fi
+if [[ $network_backend == wpa_supplicant ]]; then
 python3 - "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf "$ap_password_file" <<'PY'
 import pathlib
 import sys
@@ -195,12 +206,19 @@ chown root:root /etc/hostapd/japyscope.conf
 chmod 600 /etc/hostapd/japyscope.conf
 install -o root -g root -m 644 "$source_dir/install/dnsmasq.conf" /etc/dnsmasq.d/japyscope.conf
 sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/japyscope.conf"|' /etc/default/hostapd
+else
+  # The profile is deliberately non-autoconnecting: it is started only when
+  # no configured client Wi-Fi has associated, by japyscope-wifi-ap.
+  nmcli connection delete id 'JapyScope Setup' >/dev/null 2>&1 || true
+  nmcli connection add type wifi ifname wlan0 con-name 'JapyScope Setup' autoconnect no ssid JapyScope-Setup
+  nmcli connection modify 'JapyScope Setup' wifi.mode ap wifi.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 ipv6.method disabled wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$(<"$ap_password_file")"
+fi
 printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
 systemctl daemon-reload
-systemctl unmask hostapd.service
+if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
 systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
 systemctl restart japyscope-wifi-ap.service
 systemctl restart japyscope-app.service japyscope-webui.service

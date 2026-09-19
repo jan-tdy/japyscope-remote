@@ -32,7 +32,7 @@ lines). `apply` is idempotent when the latest tag is already active.
 ## System package upgrades
 
 `system-upgrade` runs `apt-get update && apt-get upgrade` — patches within the
-currently configured Bullseye repos only. It never runs `full-upgrade` or
+currently configured Raspberry Pi OS repos only. It never runs `full-upgrade` or
 `dist-upgrade`, and never touches `/etc/apt/sources.list`, so it cannot move
 the device onto Bookworm or any other release on its own. It's a separate,
 best-effort step from the JapyScope release install above (see the `-`-prefixed

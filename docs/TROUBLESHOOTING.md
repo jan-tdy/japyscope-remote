@@ -58,15 +58,12 @@ Next stage after the `swig` fix above: SWIG itself now runs, but can't find
 `indimacros.h`, `indiwidgettraits.h`, `indipropertyview.h`,
 `indipropertybasic.h`, `indipropertytext.h`, `indipropertynumber.h`,
 `indipropertyswitch.h`, `indipropertylight.h`, `indipropertyblob.h`, or
-`indiproperties.h`. Confirmed root cause: Bullseye's apt `libindi-dev` is
-**1.8.8+dfsg-1**, which predates the `INDI::PropertyView`-family headers
-current `pyindi-client`'s SWIG interface (`indiclientpython.i`) requires —
-those headers simply don't exist anywhere in that package. There is no apt
-repository shipping a newer `libindi-dev` for armhf/Bullseye (the INDI forum
-has an open thread literally titled "INDI needs a new apt repository for
-Debian ARM"), and building INDI core from source *on* a Pi Zero W (single
-ARM11 core, 512 MB RAM, already SD-card-constrained — see "Filesystem went
-read-only" below) is impractical and risky.
+`indiproperties.h`. Confirmed root cause: the distribution `libindi-dev`
+packages are too old for current `pyindi-client`'s INDI 2.x SWIG interface:
+Bullseye ships **1.8.8+dfsg-1** and Bookworm ships **1.9.9+dfsg-2**. Neither
+has the required INDI 2.x `PropertyView` API. Building INDI core from source
+*on* a Pi Zero W (single ARM11 core, 512 MB RAM, already SD-card-constrained
+— see "Filesystem went read-only" below) is impractical and risky.
 
 Fixed without compiling anything on the Pi: `.github/workflows/build-libindi-armhf.yml`
 cross-builds INDI core on GitHub's infrastructure, booting the actual
@@ -79,10 +76,10 @@ packages just the new headers and the client library (not
 `indiserver` or any driver — those keep running from apt's `indi-bin`/
 `libindi-dev`, untouched) and attaches the tarball to a GitHub Release.
 `install.sh` downloads it (pinned tag + SHA-256 in `install/libindi-core.env`)
-into `/usr/local` — already one of `indiclientpython.i`'s own SWIG search
-paths, so no interface-file change was needed — before the existing
-`--no-deps --no-build-isolation` `pyindi-client` install. `git pull` if
-you're hitting this on an old checkout.
+into `/usr/local` on both supported releases — already one of
+`indiclientpython.i`'s own SWIG search paths, so no interface-file change was
+needed — before the existing `--no-deps --no-build-isolation` `pyindi-client`
+install. `git pull` if you're hitting this on an old checkout.
 
 If `install/libindi-core.env` still says `PENDING`, the prebuilt tarball
 hasn't been published yet; trigger the workflow manually (Actions → "Build
@@ -239,25 +236,26 @@ Check power, serial wiring, driver name, and port configuration.
 
 ## `WIFI-001`: setup hotspot or join failed
 
-Run `systemctl status japyscope-wifi-ap hostapd dnsmasq` and then
-`sudo /usr/local/sbin/japyscope-wifi-ap --force`. The setup page is
-`http://192.168.4.1:8080/setup`. The `hostapd` and `dnsmasq` journals contain
-radio or DHCP errors.
+Run `sudo /usr/local/sbin/japyscope-wifi-ap --force`; the setup page is
+`http://192.168.4.1:8080/setup`. On Bullseye, inspect
+`systemctl status japyscope-wifi-ap hostapd dnsmasq` and their journals. On
+Bookworm, inspect `systemctl status japyscope-wifi-ap NetworkManager` and
+`journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager profile
+owns the radio and DHCP service.
 
 ## Setup AP starts on every boot even though Wi-Fi is already configured and working
 
 **Fixed** — if you're still hitting this, `git pull` and re-run `install.sh`.
 Root cause: `japyscope-wifi-ap.service` runs right after wlan0's device node
 appears (`After=sys-subsystem-net-devices-wlan0.device`), which is well
-before `wpa_supplicant` has actually finished associating with a configured
-network. The script's "skip the AP if already connected" check
-(`wpa_cli -i wlan0 status` for `wpa_state=COMPLETED`) ran exactly once,
-immediately, so it always saw "not connected yet" — even on a device with
-perfectly good Wi-Fi credentials that would have connected fine a couple of
-seconds later — and started the AP unnecessarily on every single boot,
-kicking any already-associated client off. `install/wifi-ap.sh` now polls
-that check for up to 20 seconds before falling back to starting the AP,
-giving a real association a chance to complete first.
+before the configured network manager has actually finished associating with
+a configured network. The script's "skip the AP if already connected" check
+ran exactly once, immediately, so it always saw "not connected yet" — even on
+a device with perfectly good Wi-Fi credentials that would have connected fine
+a couple of seconds later — and started the AP unnecessarily on every single
+boot, kicking any already-associated client off. `install/wifi-ap.sh` now
+polls for up to 20 seconds before falling back to starting the AP, using
+`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm.
 
 If you're locked out because the AP already came up and you don't know its
 password (e.g. no physical e-ink display yet): it's stored in plain text at
