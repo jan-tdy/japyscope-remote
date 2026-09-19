@@ -251,7 +251,7 @@
 <div class="tabbar">
   <button class="tab-btn active" data-tab="hw">Hand Controller</button>
   <button class="tab-btn" data-tab="webui">Web UI</button>
-  <button class="jpg-btn" id="downloadJpgBtn" type="button" title="Renders whichever tab is currently open as a black-and-white outline JPG — handy for manual illustrations">⬇ Download as JPG (outline)</button>
+  <button class="jpg-btn" id="downloadJpgBtn" type="button" title="Renders just the controller/Web UI graphic (not the surrounding simulator panels) as a black-and-white outline JPG — handy for manual illustrations">⬇ Download as JPG (outline)</button>
 </div>
 
 <div class="tab-panel active" id="tab-hw">
@@ -1849,10 +1849,12 @@
   var btn = document.getElementById("downloadJpgBtn");
   if(!btn) return;
 
-  /* Sobel edge detection on the captured screenshot: turns whatever the
-     user currently has open into pure black outlines on white, which is
-     what prints/photocopies well for manual illustrations (no greys,
-     no photo noise). */
+  /* Sobel edge detection on the captured screenshot: turns the controller
+     graphic into pure black outlines on white, which is what
+     prints/photocopies well for manual illustrations (no greys, no photo
+     noise). A single thin pass, deliberately not thickened/dilated — at
+     the resolution this is captured at (see the scale below), a dilated
+     line reliably blobbed the on-screen text into illegible mush. */
   function toOutline(srcCanvas){
     var w = srcCanvas.width, h = srcCanvas.height;
     var ctx = srcCanvas.getContext("2d");
@@ -1861,46 +1863,28 @@
     for(var i = 0, p = 0; i < gray.length; i++, p += 4){
       gray[i] = 0.299*src[p] + 0.587*src[p+1] + 0.114*src[p+2];
     }
+    var out = ctx.createImageData(w, h);
+    var od = out.data;
     var gx = [-1,0,1,-2,0,2,-1,0,1];
     var gy = [-1,-2,-1,0,0,0,1,2,1];
     var threshold = 40;
-    /* Computed as a separate pass (rather than straight into the output
-       image) so it can be dilated by a pixel below before rasterizing —
-       this UI's on-screen text and key labels are small enough that a
-       raw 1px-thin edge trace often breaks apart or disappears
-       entirely, which defeats the point for manual illustrations. */
-    var isEdge = new Uint8Array(w * h);
-    for(var y = 1; y < h-1; y++){
-      for(var x = 1; x < w-1; x++){
-        var sx = 0, sy = 0, k = 0;
-        for(var ky = -1; ky <= 1; ky++){
-          for(var kx = -1; kx <= 1; kx++){
-            var v = gray[(y+ky)*w + (x+kx)];
-            sx += v*gx[k];
-            sy += v*gy[k];
-            k++;
+    for(var y = 0; y < h; y++){
+      for(var x = 0; x < w; x++){
+        var edge = 255;
+        if(x > 0 && x < w-1 && y > 0 && y < h-1){
+          var sx = 0, sy = 0, k = 0;
+          for(var ky = -1; ky <= 1; ky++){
+            for(var kx = -1; kx <= 1; kx++){
+              var v = gray[(y+ky)*w + (x+kx)];
+              sx += v*gx[k];
+              sy += v*gy[k];
+              k++;
+            }
           }
+          edge = Math.sqrt(sx*sx + sy*sy) > threshold ? 0 : 255;
         }
-        if(Math.sqrt(sx*sx + sy*sy) > threshold) isEdge[y*w + x] = 1;
-      }
-    }
-    var out = ctx.createImageData(w, h);
-    var od = out.data;
-    for(var y2 = 0; y2 < h; y2++){
-      for(var x2 = 0; x2 < w; x2++){
-        var hit = isEdge[y2*w + x2] === 1;
-        for(var dy = -1; dy <= 1 && !hit; dy++){
-          var ny = y2 + dy;
-          if(ny < 0 || ny >= h) continue;
-          for(var dx = -1; dx <= 1; dx++){
-            var nx = x2 + dx;
-            if(nx < 0 || nx >= w) continue;
-            if(isEdge[ny*w + nx]){ hit = true; break; }
-          }
-        }
-        var o = (y2*w + x2) * 4;
-        var val = hit ? 0 : 255;
-        od[o] = od[o+1] = od[o+2] = val;
+        var o = (y*w + x) * 4;
+        od[o] = od[o+1] = od[o+2] = edge;
         od[o+3] = 255;
       }
     }
@@ -1910,16 +1894,32 @@
     return outCanvas;
   }
 
+  /* Only the controller/Web-UI graphic itself — not the surrounding
+     simulator chrome (title, tabbar, key-map/action-log panels, keyboard
+     legend), which isn't part of what a manual photo would show. */
+  function captureTarget(panel){
+    var device = panel.querySelector(".col-device");
+    if(device) return device;
+    return panel.querySelector(".webui-page") || panel;
+  }
+
   btn.addEventListener("click", function(){
     var panel = document.querySelector(".tab-panel.active");
     if(!panel || typeof html2canvas !== "function"){
       alert("Screenshot rendering isn't available (html2canvas failed to load).");
       return;
     }
+    var target = captureTarget(panel);
     var label = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Rendering…";
-    html2canvas(panel, {backgroundColor: "#ffffff", scale: 2}).then(function(canvas){
+    /* A higher scale than a whole-page capture would need: the crop is
+       small now, so this stays fast, and it gives the on-screen text
+       enough source pixels that a thin, undilated outline still traces
+       it legibly instead of breaking into dots. The +24 width pads past
+       the device's own box for the side scroll-wheel, which sits
+       outside it via negative positioning (right:-13px). */
+    html2canvas(target, {backgroundColor: "#ffffff", scale: 3, width: target.scrollWidth + 24}).then(function(canvas){
       var outline = toOutline(canvas);
       outline.toBlob(function(blob){
         if(!blob){ throw new Error("toBlob returned no data"); }
