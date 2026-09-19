@@ -1,3 +1,9 @@
+---
+layout: default
+title: Installation reference
+permalink: /install-reference/
+---
+
 # Installation
 
 JapyScope targets the original Raspberry Pi Zero W (`armv6`). Use **Raspberry

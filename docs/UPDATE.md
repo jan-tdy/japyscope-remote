@@ -1,3 +1,9 @@
+---
+layout: default
+title: Updating JapyScope
+permalink: /update/
+---
+
 # OTA updates and rollback
 
 `install/update.py` installs GitHub Releases transactionally. The release must

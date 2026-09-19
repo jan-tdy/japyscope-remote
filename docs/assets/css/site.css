@@ -1,0 +1,62 @@
+:root {
+  --paper: #f5f2ea;
+  --ink: #1d2524;
+  --quiet: #5a6763;
+  --line: #cbd2cb;
+  --panel: #ffffff;
+  --accent: #146b5b;
+  --accent-dark: #0c4b40;
+  --warning: #fff3cf;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.55; }
+a { color: var(--accent-dark); }
+a:hover { color: var(--accent); }
+.site-header, .site-main, .site-footer { width: min(100% - 2rem, 72rem); margin-inline: auto; }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+.brand { color: var(--ink); font-weight: 800; letter-spacing: -.02em; text-decoration: none; }
+nav { display: flex; flex-wrap: wrap; gap: .9rem; font-size: .92rem; }
+nav a { color: var(--quiet); text-decoration: none; }
+.site-main { padding-block: 3.5rem 5rem; }
+.site-footer { border-top: 1px solid var(--line); color: var(--quiet); font-size: .85rem; padding: 1.25rem 0 2.5rem; }
+.eyebrow { color: var(--accent-dark); font-size: .76rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.hero { max-width: 50rem; }
+.hero h1, .content h1 { font-size: clamp(2.2rem, 6vw, 4.8rem); letter-spacing: -.055em; line-height: 1; margin: .25rem 0 1rem; }
+.hero p { color: var(--quiet); font-size: 1.15rem; max-width: 42rem; }
+.choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 2.5rem; max-width: 56rem; }
+.choice { display: flex; min-height: 11.5rem; flex-direction: column; justify-content: space-between; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 1.35rem; text-decoration: none; transition: border-color .15s ease, transform .15s ease; }
+.choice:hover { border-color: var(--accent); color: var(--ink); transform: translateY(-2px); }
+.choice h2 { font-size: 1.2rem; margin: 0; }
+.choice p { color: var(--quiet); font-size: .95rem; margin: .7rem 0 0; }
+.choice .arrow { color: var(--accent-dark); font-weight: 700; margin-top: 1rem; }
+.choice[aria-disabled="true"] { cursor: not-allowed; opacity: .62; }
+.content { max-width: 51rem; }
+.content h1 { font-size: clamp(2rem, 5vw, 3.6rem); }
+.content h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+.content pre, .content code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.content pre { background: #202a27; color: #f7f8f5; overflow-x: auto; padding: 1rem; }
+.content blockquote, .notice { border-left: 4px solid var(--accent); background: var(--warning); margin: 1.5rem 0; padding: 1rem 1.2rem; }
+.content table { border-collapse: collapse; width: 100%; }
+.content th, .content td { border: 1px solid var(--line); padding: .6rem; text-align: left; }
+.wizard { max-width: 46rem; }
+.wizard-header { border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; padding-bottom: 1rem; }
+.wizard-header h1 { font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -.045em; line-height: 1; margin: .3rem 0; }
+.progress-label { color: var(--quiet); font-size: .9rem; }
+.progress { height: .45rem; background: #dce2dc; margin-top: .75rem; }
+.progress > span { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+.wizard-step h2 { font-size: 1.55rem; line-height: 1.15; margin: 0 0 .75rem; }
+.wizard-step p, .wizard-step li { max-width: 43rem; }
+.step-options { display: grid; gap: .7rem; margin: 1.25rem 0; }
+.step-option { text-align: left; width: 100%; background: var(--panel); border: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; padding: 1rem; }
+.step-option:hover, .step-option.selected { border-color: var(--accent); background: #eef7f4; }
+.wizard-nav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 2rem; }
+button, .button { background: var(--accent); border: 1px solid var(--accent); color: white; cursor: pointer; display: inline-block; font: inherit; font-weight: 700; padding: .7rem 1rem; text-decoration: none; }
+button:hover, .button:hover { background: var(--accent-dark); color: white; }
+button.secondary { background: transparent; color: var(--accent-dark); }
+button:disabled { cursor: not-allowed; opacity: .45; }
+.checklist { padding-left: 1.2rem; }
+@media (max-width: 640px) { .site-header { align-items: flex-start; flex-direction: column; } .choice-grid { grid-template-columns: 1fr; } .site-main { padding-top: 2.5rem; } }

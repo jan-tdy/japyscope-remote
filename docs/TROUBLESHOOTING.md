@@ -1,3 +1,9 @@
+---
+layout: default
+title: Troubleshooting
+permalink: /troubleshooting/
+---
+
 # Troubleshooting
 
 Start with the combined journal:

@@ -6,7 +6,7 @@ mount, plus its companion Web UI. Connects directly to the mount's RJ12
 Hand Control port and drives INDI's Sky-Watcher Alt-Az mount driver
 directly.
 
-- **Docs site (mockup + wiki, all in one)**: [docs/index.html](docs/index.html) (published via GitHub Pages)
+- **Docs site (wizard + wiki)**: [docs/index.md](docs/index.md) (published via GitHub Pages/Jekyll)
 - **Architecture, decisions, and current build status**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Interactive UX mockup on its own**: [docs/mockup.html](docs/mockup.html)
 - **Wiring/pinout**: [docs/WIRING.md](docs/WIRING.md)

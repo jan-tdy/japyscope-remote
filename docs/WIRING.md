@@ -1,3 +1,9 @@
+---
+layout: default
+title: Wiring and pinout
+permalink: /wiring/
+---
+
 # JapyScope Remote — Wiring & Pinout
 
 Single source of truth for how the Raspberry Pi Zero W is wired. Update this
