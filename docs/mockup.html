@@ -53,6 +53,13 @@
   .tab-btn.active{ background:var(--accent-dim); color:#f4d9d3; border-color:var(--accent); }
   .tab-panel{ display:none; }
   .tab-panel.active{ display:block; }
+  .jpg-btn{
+    font-family:inherit; font-size:.78rem; font-weight:600;
+    background:var(--panel-bg); color:var(--muted); border:1px solid var(--panel-border);
+    border-radius:8px; padding:9px 14px; cursor:pointer; margin-left:auto;
+  }
+  .jpg-btn:hover{ border-color:var(--accent); color:#f4d9d3; }
+  .jpg-btn:disabled{ opacity:.55; cursor:wait; }
 
   /* ---- device ---- */
   .device{
@@ -118,12 +125,18 @@
     margin-top:16px;
   }
   .key{
+    aspect-ratio: 1 / 1;
+    box-sizing: border-box;
     background: var(--key-face);
     border: 1px solid rgba(0,0,0,0.35);
     border-radius:9px;
     color:var(--key-text);
     text-align:center;
-    padding:12px 0 10px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:3px;
     cursor:pointer;
     user-select:none;
     position:relative;
@@ -238,6 +251,7 @@
 <div class="tabbar">
   <button class="tab-btn active" data-tab="hw">Hand Controller</button>
   <button class="tab-btn" data-tab="webui">Web UI</button>
+  <button class="jpg-btn" id="downloadJpgBtn" type="button" title="Renders whichever tab is currently open as a black-and-white outline JPG — handy for manual illustrations">⬇ Download as JPG (outline)</button>
 </div>
 
 <div class="tab-panel active" id="tab-hw">
@@ -1822,6 +1836,112 @@
       document.getElementById("tab-webui").classList.toggle("active", btn.dataset.tab === "webui");
     });
   });
+</script>
+
+<!-- Only used to rasterize whichever tab is currently open, for the
+     "Download as JPG (outline)" button below — not needed for the mockup
+     itself. -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var btn = document.getElementById("downloadJpgBtn");
+  if(!btn) return;
+
+  /* Sobel edge detection on the captured screenshot: turns whatever the
+     user currently has open into pure black outlines on white, which is
+     what prints/photocopies well for manual illustrations (no greys,
+     no photo noise). */
+  function toOutline(srcCanvas){
+    var w = srcCanvas.width, h = srcCanvas.height;
+    var ctx = srcCanvas.getContext("2d");
+    var src = ctx.getImageData(0, 0, w, h).data;
+    var gray = new Float32Array(w * h);
+    for(var i = 0, p = 0; i < gray.length; i++, p += 4){
+      gray[i] = 0.299*src[p] + 0.587*src[p+1] + 0.114*src[p+2];
+    }
+    var gx = [-1,0,1,-2,0,2,-1,0,1];
+    var gy = [-1,-2,-1,0,0,0,1,2,1];
+    var threshold = 40;
+    /* Computed as a separate pass (rather than straight into the output
+       image) so it can be dilated by a pixel below before rasterizing —
+       this UI's on-screen text and key labels are small enough that a
+       raw 1px-thin edge trace often breaks apart or disappears
+       entirely, which defeats the point for manual illustrations. */
+    var isEdge = new Uint8Array(w * h);
+    for(var y = 1; y < h-1; y++){
+      for(var x = 1; x < w-1; x++){
+        var sx = 0, sy = 0, k = 0;
+        for(var ky = -1; ky <= 1; ky++){
+          for(var kx = -1; kx <= 1; kx++){
+            var v = gray[(y+ky)*w + (x+kx)];
+            sx += v*gx[k];
+            sy += v*gy[k];
+            k++;
+          }
+        }
+        if(Math.sqrt(sx*sx + sy*sy) > threshold) isEdge[y*w + x] = 1;
+      }
+    }
+    var out = ctx.createImageData(w, h);
+    var od = out.data;
+    for(var y2 = 0; y2 < h; y2++){
+      for(var x2 = 0; x2 < w; x2++){
+        var hit = isEdge[y2*w + x2] === 1;
+        for(var dy = -1; dy <= 1 && !hit; dy++){
+          var ny = y2 + dy;
+          if(ny < 0 || ny >= h) continue;
+          for(var dx = -1; dx <= 1; dx++){
+            var nx = x2 + dx;
+            if(nx < 0 || nx >= w) continue;
+            if(isEdge[ny*w + nx]){ hit = true; break; }
+          }
+        }
+        var o = (y2*w + x2) * 4;
+        var val = hit ? 0 : 255;
+        od[o] = od[o+1] = od[o+2] = val;
+        od[o+3] = 255;
+      }
+    }
+    var outCanvas = document.createElement("canvas");
+    outCanvas.width = w; outCanvas.height = h;
+    outCanvas.getContext("2d").putImageData(out, 0, 0);
+    return outCanvas;
+  }
+
+  btn.addEventListener("click", function(){
+    var panel = document.querySelector(".tab-panel.active");
+    if(!panel || typeof html2canvas !== "function"){
+      alert("Screenshot rendering isn't available (html2canvas failed to load).");
+      return;
+    }
+    var label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Rendering…";
+    html2canvas(panel, {backgroundColor: "#ffffff", scale: 2}).then(function(canvas){
+      var outline = toOutline(canvas);
+      outline.toBlob(function(blob){
+        if(!blob){ throw new Error("toBlob returned no data"); }
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var tabKey = panel.id === "tab-hw" ? "hand-controller" : "web-ui";
+        a.href = url;
+        a.download = "japyscope-" + tabKey + "-outline-" + Date.now() + ".jpg";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+      }, "image/jpeg", 0.92);
+    }).catch(function(err){
+      console.error(err);
+      alert("Could not render a screenshot in this browser.");
+    }).then(function(){
+      btn.disabled = false;
+      btn.textContent = label;
+    });
+  });
+})();
 </script>
 </body>
 </html>

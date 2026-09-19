@@ -19,7 +19,11 @@ title: Install wizard
   <section class="wizard-step">
     <h2>Choose the right operating system</h2>
     <p>Flash <strong>Raspberry Pi OS Bullseye/Bookworm Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use 64-bit, Trixie, or a desktop image: the installer intentionally supports Bullseye/Bookworm armhf only.</p>
-    <div class="step-options"><button class="step-option" data-answer="bullseye">I have selected Bullseye Lite, 32-bit.</button></div>
+    <div class="step-options">
+      <button class="step-option" data-answer="bullseye">I have selected Bullseye Lite, 32-bit.</button>
+      <button class="step-option" data-answer="bookworm">I have selected Bookworm Lite, 32-bit.</button>
+    </div>
+    <p class="notice" id="os-note" hidden></p>
   </section>
   <section class="wizard-step">
     <h2>Prepare the Pi</h2>
@@ -64,10 +68,19 @@ title: Install wizard
       label.textContent = `Step ${current + 1} of ${steps.length}`;
       bar.style.width = `${((current + 1) / steps.length) * 100}%`;
     }
+    const osNote = document.querySelector('#os-note');
+    const osNotes = {
+      bullseye: 'Bullseye uses the legacy wpa_supplicant/hostapd Wi-Fi path.',
+      bookworm: 'Bookworm uses NetworkManager for both the saved Wi-Fi network and the setup hotspot.'
+    };
     document.querySelectorAll('[data-answer]').forEach(button => button.addEventListener('click', () => {
       button.closest('.wizard-step').querySelectorAll('[data-answer]').forEach(option => option.classList.remove('selected'));
       button.classList.add('selected');
       next.disabled = false;
+      if (osNotes[button.dataset.answer]) {
+        osNote.textContent = osNotes[button.dataset.answer];
+        osNote.hidden = false;
+      }
     }));
     previous.addEventListener('click', () => { current = Math.max(0, current - 1); render(); });
     next.addEventListener('click', () => { if (current < steps.length - 1) { current += 1; render(); } });
