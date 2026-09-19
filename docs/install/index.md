@@ -18,7 +18,7 @@ title: Install wizard
   </section>
   <section class="wizard-step">
     <h2>Choose the right operating system</h2>
-    <p>Flash <strong>Raspberry Pi OS Bullseye Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use 64-bit, Bookworm, or a desktop image: the installer intentionally supports Bullseye armhf only.</p>
+    <p>Flash <strong>Raspberry Pi OS Bullseye/Bookworm Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use 64-bit, Trixie, or a desktop image: the installer intentionally supports Bullseye/Bookworm armhf only.</p>
     <div class="step-options"><button class="step-option" data-answer="bullseye">I have selected Bullseye Lite, 32-bit.</button></div>
   </section>
   <section class="wizard-step">
