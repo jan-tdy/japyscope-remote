@@ -1896,9 +1896,10 @@
 
   /* Only the controller/Web-UI graphic itself — not the surrounding
      simulator chrome (title, tabbar, key-map/action-log panels, keyboard
-     legend), which isn't part of what a manual photo would show. */
+     legend) and not even the caption line below the device, which isn't
+     part of what a manual photo would show. */
   function captureTarget(panel){
-    var device = panel.querySelector(".col-device");
+    var device = panel.querySelector(".device");
     if(device) return device;
     return panel.querySelector(".webui-page") || panel;
   }
