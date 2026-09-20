@@ -171,6 +171,26 @@ any `http(s):` value verbatim, bypassing the whitelist:
 either — it tracks whatever Raspberry Pi OS currently ships (already
 Trixie as of this writing), not Bookworm specifically.
 
+## `test-trixie-armhf.yml` fails with "No space left on device" or an e2fsck error
+
+Fixed (`git pull` if you're hitting this on an old checkout). Two separate
+problems, both from Trixie's heavier base image compared to Bookworm/Bullseye:
+
+1. Trixie's own base image plus this workflow's apt install list alone
+   filled the QEMU image before the pinned INDI core tarball ever got
+   extracted (`apt-get`'s `man-db`/`libc-bin` triggers failing with "No
+   space left on device", then `tar` failing the same way on the
+   download). `image_additional_mb: 4096` — enough headroom for
+   Bookworm — wasn't enough for Trixie's newer glibc/locale data and
+   Python 3.13; bumped to `8192`.
+2. `arm-runner-action`'s final image-shrink step runs `e2fsck` from the
+   **host** runner's (Ubuntu 22.04) e2fsprogs against a filesystem Trixie's
+   newer e2fsprogs created — it hits an ext4 feature bit the host's older
+   e2fsck doesn't recognize ("unsupported feature(s)") and fails the whole
+   step even when the actual build succeeded. This job never keeps the
+   image afterward, so `optimize_image: 'no'` skips that step entirely
+   instead of trying to reconcile the two e2fsprogs versions.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after

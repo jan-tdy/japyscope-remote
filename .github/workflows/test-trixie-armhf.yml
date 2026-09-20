@@ -38,7 +38,19 @@ jobs:
           # Raspberry Pi OS armhf toolchain still produces ARMv6-compatible
           # output, which is what matters for the original Pi Zero W.
           cpu: cortex-a7
-          image_additional_mb: 4096
+          # Trixie's base image + apt install list alone exhausted the
+          # Bookworm workflow's 4096MB headroom before the indi tarball
+          # extraction even started ("No space left on device" partway
+          # through installing packages) — Trixie ships a heavier base
+          # (newer glibc/locale data, Python 3.13, larger multiarch libs).
+          image_additional_mb: 8192
+          # arm-runner-action's final e2fsck-based image shrink chokes on
+          # an ext4 feature bit Trixie's newer e2fsprogs sets by default
+          # ("unsupported feature(s)", Ubuntu 22.04's host e2fsck predates
+          # it) and fails the whole step even when the actual build
+          # succeeded. We don't keep/cache the image afterward, so skip
+          # that optimization entirely instead of fighting the mismatch.
+          optimize_image: 'no'
           bind_mount_repository: true
           commands: |
             set -eux
