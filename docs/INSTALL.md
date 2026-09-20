@@ -55,6 +55,18 @@ points to the active version. Persistent data is in `/var/lib/japyscope`.
 The installer enables the daily OTA timer. Disable automatic application with
 `sudo systemctl disable --now japyscope-update.timer` if desired.
 
+### Re-running `install.sh` on a device already updated by OTA
+
+`install.sh` and the OTA updater (`install/update.py`) both flip the same
+`/opt/japyscope/current` symlink. If the OTA timer has since advanced a
+device past whatever commit your local checkout is on, re-running
+`install.sh` from that stale checkout would otherwise silently relink
+`current` back to the older version it resolves to — a silent downgrade.
+`install.sh` now refuses to do this: if `/opt/japyscope/current` already
+points somewhere else, it stops with an error instead of switching. Run
+`git pull` in your checkout first, or pass `--force` if you deliberately
+want to install exactly the version this checkout resolves to.
+
 ### Disabling the automatic Wi-Fi setup hotspot (`--no-ap`)
 
 Run `sudo install/install.sh --no-ap` when the Pi's Wi-Fi is already working
@@ -70,6 +82,12 @@ itself — is still installed. The Web UI's **System** page **Restart Wi-Fi
 setup** action (and the eventual Dev Tools code `5000`, see `docs/CODES.md`)
 still brings the hotspot up manually on request either way — `--no-ap` only
 takes away the automatic fallback, never the manual one.
+
+`--no-ap` actively disables (and, if currently up, stops)
+`japyscope-wifi-ap.service`, so it takes effect even when re-running
+`install.sh --no-ap` on a device that an earlier install had already enabled
+it on. Verify with `systemctl is-enabled japyscope-wifi-ap.service` — it
+should print `disabled`.
 
 ## Factory install from another computer (no boot/SSH needed)
 

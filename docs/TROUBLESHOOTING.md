@@ -246,6 +246,21 @@ detects an incomplete release directory (no `.install-complete` marker),
 removes it, and rebuilds automatically — you can just re-run `install.sh`
 after fixing whatever failed, no manual `rm -rf` needed.
 
+## `install.sh` says "Refusing to switch /opt/japyscope/current ..."
+
+Not a bug — a safety check. `install.sh` and the OTA updater
+(`japyscope-update.timer` / `install/update.py`) both flip the same
+`/opt/japyscope/current` symlink. If OTA has already updated the device
+past whatever commit your local checkout is on (common if you haven't
+`git pull`ed in a while), re-running `install.sh` would otherwise silently
+relink `current` back to that older version — a real downgrade, even
+though nothing looked wrong in the installer's own output (this is what
+produces the confusing "Release vX.Y.Z-N-gHASH is already fully installed
+— skipping rebuild" message right before it, for a version older than
+what's actually running). Run `git pull` in the checkout you're installing
+from and re-run `install.sh`, or pass `--force` if you deliberately want
+to force this device onto the version your checkout resolves to.
+
 </details>
 
 ---
