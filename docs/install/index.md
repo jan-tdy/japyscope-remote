@@ -40,7 +40,7 @@ title: Install wizard
     </div>
     <pre><code data-command>sudo install/install.sh</code></pre>
     <p class="notice" data-note hidden></p>
-    <div class="step-options"><button class="step-option" data-answer="installed" data-gate>The installer completed without an error.</button></div>
+    <div class="step-options"><button class="step-option" data-answer="installed" data-gate>The installer completed without an error.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">With error — help!</a></div>
   </section>
   <section class="wizard-step">
     <h2>Connect it to Wi-Fi</h2>
