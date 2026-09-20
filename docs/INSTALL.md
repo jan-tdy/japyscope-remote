@@ -83,6 +83,12 @@ setup** action (and the eventual Dev Tools code `5000`, see `docs/CODES.md`)
 still brings the hotspot up manually on request either way — `--no-ap` only
 takes away the automatic fallback, never the manual one.
 
+`--no-ap` actively disables (and, if currently up, stops)
+`japyscope-wifi-ap.service`, so it takes effect even when re-running
+`install.sh --no-ap` on a device that an earlier install had already enabled
+it on. Verify with `systemctl is-enabled japyscope-wifi-ap.service` — it
+should print `disabled`.
+
 ## Factory install from another computer (no boot/SSH needed)
 
 `sudo install/install-factory.sh /dev/sdX` provisions a card the same way,

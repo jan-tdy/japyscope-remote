@@ -331,7 +331,18 @@ if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.servi
 # 5000) still works either way — everything it needs was just installed
 # above regardless of --no-ap.
 enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
-if [[ $no_ap -eq 0 ]]; then enable_units=(japyscope-wifi-ap.service "${enable_units[@]}"); fi
+if [[ $no_ap -eq 0 ]]; then
+  enable_units=(japyscope-wifi-ap.service "${enable_units[@]}")
+else
+  # `systemctl enable` is additive only — merely leaving this unit out of
+  # enable_units above would not turn it off on a device where an earlier
+  # install.sh run (without --no-ap, or before this option existed) had
+  # already enabled it. Explicitly disable it (and stop it if it's
+  # currently up) so --no-ap's documented promise — no automatic hotspot —
+  # holds regardless of this device's install history.
+  systemctl disable japyscope-wifi-ap.service
+  if systemd_is_live; then systemctl stop japyscope-wifi-ap.service; fi
+fi
 systemctl enable "${enable_units[@]}"
 if systemd_is_live; then
   if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi
