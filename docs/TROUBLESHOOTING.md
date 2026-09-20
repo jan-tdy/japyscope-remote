@@ -171,25 +171,35 @@ any `http(s):` value verbatim, bypassing the whitelist:
 either — it tracks whatever Raspberry Pi OS currently ships (already
 Trixie as of this writing), not Bookworm specifically.
 
-## `test-trixie-armhf.yml` fails with "No space left on device" or an e2fsck error
+## `test-trixie-armhf.yml` fails with "No space left on device"
 
-Fixed (`git pull` if you're hitting this on an old checkout). Two separate
-problems, both from Trixie's heavier base image compared to Bookworm/Bullseye:
+Fixed (`git pull` if you're hitting this on an old checkout). The real
+cause is an `e2fsprogs` version mismatch, not actually a lack of space:
 
-1. Trixie's own base image plus this workflow's apt install list alone
-   filled the QEMU image before the pinned INDI core tarball ever got
-   extracted (`apt-get`'s `man-db`/`libc-bin` triggers failing with "No
-   space left on device", then `tar` failing the same way on the
-   download). `image_additional_mb: 4096` — enough headroom for
-   Bookworm — wasn't enough for Trixie's newer glibc/locale data and
-   Python 3.13; bumped to `8192`.
-2. `arm-runner-action`'s final image-shrink step runs `e2fsck` from the
-   **host** runner's (Ubuntu 22.04) e2fsprogs against a filesystem Trixie's
-   newer e2fsprogs created — it hits an ext4 feature bit the host's older
-   e2fsck doesn't recognize ("unsupported feature(s)") and fails the whole
-   step even when the actual build succeeded. This job never keeps the
-   image afterward, so `optimize_image: 'no'` skips that step entirely
-   instead of trying to reconcile the two e2fsprogs versions.
+`arm-runner-action` grows the downloaded image by `image_additional_mb`
+(a plain `dd` append — that part always "succeeds"), then runs the
+**host** runner's `e2fsck`/`resize2fs` to actually extend the ext4
+filesystem into that new room. Trixie's base image was itself built with
+a much newer `e2fsprogs` (1.47.2) than Ubuntu 22.04 ships (1.46.5), which
+sets an ext4 feature bit ("unsupported feature(s)", `FEATURE_C12`) the
+older host tools don't recognize. `e2fsck`/`resize2fs` then fail *silently*
+from the workflow's point of view — `mount_image.sh` logs "Finished
+resizing disk image." either way — so the filesystem never actually grows,
+and `apt`/`tar` run out of the base image's small original room at the
+same exact point regardless of how high `image_additional_mb` is set (a
+first attempt raising it from 4096 to 8192 changed nothing, confirming
+this: the `dd` step correctly grew the image file both times, but the
+*filesystem* stayed the original size both times). The same version gap
+also breaks `arm-runner-action`'s own post-build image-shrink cleanup, so
+`optimize_image: 'no'` skips it — it only mattered for caching the output
+image, which this job doesn't do.
+
+Fixed by running this job on `ubuntu-24.04` instead of `ubuntu-22.04`:
+its `e2fsprogs` (1.47.0) is close enough to Trixie's own to actually
+perform the resize. This is unrelated to the arm1176-vs-cortex-a7 QEMU
+segfault in `build-libindi-armhf.yml`'s history — that was tied to the
+`arm1176` CPU model specifically, reproducing on every runner version;
+this job (like `test-bookworm-armhf.yml`) already uses `cortex-a7`.
 
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 

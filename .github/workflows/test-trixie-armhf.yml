@@ -19,7 +19,20 @@ permissions:
 
 jobs:
   dependencies:
-    runs-on: ubuntu-22.04
+    # NOT ubuntu-22.04 (what Bookworm/Bullseye's CI uses): its e2fsprogs
+    # (1.46.5) can't even read the ext4 feature bits Trixie's own,
+    # much newer e2fsprogs (1.47.2) sets by default on the base image
+    # ("unsupported feature(s)"/FEATURE_C12) -- resize2fs silently fails
+    # to actually grow the mounted filesystem (it logs "Finished
+    # resizing disk image." regardless), so image_additional_mb has *no*
+    # effect no matter how high it's set: apt still runs out of space at
+    # the exact same point every time, before the pinned INDI tarball
+    # even gets extracted. ubuntu-24.04 ships e2fsprogs 1.47.0, close
+    # enough to Trixie's own to actually perform the resize. This is
+    # independent of the earlier arm1176-vs-cortex-a7 QEMU segfault
+    # (see build-libindi-armhf.yml) -- that was specific to the arm1176
+    # CPU model on any runner version; this job already uses cortex-a7.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +51,9 @@ jobs:
           # Raspberry Pi OS armhf toolchain still produces ARMv6-compatible
           # output, which is what matters for the original Pi Zero W.
           cpu: cortex-a7
-          # Trixie's base image + apt install list alone exhausted the
-          # Bookworm workflow's 4096MB headroom before the indi tarball
-          # extraction even started ("No space left on device" partway
-          # through installing packages) — Trixie ships a heavier base
-          # (newer glibc/locale data, Python 3.13, larger multiarch libs).
           image_additional_mb: 8192
-          # arm-runner-action's final e2fsck-based image shrink chokes on
-          # an ext4 feature bit Trixie's newer e2fsprogs sets by default
-          # ("unsupported feature(s)", Ubuntu 22.04's host e2fsck predates
-          # it) and fails the whole step even when the actual build
-          # succeeded. We don't keep/cache the image afterward, so skip
-          # that optimization entirely instead of fighting the mismatch.
+          # Skip the final e2fsck-based image shrink -- we don't keep the
+          # image afterward, so there's no reason to pay for it.
           optimize_image: 'no'
           bind_mount_repository: true
           commands: |
