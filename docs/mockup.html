@@ -64,7 +64,11 @@
     border-radius:8px; padding:9px 14px; cursor:pointer; margin-left:auto;
   }
   .jpg-btn:hover{ border-color:var(--accent); color:#f4d9d3; }
-  .jpg-btn:disabled{ opacity:.55; cursor:wait; }
+  .jpg-btn:disabled{ opacity:.55; cursor:not-allowed; }
+  /* Only the first of the two JPG buttons should absorb the flex gap
+     (pushing both to the right of the tab buttons) — a second
+     margin-left:auto here would fight it for the same space. */
+  #downloadScreenJpgBtn{ margin-left:0; }
 
   /* ---- device ----
      Shape traced directly off the reference render (japyscope_lid_3.step
@@ -291,6 +295,7 @@
   <button class="tab-btn active" data-tab="hw">Hand Controller</button>
   <button class="tab-btn" data-tab="webui">Web UI</button>
   <button class="jpg-btn" id="downloadJpgBtn" type="button" title="Renders just the controller/Web UI graphic (not the surrounding simulator panels) as a black-and-white outline JPG — handy for manual illustrations">⬇ Download as JPG (outline)</button>
+  <button class="jpg-btn" id="downloadScreenJpgBtn" type="button" title="Renders just the e-ink display's current content as a black-and-white outline JPG — handy for manual illustrations of a specific screen. Hand Controller tab only.">⬇ Screen only (outline)</button>
 </div>
 
 <div class="tab-panel active" id="tab-hw">
@@ -676,7 +681,7 @@
       case "TIME_SYNC": return setLines(["Synchronizing time…","","NTP: pool.ntp.org"]);
       case "ALIGN_CHOOSE": return renderAlignChoose();
       case "ALIGN_STAR_PICK": return renderAlignStarPick();
-      case "ALIGN_SMART_NA": return setLines(["Smart align (plate-solve)","Not available in this mockup.","","push/9 = back"]);
+      case "ALIGN_SMART_NA": return setLines(["Smart align (plate-solve)","Not available in this mockup."]);
       case "ALIGN_JOG": return renderAlignJog();
       case "ALIGN_MORE": return renderAlignMore();
       case "ALIGN_SAVE": return setLines(["ALIGNED!","Saving to SD…","Navigating to Venus…"]);
@@ -684,9 +689,9 @@
       case "CATALOG_MENU": return renderCatalogMenu();
       case "LIST": return renderList();
       case "WIFI_ACCESS": return renderWifiAccess();
-      case "LOCATION": return setLines(["Location","37.8845° N   4.7787° W","Elevation: 245 m","<span class=\"dim\">push/9 = back</span>"]);
-      case "ABOUT": return setLines(["JapyScope Remote","by JapySoft","SW v0.3   HW v1.0","<span class=\"dim\">github.com/jan-tdy  ·  push/9=back</span>"]);
-      case "SYSTEM_CONFIRM": return setLines(["Power off the controller?","push = yes","9 = back"]);
+      case "LOCATION": return setLines(["Location","37.8845° N   4.7787° W","Elevation: 245 m"]);
+      case "ABOUT": return setLines(["JapyScope Remote","by JapySoft","SW v0.3   HW v1.0","github.com/jan-tdy"]);
+      case "SYSTEM_CONFIRM": return setLines(["Power off the controller?"]);
       case "SHUTDOWN": return setLines(["SHUTTING DOWN…"]);
       case "DEVTOOLS": return renderDevtools();
       case "SPEED_ADJUST": return renderSpeedAdjust();
@@ -724,7 +729,7 @@
       SHARED.aligned ? ("RA "+HOME_POINT.ra+"  Dec "+HOME_POINT.dec) : "Not aligned — Menu → Alignment"
     ];
     HOME_ITEMS.forEach(function(it,i){ lines.push((i===st.homeIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">"+(st.jogNote || "rotate=scroll  push=open  2/4/6/8=jog  7=speed")+"</span>");
+    if(st.jogNote) lines.push("<span class=\"dim\">"+st.jogNote+"</span>");
     setLines(lines);
   }
 
@@ -741,14 +746,13 @@
   function renderTyping(){
     setLines([
       "SmartSearch",
-      st.typeBuf + "<span class=\"cursor\">&nbsp;</span>",
-      "<span class=\"dim\">push=search  BKSP=delete  9=back</span>"
+      st.typeBuf + "<span class=\"cursor\">&nbsp;</span>"
     ]);
   }
 
   function renderResults(){
     if(st.results.length === 0){
-      setLines(["Nothing found.","<span class=\"dim\">9=back</span>"]);
+      setLines(["Nothing found."]);
       return;
     }
     var lines = ["SmartSearch results:"];
@@ -758,14 +762,11 @@
       var mark = (i===st.resIndex) ? "&gt;" : " ";
       lines.push(mark+" ["+(i+1)+"] "+escapeHtml(r.name)+"  [Alt:"+r.alt+"°]");
     }
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
   function renderWarn(){
     var lines = (st.slewWarnings && st.slewWarnings.length) ? st.slewWarnings.slice() : ["WARNING"];
-    lines.push("push = slew anyway");
-    lines.push("9 = back");
     setLines(lines);
   }
 
@@ -781,28 +782,27 @@
       "SLEWING TO",
       escapeHtml(st.selected.name),
       "Alt "+st.selected.alt+"°   Az "+pseudoAz(st.selected.name)+"°",
-      "["+st.slewGlyphs+"]",
-      "<span class=\"dim\">7 = abort</span>"
+      "["+st.slewGlyphs+"]"
     ]);
   }
 
   function renderSlewAborted(){
     setLines([
       "SLEW ABORTED",
-      escapeHtml(st.selected.name),
-      "<span class=\"dim\">push = continue   9 = back</span>"
+      escapeHtml(st.selected.name)
     ]);
   }
 
   function renderTrack(){
-    setLines([
+    var lines = [
       "TRACKING",
       escapeHtml(st.trackObj.name),
       "RA "+st.trackObj.ra+"  Dec "+st.trackObj.dec,
       "Alt "+st.trackObj.alt+"°   Az "+pseudoAz(st.trackObj.name)+"°",
-      "↑ "+formatMMSS(st.trackSec),
-      "<span class=\"dim\">"+(st.jogNote || "2/4/6/8=jog  7=speed  9=back")+"</span>"
-    ]);
+      "↑ "+formatMMSS(st.trackSec)
+    ];
+    if(st.jogNote) lines.push("<span class=\"dim\">"+st.jogNote+"</span>");
+    setLines(lines);
   }
 
   function renderMenu(){
@@ -813,7 +813,6 @@
     for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, items.length); i++){
       lines.push((i===st.menuIndex?"&gt; ":"  ")+items[i]);
     }
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -823,7 +822,6 @@
       var mark = (i===st.backlightChanIndex) ? "&gt; " : "  ";
       lines.push(mark+ch+": "+BACKLIGHT_LEVELS[st.backlight[ch]]);
     });
-    lines.push("<span class=\"dim\">rotate=channel  push=cycle  9=back</span>");
     setLines(lines);
   }
 
@@ -848,17 +846,16 @@
     var items = ["Smart (plate-solve)","Manual (2 stars)"];
     var lines = ["ALIGNMENT — choose mode"];
     items.forEach(function(it,i){ lines.push((i===st.alignIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
   function renderAlignJog(){
-    setLines([
+    var lines = [
       "Point to "+st.jogTarget,
-      "Speed: "+st.speed+"x  (7 = change)",
-      st.jogNote ? ("<span class=\"dim\">"+st.jogNote+"</span>") : "2/4/6/8 = fine adjustment",
-      "push = confirm point   9 = back"
-    ]);
+      "Speed: "+st.speed+"x  (7 = change)"
+    ];
+    if(st.jogNote) lines.push("<span class=\"dim\">"+st.jogNote+"</span>");
+    setLines(lines);
   }
 
   function renderCatalogMenu(){
@@ -868,7 +865,6 @@
     for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, items.length); i++){
       lines.push((i===st.catIndex?"&gt; ":"  ")+items[i]);
     }
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -884,7 +880,6 @@
         lines.push(mark+" "+escapeHtml(o.name)+" [Alt:"+o.alt+"°]");
       }
     }
-    lines.push("<span class=\"dim\">rotate=scroll  push=goto  9=back</span>");
     setLines(lines);
   }
 
@@ -892,8 +887,7 @@
     setLines([
       "Web UI access code:",
       "<b>"+st.wifiCode+"</b>",
-      "Valid: "+formatMMSS(st.wifiSeconds),
-      "<span class=\"dim\">9 = back</span>"
+      "Valid: "+formatMMSS(st.wifiSeconds)
     ]);
   }
   function formatMMSS(s){
@@ -909,9 +903,7 @@
     }).join(" ");
     setLines([
       "Dev Tools — enter code",
-      "[ "+slots+" ]",
-      "<span class=\"dim\">rotate = digit (0-9)</span>",
-      "<span class=\"dim\">push = lock in   9 = back</span>"
+      "[ "+slots+" ]"
     ]);
   }
 
@@ -923,9 +915,7 @@
     }).join(" ");
     setLines([
       "Set sudo password",
-      "[ "+slots+" ]",
-      "<span class=\"dim\">rotate = digit (0-9)</span>",
-      "<span class=\"dim\">push = lock in   9 = cancel</span>"
+      "[ "+slots+" ]"
     ]);
   }
 
@@ -954,9 +944,7 @@
   function renderSpeedAdjust(){
     setLines([
       "Jog speed",
-      "<b>"+st.speed+"x</b>",
-      "<span class=\"dim\">rotate = change</span>",
-      "<span class=\"dim\">push / 9 = back</span>"
+      "<b>"+st.speed+"x</b>"
     ]);
   }
 
@@ -965,7 +953,7 @@
       "Wi-Fi Setup",
       "Connect to hotspot:",
       "<b>JapyScope-Setup</b>",
-      "<span class=\"dim\">then open the Web UI · 9=back</span>"
+      "then open the Web UI"
     ]);
   }
 
@@ -1260,7 +1248,6 @@
     var items = ["Yes, park","Cancel"];
     var lines = ["Park the mount?"];
     items.forEach(function(it,i){ lines.push((i===st.parkConfirmIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1310,14 +1297,12 @@
     var items = ["Unpark","Power off"];
     var lines = ["PARKED", parkPositionLabel()];
     items.forEach(function(it,i){ lines.push((i===st.parkedIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select</span>");
     setLines(lines);
   }
 
   function renderDriverSelect(){
     var lines = ["Select mount driver"];
     DRIVERS.forEach(function(d,i){ lines.push((i===st.driverIndex?"&gt; ":"  ")+d); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1336,7 +1321,6 @@
   function renderIfaceSelect(){
     var lines = ["Select comm. interface"];
     INTERFACES.forEach(function(d,i){ lines.push((i===st.interfaceIndex?"&gt; ":"  ")+d); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1374,7 +1358,6 @@
     for(var i=i0; i<Math.min(i0+VISIBLE_ROWS, STARS.length); i++){
       lines.push((i===st.starPickIndex?"&gt; ":"  ")+STARS[i]);
     }
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1412,7 +1395,6 @@
     var items = ["Add another point","Finish alignment"];
     var lines = ["Alignment points: "+st.starIdx];
     items.forEach(function(it,i){ lines.push((i===st.alignMoreIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1431,7 +1413,6 @@
     var items = ["Yes, done","Fine-tune (1 more point)"];
     var lines = ["Looks right in the eyepiece?"];
     items.forEach(function(it,i){ lines.push((i===st.alignConfirmIndex?"&gt; ":"  ")+it); });
-    lines.push("<span class=\"dim\">rotate=scroll  push=select  9=back</span>");
     setLines(lines);
   }
 
@@ -1877,11 +1858,14 @@
 
 <script>
   var tabButtons = document.querySelectorAll(".tab-btn");
+  var screenJpgBtn = document.getElementById("downloadScreenJpgBtn");
   tabButtons.forEach(function(btn){
     btn.addEventListener("click", function(){
       tabButtons.forEach(function(b){ b.classList.toggle("active", b === btn); });
       document.getElementById("tab-hw").classList.toggle("active", btn.dataset.tab === "hw");
       document.getElementById("tab-webui").classList.toggle("active", btn.dataset.tab === "webui");
+      // The e-ink screen only exists on the Hand Controller tab.
+      if(screenJpgBtn) screenJpgBtn.disabled = btn.dataset.tab !== "hw";
     });
   });
 </script>
@@ -1959,31 +1943,33 @@
     return panel.querySelector(".webui-page") || panel;
   }
 
-  btn.addEventListener("click", function(){
-    var panel = document.querySelector(".tab-panel.active");
-    if(!panel || typeof html2canvas !== "function"){
+  /* Shared by both JPG buttons: renders `target`, runs it through
+     toOutline(), and triggers a download named "japyscope-<fileKey>-
+     outline-<timestamp>.jpg". `button` gets the "Rendering…" busy state
+     for the duration. */
+  function exportOutline(target, fileKey, button){
+    if(!target || typeof html2canvas !== "function"){
       alert("Screenshot rendering isn't available (html2canvas failed to load).");
       return;
     }
-    var target = captureTarget(panel);
-    var label = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "Rendering…";
+    var label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Rendering…";
     /* A higher scale than a whole-page capture would need: the crop is
-       small now, so this stays fast, and it gives the on-screen text
-       enough source pixels that a thin, undilated outline still traces
-       it legibly instead of breaking into dots. The +24 width pads past
+       small, so this stays fast, and it gives the on-screen text enough
+       source pixels that a thin, undilated outline still traces it
+       legibly instead of breaking into dots. The +24 width pads past
        the device's own box for the side scroll-wheel, which sits
-       outside it via negative positioning (right:-13px). */
+       outside it via negative positioning (right:-13px) — harmless
+       slack for a target (e.g. the screen alone) that has no overflow. */
     html2canvas(target, {backgroundColor: "#ffffff", scale: 3, width: target.scrollWidth + 24}).then(function(canvas){
       var outline = toOutline(canvas);
       outline.toBlob(function(blob){
         if(!blob){ throw new Error("toBlob returned no data"); }
         var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
-        var tabKey = panel.id === "tab-hw" ? "hand-controller" : "web-ui";
         a.href = url;
-        a.download = "japyscope-" + tabKey + "-outline-" + Date.now() + ".jpg";
+        a.download = "japyscope-" + fileKey + "-outline-" + Date.now() + ".jpg";
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -1993,10 +1979,23 @@
       console.error(err);
       alert("Could not render a screenshot in this browser.");
     }).then(function(){
-      btn.disabled = false;
-      btn.textContent = label;
+      button.disabled = false;
+      button.textContent = label;
     });
+  }
+
+  btn.addEventListener("click", function(){
+    var panel = document.querySelector(".tab-panel.active");
+    var tabKey = panel && panel.id === "tab-hw" ? "hand-controller" : "web-ui";
+    exportOutline(captureTarget(panel), tabKey, btn);
   });
+
+  var screenBtn = document.getElementById("downloadScreenJpgBtn");
+  if(screenBtn){
+    screenBtn.addEventListener("click", function(){
+      exportOutline(document.getElementById("screen"), "screen", screenBtn);
+    });
+  }
 })();
 </script>
 </body>
