@@ -71,6 +71,13 @@ they start themselves normally the first time the card actually boots on the
 Pi. Flash Bullseye/Bookworm Lite onto the card with Raspberry Pi Imager
 first, same as step 1 above; this script only does the JapyScope part.
 
+It also grows the card's rootfs partition/filesystem to fill the whole
+card before installing anything — a freshly-flashed image ships with a
+small (few-GB) rootfs regardless of card size, normally expanded by
+Raspberry Pi OS's own first-boot resize step, which never runs here since
+the Pi never actually boots this card. Skipping this would otherwise run
+out of space partway through `apt`/`pip` even on a large card.
+
 ## First connection
 
 When no saved Wi-Fi connection is active, join the WPA2-protected

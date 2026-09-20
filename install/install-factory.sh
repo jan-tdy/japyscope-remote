@@ -56,7 +56,7 @@ if [[ ! -b $device ]]; then
   exit 1
 fi
 
-for tool in lsblk findmnt mount umount chroot rsync file; do
+for tool in lsblk findmnt mount umount chroot rsync file parted partprobe e2fsck resize2fs; do
   command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
 done
 if ! command -v qemu-arm-static >/dev/null; then
@@ -108,6 +108,31 @@ for p in "$boot_part" "$root_part"; do
     umount "$p"
   fi
 done
+
+# Raspberry Pi Imager ships a tiny rootfs partition (a few GB) regardless
+# of card size — Raspberry Pi OS only grows it to fill the card via its
+# own first-boot resize service, which never runs here since the Pi
+# itself never boots this card. Without this step, apt/pip/venv/build
+# work inside the chroot reliably runs out of space ("No space left on
+# device") even on a large card. Grow the rootfs partition to use the
+# rest of the disk, then grow its filesystem to match; this is
+# idempotent (a no-op if already full-size), so re-running is safe, and
+# the real Pi's own first-boot resize service correctly does nothing
+# when it later finds nothing left to grow.
+echo "Growing the rootfs partition to fill the card..."
+parted --script "$device" resizepart 2 100%
+partprobe "$device" 2>/dev/null || true
+udevadm settle 2>/dev/null || true
+set +e
+e2fsck -f -y "$root_part"
+fsck_status=$?
+set -e
+if (( fsck_status >= 4 )); then
+  echo "e2fsck reported uncorrected errors on $root_part (exit $fsck_status)" >&2
+  echo "— the card's filesystem may be damaged. Re-flash it and retry." >&2
+  exit 1
+fi
+resize2fs "$root_part"
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd -- "$script_dir/.." && pwd)
