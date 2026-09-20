@@ -400,7 +400,14 @@ def create_app(
         args = []
         for u in active_units:
             args.extend(["-u", u])
-        args.extend(["-n", str(lines), "--no-pager"])
+        # --reverse forces journalctl to seek from the tail and collect
+        # backward, guaranteeing the newest N entries. Without it, -n
+        # combined with multiple -u filters is unreliable on some systemd
+        # versions (it can return the OLDEST N matches instead) — the
+        # Lines dropdown was cutting off the newest entries, not the
+        # oldest. Output comes back newest-first; reversed below to
+        # restore the usual oldest-on-top display order.
+        args.extend(["--reverse", "-n", str(lines), "--no-pager"])
 
         permission_hints = (
             "Hint: You are currently not seeing messages",
@@ -461,7 +468,9 @@ def create_app(
                 if not line.strip().startswith("Hint: You are currently not seeing messages")
                 and not line.strip().startswith("Users in the 'adm' or 'systemd-journal' group")
             ]
-            log_text = "\n".join(cleaned).strip()
+            # --reverse above made journalctl emit newest-first; flip back
+            # to the usual oldest-on-top, newest-on-bottom reading order.
+            log_text = "\n".join(reversed(cleaned)).strip()
 
         if not log_text:
             header = f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --"

@@ -169,6 +169,34 @@ def test_diagnostics_reports_real_failure_instead_of_lying(tmp_path, monkeypatch
     assert b"password is required" in response.data
 
 
+def test_diagnostics_requests_reverse_order_and_displays_oldest_first(tmp_path, monkeypatch):
+    # journalctl's -n combined with multiple -u filters is unreliable on
+    # some systemd versions and can return the OLDEST N matches instead of
+    # the newest N. --reverse forces a tail-anchored seek (guaranteed
+    # newest N); the app then flips the lines back to the usual
+    # oldest-on-top reading order.
+    from webui import app as app_module
+
+    def fake_run(command, **kwargs):
+        assert "--reverse" in command
+        return subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout=(
+                "Sep 20 12:00:03 pi japyscope-app[1]: third\n"
+                "Sep 20 12:00:02 pi japyscope-app[1]: second\n"
+                "Sep 20 12:00:01 pi japyscope-app[1]: first\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/diagnostics?unit=app&lines=50")
+    body = response.data.decode("utf-8")
+    assert body.index("first") < body.index("second") < body.index("third")
+
+
 def test_diagnostics_uses_sudo_fallback_output(tmp_path, monkeypatch):
     from webui import app as app_module
 
