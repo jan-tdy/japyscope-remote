@@ -29,7 +29,7 @@ title: Install wizard
   <section class="wizard-step">
     <h2>Prepare the Pi</h2>
     <p>In Raspberry Pi Imager, configure a user and enable SSH if you will not attach a keyboard. Flash the card, insert it, and boot the Pi.</p>
-    <div class="step-options"><button class="step-option" data-answer="booted" data-gate>The Pi has booted and I can access its terminal.</button></div>
+    <div class="step-options"><button class="step-option" data-answer="booted" data-gate>The Pi has booted and I can access its terminal.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">Something went wrong — troubleshooting guide.</a></div>
   </section>
   <section class="wizard-step">
     <h2>Run the installer</h2>
@@ -40,7 +40,7 @@ title: Install wizard
     </div>
     <pre><code data-command>sudo install/install.sh</code></pre>
     <p class="notice" data-note hidden></p>
-    <div class="step-options"><button class="step-option" data-answer="installed" data-gate>The installer completed without an error.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">With error — help!</a></div>
+    <div class="step-options"><button class="step-option" data-answer="installed" data-gate>The installer completed without an error.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">The installer failed — troubleshooting guide.</a></div>
   </section>
   <section class="wizard-step">
     <h2>Connect it to Wi-Fi</h2>
@@ -52,8 +52,8 @@ title: Install wizard
     <h2>Check that everything is running</h2>
     <p>Open the Web UI at <code>http://japyscope.local:8080/</code> (or the Pi’s IP address). Generate an access code on the controller under <strong>Menu → Wi-Fi / Web Access</strong>.</p>
     <pre><code>systemctl status japyscope-splash japyscope-app japyscope-webui</code></pre>
-    <p class="notice">You’re ready for the software side. For errors or hardware validation notes, use the troubleshooting guide.</p>
-    <p><a class="button" href="{{ '/troubleshooting/' | relative_url }}">Troubleshooting</a></p>
+    <p class="notice">You're ready for the software side. For errors or hardware validation notes, use the troubleshooting guide.</p>
+    <div class="step-options"><button class="step-option" data-answer="done" data-gate>Everything is running — I'm all set.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">Something isn't working — troubleshooting guide.</a></div>
   </section>
   <div class="wizard-nav"><button class="secondary" id="previous-step" type="button">Previous</button><button id="next-step" type="button" disabled>Next</button></div>
 </section>

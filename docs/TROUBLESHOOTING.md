@@ -354,3 +354,17 @@ archive with a SHA-256 digest. Inspect `journalctl -u japyscope-update -n 200
 Codes expire after ten minutes. Generate a fresh one on the controller. A
 client that submits five bad codes must wait 30 seconds. Sessions are reset if
 `/etc/japyscope/environment` is deleted or its secret changes.
+
+## Still stuck?
+
+If none of the sections above resolve your problem, please
+[open a GitHub issue](https://github.com/jan-tdy/japyscope-remote/issues/new).
+Include the output of:
+
+```sh
+journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
+systemctl status japyscope-splash japyscope-app japyscope-webui
+```
+
+…along with your OS release (`cat /etc/os-release`), how you ran the
+installer, and a description of what you expected vs. what happened.
