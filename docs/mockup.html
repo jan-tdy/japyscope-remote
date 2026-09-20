@@ -41,6 +41,11 @@
   h1{ font-size:1.3rem; margin:0 0 2px 0; color:#f2e4de; text-wrap:balance; }
   .subtitle{ color:var(--muted); font-size:.85rem; margin:0 0 18px 0; max-width:60ch; }
   .col-device{ flex:0 0 auto; display:flex; flex-direction:column; align-items:center; }
+  /* .device has a non-rectangular clip-path (see below), which clips any
+     overflowing descendant too — the side-encoder, positioned outside
+     .device's own box via a negative offset, would otherwise vanish. Keep
+     it a sibling of .device instead, both inside this positioned shell. */
+  .device-shell{ position:relative; width:300px; }
   .col-info{ flex:1 1 260px; min-width:260px; max-width:340px; }
 
   /* ---- tabs ---- */
@@ -61,17 +66,29 @@
   .jpg-btn:hover{ border-color:var(--accent); color:#f4d9d3; }
   .jpg-btn:disabled{ opacity:.55; cursor:wait; }
 
-  /* ---- device ---- */
+  /* ---- device ----
+     Shape and every measurement below come from the real enclosure CAD
+     (japyscope_lid_3.step, 20.9.2026): 74mm×119.2mm outer envelope, a
+     ~74mm-wide screen housing tapering (over an 8mm-tall neck) to a
+     ~35mm-wide keypad body, scaled at 300px/74mm (≈4.054px/mm) so the
+     screen housing keeps the mockup's existing 300px width. Children are
+     positioned absolutely against this fixed-size shape rather than
+     via padding/flow, since the body is narrower than the housing. */
   .device{
     width:300px;
+    height:470.3px;
     background: var(--body-navy);
-    border-radius:22px;
-    padding:20px 18px 26px;
-    box-shadow: 0 18px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
     position:relative;
+    /* Smooth cubic-bezier "shoulders" (not straight taper lines — those
+       rendered as a sharp funnel, confirmed against the reference photo
+       to be wrong) blending the housing into the body; the top/bottom
+       corners are simple quarter-round joins. */
+    clip-path: path("M 16 0 L 284 0 Q 300 0 300 16 L 300 210.8 C 300 230.3 220.9 223.8 220.9 243.2 L 220.9 456.3 Q 220.9 470.3 206.9 470.3 L 93.1 470.3 Q 79.1 470.3 79.1 456.3 L 79.1 243.2 C 79.1 223.8 0 230.3 0 210.8 L 0 16 Q 0 0 16 0 Z");
+    filter: drop-shadow(0 14px 26px rgba(0,0,0,0.55));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
   }
   .side-encoder{
-    position:absolute; right:-13px; top:150px;
+    position:absolute; right:-13px; top:281px;
     width:22px; height:150px;
     display:flex; flex-direction:column;
     border-radius:11px;
@@ -91,17 +108,20 @@
   .side-encoder .enc-zone.pressed{ background:rgba(0,0,0,0.25); }
   .side-encoder .enc-zone.push{ font-weight:700; letter-spacing:.03em; }
   .side-encoder .ridge{ width:10px; height:2px; background:rgba(255,255,255,0.5); border-radius:1px; box-shadow:0 4px 0 rgba(255,255,255,0.5), 0 -4px 0 rgba(255,255,255,0.5); }
-  .screen-wrap{ position:relative; }
+  /* 200×98px ≈ the confirmed 2.13" panel's 250×122 aspect ratio, positioned
+     within the housing zone (y 0–211px) per the CAD's screen window. */
+  .screen-wrap{ position:absolute; left:50px; top:34px; width:200px; height:98px; }
   .screen{
+    box-sizing:border-box;
+    width:100%; height:100%;
     background:var(--screen-bg);
     color:var(--screen-fg);
-    border-radius:5px;
-    padding:14px 12px;
-    height:150px;
+    border-radius:4px;
+    padding:9px 9px;
     overflow:hidden;
     font-family:"JetBrains Mono", "IBM Plex Mono", "Courier New", monospace;
-    font-size:.82rem;
-    line-height:1.5;
+    font-size:.7rem;
+    line-height:1.4;
     white-space:pre-wrap;
     word-break:break-word;
     box-shadow: inset 0 2px 6px rgba(0,0,0,0.35);
@@ -118,25 +138,29 @@
   .screen .cursor{ display:inline-block; width:.55em; background:var(--screen-fg); animation: blink 1s steps(1) infinite; }
   @keyframes blink{ 50%{ opacity:0; } }
 
+  /* Keypad body zone per the CAD: x 79–221px (142px wide), y 243–470px.
+     140×179px block centered in it, 3×4 grid, 20px gap (≈5mm) — matches
+     the real SparkFun/BricoGeek COM-14662 keypad's 5mm key spacing. */
   .keys{
+    position:absolute; left:80px; top:283px; width:140px;
     display:grid;
     grid-template-columns: repeat(3, 1fr);
-    gap:9px;
-    margin-top:16px;
+    gap:20px;
   }
   .key{
-    aspect-ratio: 1 / 1;
+    /* 8mm×6mm real key-cap proportions (measured 17.9.2026), not square. */
+    aspect-ratio: 8 / 6;
     box-sizing: border-box;
     background: var(--key-face);
     border: 1px solid rgba(0,0,0,0.35);
-    border-radius:9px;
+    border-radius:6px;
     color:var(--key-text);
     text-align:center;
     display:flex;
     flex-direction:column;
     align-items:center;
     justify-content:center;
-    gap:3px;
+    gap:2px;
     cursor:pointer;
     user-select:none;
     position:relative;
@@ -148,13 +172,12 @@
     box-shadow: 0 0 0 rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
     background: var(--key-face-dark);
   }
-  .key .letters{ display:block; font-size:.62rem; letter-spacing:.09em; opacity:.85; text-transform:lowercase; height:.9em; }
-  .key .digit{ display:block; font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums; }
-  .key .arrow{ position:absolute; top:5px; width:0; height:0; opacity:.85; }
-  .key .arrow.up{ right:8px; border-left:5px solid transparent; border-right:5px solid transparent; border-bottom:7px solid var(--accent); }
-  .key .arrow.down{ right:8px; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--accent); }
-  .key .arrow.left{ right:8px; border-top:5px solid transparent; border-bottom:5px solid transparent; border-right:7px solid var(--accent); }
-  .key .arrow.right{ right:8px; border-top:5px solid transparent; border-bottom:5px solid transparent; border-left:7px solid var(--accent); }
+  .key .letters{ display:block; font-size:.38rem; letter-spacing:.07em; opacity:.85; text-transform:lowercase; height:.9em; }
+  .key .digit{ display:block; font-size:.6rem; font-weight:600; font-variant-numeric:tabular-nums; }
+  /* A glyph, not a CSS border-triangle: at this key size (~33x25px) a
+     border-triangle small enough to fit anti-aliases into an unreadable
+     blob: an actual glyph stays crisp. */
+  .key .arrow{ position:absolute; top:1px; right:2px; font-size:.5rem; line-height:1; color:var(--accent); opacity:.9; }
 
   .device-caption{ margin-top:14px; color:var(--muted); font-size:.72rem; text-align:center; }
 
@@ -257,18 +280,20 @@
 <div class="tab-panel active" id="tab-hw">
 <div class="wrap">
   <div class="col-device">
-    <div class="device">
-      <div class="screen-wrap" title="RGB backlight (night-vision friendly, color-mixing) — Menu → Backlight">
-        <div class="screen" id="screen"></div>
+    <div class="device-shell">
+      <div class="device">
+        <div class="screen-wrap" title="RGB backlight (night-vision friendly, color-mixing) — Menu → Backlight">
+          <div class="screen" id="screen"></div>
+        </div>
+        <div class="keys" id="keys"></div>
       </div>
-      <div class="keys" id="keys"></div>
       <div class="side-encoder" id="sideEncoder" title="Side scroll wheel: scroll = rotate, click = push">
         <div class="enc-zone" data-key="ENC_UP">▲</div>
         <div class="enc-zone push" data-key="ENC_PUSH"><span class="ridge"></span></div>
         <div class="enc-zone" data-key="ENC_DOWN">▼</div>
       </div>
     </div>
-    <div class="device-caption">JapyScope Remote — HW mockup, v0.6<br>4.26&Prime; e-ink, 800×480 (SSD1677) · side wheel: scroll = rotate · click = push</div>
+    <div class="device-caption">JapyScope Remote — HW mockup, v0.7<br>2.13&Prime; e-ink, 250×122 (SSD1680) · side wheel: scroll = rotate · click = push</div>
   </div>
 
   <div class="col-info">
@@ -514,7 +539,10 @@
   ];
 
   var screenEl = document.getElementById("screen");
-  var deviceEl = document.querySelector(".device");
+  // .device-shell (not .device) so the click delegation below and
+  // highlightKey()'s lookup also cover the side-encoder, which is a
+  // sibling of .device now (see the .device-shell CSS comment).
+  var deviceEl = document.querySelector(".device-shell");
   var logEl = document.getElementById("log");
 
   var st = {};
@@ -1563,8 +1591,9 @@
     d.className = "key";
     d.dataset.key = def.key;
     if(def.arrow){
-      var a = document.createElement("div");
-      a.className = "arrow "+def.arrow;
+      var a = document.createElement("span");
+      a.className = "arrow";
+      a.textContent = {up:"▲", down:"▼", left:"◀", right:"▶"}[def.arrow];
       d.appendChild(a);
     }
     var letters = document.createElement("span");
@@ -1897,9 +1926,11 @@
   /* Only the controller/Web-UI graphic itself — not the surrounding
      simulator chrome (title, tabbar, key-map/action-log panels, keyboard
      legend) and not even the caption line below the device, which isn't
-     part of what a manual photo would show. */
+     part of what a manual photo would show. .device-shell (not .device)
+     so the side-encoder — a sibling of .device, see its CSS comment —
+     is included too. */
   function captureTarget(panel){
-    var device = panel.querySelector(".device");
+    var device = panel.querySelector(".device-shell");
     if(device) return device;
     return panel.querySelector(".webui-page") || panel;
   }

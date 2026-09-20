@@ -1,9 +1,10 @@
 """Display size/controller presets.
 
-The panel is NOT finalized (see docs/ARCHITECTURE.md) — leaning 2.13" but
-nothing bought yet, 4.26" not ruled out. Every part of the firmware that
-draws to the screen must go through a DisplayProfile rather than assuming a
-resolution, so switching panels later is a one-line config change.
+The panel is confirmed as 2.13" (see docs/ARCHITECTURE.md — settled once the
+enclosure CAD, sized around a 2.13" module, existed). Every part of the
+firmware that draws to the screen must still go through a DisplayProfile
+rather than assuming a resolution, so switching panels later stays a
+one-line config change; 4.26" is kept available for that reason.
 
 Select via the JAPYSCOPE_DISPLAY_PROFILE env var (defaults to "2.13in").
 """
@@ -23,7 +24,8 @@ class DisplayProfile:
 
 
 # Common Waveshare/GoodDisplay 2.13" monochrome e-paper module (SSD1680-family
-# controller). Confirm the exact panel/controller once actually ordered.
+# controller) — the confirmed panel. Confirm the exact part number/controller
+# once actually ordered against the enclosure's screen cutout.
 PROFILE_2_13 = DisplayProfile(
     name="2.13in", width=250, height=122, controller="SSD1680", visible_rows=4
 )

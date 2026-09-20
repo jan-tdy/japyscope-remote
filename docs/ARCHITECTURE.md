@@ -27,7 +27,7 @@ below, which supersede the mockup where they conflict with it.
 |---|---|
 | Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye or Bookworm, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm uses NetworkManager profiles.) |
 | Mount connector | **RJ12** (not RJ45) |
-| Display | **Not finalized** — leaning 2.13" e-paper but nothing bought yet, 4.26" not ruled out. Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py` |
+| Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
 | Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, and mount can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless, for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
 | Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye or Bookworm Lite image — not a prebuilt SD image, Docker, or desktop installer |
