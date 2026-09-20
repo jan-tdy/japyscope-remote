@@ -17,6 +17,36 @@ journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-
 <details markdown="block">
   <summary>Problems already fixed in latest release</summary>
    
+## Setup AP starts on every boot even though Wi-Fi is already configured and working
+
+**Fixed** — if you're still hitting this, `git pull` and re-run `install.sh`.
+Root cause: `japyscope-wifi-ap.service` runs right after wlan0's device node
+appears (`After=sys-subsystem-net-devices-wlan0.device`), which is well
+before the configured network manager has actually finished associating with
+a configured network. The script's "skip the AP if already connected" check
+ran exactly once, immediately, so it always saw "not connected yet" — even on
+a device with perfectly good Wi-Fi credentials that would have connected fine
+a couple of seconds later — and started the AP unnecessarily on every single
+boot, kicking any already-associated client off. `install/wifi-ap.sh` now
+polls for up to 20 seconds before falling back to starting the AP, using
+`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm/Trixie.
+
+If Wi-Fi is preconfigured (e.g. via Raspberry Pi Imager) and you'd rather
+not rely on this poll at every boot at all, re-run
+`sudo install/install.sh --no-ap` (or use `--no-ap` on the original
+install/`install-factory.sh` run). It disables `japyscope-wifi-ap.service` —
+the automatic boot-time check — entirely, instead of just racing it. The
+hotspot itself (`hostapd`/`dnsmasq` or the NetworkManager profile, the AP
+password, `japyscope-wifi-ap`) stays installed and can still be brought up
+manually any time from the Web UI's **System** page ("Restart Wi-Fi setup")
+or `sudo japyscope-wifi-ap --force`.
+
+If you're locked out because the AP already came up and you don't know its
+password (e.g. no physical e-ink display yet): it's stored in plain text at
+`/etc/japyscope/setup-ap-password` on the SD card — pull the card and read
+it from another machine (or use physical console access) if you have no
+other way to reach the Pi's shell.
+
 ## `pip install` fails on `dbus-python`: "meson-python: error: Could not find ninja version 1.8.2 or newer"
 
 **Fixed as of this doc** — if you're still hitting this, you have an old
@@ -222,10 +252,7 @@ after fixing whatever failed, no manual `rm -rf` needed.
 
 ## Filesystem went read-only / `dpkg`, `apt` fail with I/O or "Read-only file system" errors
 
-Seen during real Pi Zero W bring-up (Fáza 1beta), reproduced twice: once on a
-weak USB power source, and — importantly — **again after switching to a
-better power supply**, mid-`dpkg` unpack, with a genuine `Input/output error`
-on `fsync` immediately before the read-only remount. That recurrence under
+It happened to me about 5 times: That recurrence under
 improved power points at the **SD card itself** (wear, bad sectors, or a
 counterfeit/low-quality card), not only power — treat both as suspects, but
 don't assume a better PSU alone fixes it if it happens again.
@@ -236,10 +263,7 @@ unwritten extents to written extents -- potential data loss! (inode N, error
 error`, `Read-only file system` from `apt`. The Pi may become unresponsive
 over SSH.
 
-1. **Don't keep retrying blindly on the same card/session** — each failed
-   write during an already-degraded filesystem risks compounding the
-   corruption.
-2. Power-cycle (pull power, don't just reboot from a hung shell). If it comes
+1. Power-cycle (pull power, don't just reboot from a hung shell). If it comes
    back:
    ```sh
    mount | grep mmcblk0p2      # still "ro"? filesystem hasn't recovered
@@ -249,23 +273,23 @@ over SSH.
    (`sudo dpkg --configure -a`, then re-run `install.sh`/`system-upgrade`)
    once. If it fails again under write load, stop and go to step 3 — this is
    no longer a one-off.
-3. **Test the SD card from another machine** (card reader, not the Pi):
+2. **Test the SD card from another machine** (card reader, not the Pi):
    ```sh
    sudo badblocks -v /dev/sdX     # non-destructive read scan for bad sectors — replace sdX
    ```
    or run `f3` (Fight Flash Fraud) if you suspect a counterfeit/overreported-capacity
    card — extremely common with cheap unbranded cards.
-4. **Power supply**: use an official/quality 5V/2.5A supply with a short,
+3. **Power supply**: use an official/quality 5V/2.5A supply with a short,
    good-quality micro-USB cable. A phone charger or a PC's USB port is the
    single most common cause of exactly this failure on a Zero W under the
    combined CPU+I/O load of `apt`/`pip`/`venv` during install or
    `system-upgrade` (see `SYS-001` below) — this project has no battery/UPS
    to smooth over a brief sag.
-5. **If it recurs even with confirmed-good power**: treat the card as
+4. **If it recurs even with confirmed-good power**: treat the card as
    suspect. Replace it — ideally a reputable-brand "High Endurance" /
    "Application class" card, meant for continuous writes and sudden power
    loss (the exact profile of a nonstop-running INDI + Web UI device), not a
-   generic consumer card. Re-flash Bullseye Lite fresh rather than reusing a
+   generic consumer card. Re-flash the OS fresh rather than reusing a
    card that has already corrupted twice.
 
 Note: `install/install.sh` and `install/update.py system-upgrade` now
@@ -307,35 +331,6 @@ profile owns the radio and DHCP service. (`--no-ap` only disables the
 automatic boot-time check — all of this is still installed and `--force`
 still brings the hotspot up manually either way, see the next section.)
 
-## Setup AP starts on every boot even though Wi-Fi is already configured and working
-
-**Fixed** — if you're still hitting this, `git pull` and re-run `install.sh`.
-Root cause: `japyscope-wifi-ap.service` runs right after wlan0's device node
-appears (`After=sys-subsystem-net-devices-wlan0.device`), which is well
-before the configured network manager has actually finished associating with
-a configured network. The script's "skip the AP if already connected" check
-ran exactly once, immediately, so it always saw "not connected yet" — even on
-a device with perfectly good Wi-Fi credentials that would have connected fine
-a couple of seconds later — and started the AP unnecessarily on every single
-boot, kicking any already-associated client off. `install/wifi-ap.sh` now
-polls for up to 20 seconds before falling back to starting the AP, using
-`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm/Trixie.
-
-If Wi-Fi is preconfigured (e.g. via Raspberry Pi Imager) and you'd rather
-not rely on this poll at every boot at all, re-run
-`sudo install/install.sh --no-ap` (or use `--no-ap` on the original
-install/`install-factory.sh` run). It disables `japyscope-wifi-ap.service` —
-the automatic boot-time check — entirely, instead of just racing it. The
-hotspot itself (`hostapd`/`dnsmasq` or the NetworkManager profile, the AP
-password, `japyscope-wifi-ap`) stays installed and can still be brought up
-manually any time from the Web UI's **System** page ("Restart Wi-Fi setup")
-or `sudo japyscope-wifi-ap --force`.
-
-If you're locked out because the AP already came up and you don't know its
-password (e.g. no physical e-ink display yet): it's stored in plain text at
-`/etc/japyscope/setup-ap-password` on the SD card — pull the card and read
-it from another machine (or use physical console access) if you have no
-other way to reach the Pi's shell.
 
 ## `SEARCH-001`: online SmartSearch unavailable
 
