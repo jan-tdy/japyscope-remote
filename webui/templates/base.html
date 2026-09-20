@@ -8,11 +8,101 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<header><h1>JapyScope Remote</h1></header>
-{% if session.get('authenticated') %}
-<nav><a href="{{ url_for('status') }}">Status</a> · <a href="{{ url_for('catalog') }}">Catalogs</a> · <a href="{{ url_for('settings') }}">Settings</a> · <a href="{{ url_for('diagnostics') }}">Diagnostics</a> · <a href="{{ url_for('system') }}">System</a></nav>
-{% endif %}
-{% for category, message in get_flashed_messages(with_categories=true) %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}
-<main>{% block content %}{% endblock %}</main>
+
+<header class="uefi-header">
+  <div class="brand">
+    <span class="brand-badge">UEFI // SETUP</span>
+    <h1>JapyScope <span>Remote</span></h1>
+  </div>
+  
+  <div class="telemetry-bar">
+    <div class="telemetry-chip temp {% if telemetry.cpu_temp != 'N/A' and telemetry.cpu_temp.replace('°C','').replace('C','')|float > 70 %}hot{% elif telemetry.cpu_temp != 'N/A' and telemetry.cpu_temp.replace('°C','').replace('C','')|float > 55 %}warm{% endif %}">
+      <span class="t-label">CPU Temp:</span>
+      <span class="t-val" id="tel-cpu-temp">{{ telemetry.cpu_temp }}</span>
+    </div>
+    <div class="telemetry-chip">
+      <span class="t-label">Load:</span>
+      <span class="t-val" id="tel-cpu-load">{{ telemetry.cpu_load }}</span>
+    </div>
+    <div class="telemetry-chip">
+      <span class="t-label">RAM:</span>
+      <span class="t-val" id="tel-ram">{{ telemetry.ram_usage }}</span>
+    </div>
+    <div class="telemetry-chip">
+      <span class="t-label">Disk:</span>
+      <span class="t-val" id="tel-disk">{{ telemetry.disk_usage }}</span>
+    </div>
+    <div class="telemetry-chip">
+      <span class="t-label">Uptime:</span>
+      <span class="t-val" id="tel-uptime">{{ telemetry.uptime }}</span>
+    </div>
+  </div>
+</header>
+
+<div class="app-container">
+  {% if session.get('authenticated') %}
+  <aside class="uefi-sidebar">
+    <div class="sidebar-panel">
+      <div class="sidebar-heading">Navigation <span class="nav-num">[MENU]</span></div>
+      <nav class="sidebar-nav">
+        <a class="nav-link {% if request.endpoint == 'status' %}active{% endif %}" href="{{ url_for('status') }}">
+          <span><span class="nav-icon">📊</span>Status</span>
+          <span class="nav-num">[01]</span>
+        </a>
+        <a class="nav-link {% if request.endpoint in ['catalog', 'catalog_create', 'catalog_rename', 'catalog_delete', 'item_add', 'item_delete', 'item_edit', 'catalog_import'] %}active{% endif %}" href="{{ url_for('catalog') }}">
+          <span><span class="nav-icon">🌌</span>Catalogs</span>
+          <span class="nav-num">[02]</span>
+        </a>
+        <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">
+          <span><span class="nav-icon">⚙️</span>Settings</span>
+          <span class="nav-num">[03]</span>
+        </a>
+        <a class="nav-link {% if request.endpoint == 'diagnostics' %}active{% endif %}" href="{{ url_for('diagnostics') }}">
+          <span><span class="nav-icon">🩺</span>Diagnostics</span>
+          <span class="nav-num">[04]</span>
+        </a>
+        <a class="nav-link {% if request.endpoint == 'system' %}active{% endif %}" href="{{ url_for('system') }}">
+          <span><span class="nav-icon">🖥️</span>System</span>
+          <span class="nav-num">[05]</span>
+        </a>
+      </nav>
+    </div>
+
+    <div class="sidebar-panel">
+      <div class="sidebar-heading">Hardware <span class="nav-num">[INFO]</span></div>
+      <div class="muted" style="font-family: var(--font-mono); font-size: 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;">
+        <div>Architecture: <strong>ARMv6 (32-bit)</strong></div>
+        <div>Target: <strong>Raspberry Pi Zero W</strong></div>
+        <div>WebUI Port: <strong>:8080</strong></div>
+      </div>
+    </div>
+  </aside>
+  {% endif %}
+
+  <main class="uefi-main">
+    {% set flashed = get_flashed_messages(with_categories=true) %}
+    {% if flashed %}
+    <div class="flash-container">
+      {% for category, message in flashed %}
+      <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="card-panel">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+
+<footer class="uefi-footer">
+  <div class="key-legend">
+    <span><span class="key-badge">[ESC]</span> Exit / Back</span>
+    <span><span class="key-badge">[ENTER]</span> Select / Save</span>
+    <span><span class="key-badge">[F5]</span> Refresh</span>
+  </div>
+  <div>JapyScope Remote &copy; 2026 // Telescope Control Utility</div>
+</footer>
+
 </body>
 </html>

@@ -131,3 +131,24 @@ def test_login_locks_after_five_failures(tmp_path):
     client = app.test_client()
     for _ in range(4): assert client.post("/", data={"code": "000000"}).status_code == 401
     assert client.post("/", data={"code": "000000"}).status_code == 429
+
+
+def test_diagnostics_page_renders_logs_or_fallback(tmp_path, monkeypatch):
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/diagnostics?unit=app&lines=50")
+    assert response.status_code == 200
+    assert b"Diagnostics" in response.data
+    assert b"SYSTEMD JOURNAL" in response.data
+
+
+def test_api_telemetry_endpoint(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/api/telemetry")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "cpu_temp" in data
+    assert "cpu_load" in data
+    assert "ram_usage" in data
+    assert "disk_usage" in data
+    assert "uptime" in data
+

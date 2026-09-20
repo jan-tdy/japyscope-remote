@@ -8,6 +8,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -23,6 +24,95 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 30
+
+
+def get_system_telemetry() -> dict[str, str]:
+    telemetry = {
+        "cpu_temp": "N/A",
+        "cpu_load": "N/A",
+        "ram_usage": "N/A",
+        "disk_usage": "N/A",
+        "uptime": "N/A",
+    }
+    # CPU Temp
+    try:
+        temp_val = None
+        if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+            with open("/sys/class/thermal/thermal_zone0/temp", "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+                if raw and raw.isdigit():
+                    t = float(raw) / 1000.0
+                    if t > 0:
+                        temp_val = f"{t:.1f}°C"
+        if not temp_val:
+            try:
+                proc = subprocess.run(
+                    ["vcgencmd", "measure_temp"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                    check=False,
+                )
+                if proc.stdout and "temp=" in proc.stdout:
+                    temp_val = proc.stdout.strip().replace("temp=", "").replace("'", "°")
+            except Exception:
+                pass
+        if temp_val:
+            telemetry["cpu_temp"] = temp_val
+    except Exception:
+        pass
+
+    # CPU Load
+    try:
+        l1, l5, l15 = os.getloadavg()
+        telemetry["cpu_load"] = f"{l1:.2f}, {l5:.2f}, {l15:.2f}"
+    except Exception:
+        pass
+
+    # RAM
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        info = {}
+        for line in lines:
+            parts = line.split(":")
+            if len(parts) == 2:
+                info[parts[0].strip()] = int(parts[1].split()[0])
+        total_kb = info.get("MemTotal", 0)
+        avail_kb = info.get("MemAvailable", info.get("MemFree", 0))
+        used_kb = max(0, total_kb - avail_kb)
+        pct = int(used_kb / total_kb * 100) if total_kb else 0
+        telemetry["ram_usage"] = f"{used_kb // 1024} MB / {total_kb // 1024} MB ({pct}%)"
+    except Exception:
+        pass
+
+    # Disk
+    try:
+        usage = shutil.disk_usage("/")
+        used_gb = (usage.total - usage.free) / (1024**3)
+        total_gb = usage.total / (1024**3)
+        pct = int((usage.total - usage.free) / usage.total * 100) if usage.total else 0
+        telemetry["disk_usage"] = f"{used_gb:.1f} GB / {total_gb:.1f} GB ({pct}%)"
+    except Exception:
+        pass
+
+    # Uptime
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            secs = float(f.readline().split()[0])
+        mins, secs = divmod(int(secs), 60)
+        hours, mins = divmod(mins, 60)
+        days, hours = divmod(hours, 24)
+        if days > 0:
+            telemetry["uptime"] = f"{days}d {hours}h {mins}m"
+        elif hours > 0:
+            telemetry["uptime"] = f"{hours}h {mins}m"
+        else:
+            telemetry["uptime"] = f"{mins}m"
+    except Exception:
+        pass
+
+    return telemetry
 
 
 def _default_wifi_configurator(ssid: str, password: str) -> None:
@@ -73,7 +163,10 @@ def create_app(
     @app.context_processor
     def common_template_values():
         token = session.setdefault("csrf_token", secrets.token_urlsafe(24))
-        return {"csrf_token": token}
+        return {
+            "csrf_token": token,
+            "telemetry": get_system_telemetry(),
+        }
 
     @app.route("/", methods=["GET", "POST"])
     def login():
@@ -274,14 +367,57 @@ def create_app(
     @app.route("/diagnostics")
     @auth_required
     def diagnostics():
+        unit_arg = request.args.get("unit", "all").strip().lower()
+        lines_arg = request.args.get("lines", "100").strip()
         try:
-            log_text = subprocess.run(
-                ["journalctl", "-u", "japyscope-app", "-u", "japyscope-webui", "-n", "100", "--no-pager"],
-                capture_output=True, text=True, timeout=5, check=False,
-            ).stdout
+            lines = max(10, min(1000, int(lines_arg)))
+        except ValueError:
+            lines = 100
+
+        unit_mapping = {
+            "all": ["japyscope-app", "japyscope-webui", "japyscope-wifi-ap", "japyscope-splash", "japyscope-update"],
+            "app": ["japyscope-app"],
+            "webui": ["japyscope-webui"],
+            "wifi": ["japyscope-wifi-ap"],
+            "splash": ["japyscope-splash"],
+            "update": ["japyscope-update"],
+        }
+        active_units = unit_mapping.get(unit_arg, unit_mapping["all"])
+        cmd = ["journalctl"]
+        for u in active_units:
+            cmd.extend(["-u", u])
+        cmd.extend(["-n", str(lines), "--no-pager"])
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            log_text = proc.stdout.strip() if proc.stdout else ""
+            if not log_text and proc.stderr:
+                log_text = f"Notice: {proc.stderr.strip()}"
+            if not log_text:
+                log_text = (
+                    f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --\n"
+                    "The selected services may not have generated journal entries yet, or journal access requires elevated permissions."
+                )
         except (OSError, subprocess.SubprocessError) as exc:
             log_text = f"Diagnostics unavailable: {exc}"
-        return render_template("diagnostics.html", logs=log_text)
+
+        return render_template(
+            "diagnostics.html",
+            logs=log_text,
+            selected_unit=unit_arg,
+            selected_lines=lines,
+        )
+
+    @app.route("/api/telemetry")
+    @auth_required
+    def api_telemetry():
+        return jsonify(get_system_telemetry())
 
     @app.route("/system", methods=["GET", "POST"])
     @auth_required

@@ -1,13 +1,83 @@
-{% extends "base.html" %}{% block title %}Settings · JapyScope{% endblock %}
-{% block content %}<h2>Settings</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<label>Latitude <input id="latitude" name="latitude" value="{{ settings.latitude }}"></label><label>Longitude <input id="longitude" name="longitude" value="{{ settings.longitude }}"></label><label>Elevation (m) <input id="elevation_m" name="elevation_m" type="number" value="{{ settings.elevation_m }}"></label><label>Timezone <input name="timezone" value="{{ settings.timezone }}"></label>
-<p><button type="button" id="use-location">📍 Use this device's location</button> <span id="location-status" class="muted"></span></p>
-<label>Park mode <select name="park_mode">{% for mode in ['zenith','home','custom'] %}<option {% if settings.park_mode == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label><label>Custom park altitude <input name="park_alt" type="number" value="{{ settings.park_alt }}"></label><label>Custom park azimuth <input name="park_az" type="number" value="{{ settings.park_az }}"></label>
-<h3>Hardware bring-up (development)</h3>
-<p class="muted">Check a component to run it simulated instead of real hardware — for wiring one piece at a time. Restart the controller (System page) after changing these.</p>
-{% for name in hardware_components %}<label><input type="checkbox" name="hw_sim_{{ name }}" value="1" {% if settings['hw_sim_' ~ name] == '1' %}checked{% endif %}> Simulate {{ name }}</label>{% endfor %}
-<button>Save</button></form>
-<p class="muted">Mount movement and alignment remain controller-only.</p>
+{% extends "base.html" %}
+{% block title %}Settings · JapyScope{% endblock %}
+
+{% block content %}
+<div class="card-panel-header">
+  <h2>Configuration &amp; Settings</h2>
+  <div class="muted">Observing site coordinates and hardware profile</div>
+</div>
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <h3 style="margin-top: 0; color: var(--cyan);">Observing Site Location</h3>
+  
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+    <div>
+      <label>Latitude (&deg;)</label>
+      <input id="latitude" name="latitude" value="{{ settings.latitude }}" placeholder="e.g. 50.075538">
+    </div>
+    <div>
+      <label>Longitude (&deg;)</label>
+      <input id="longitude" name="longitude" value="{{ settings.longitude }}" placeholder="e.g. 14.437800">
+    </div>
+    <div>
+      <label>Elevation (meters)</label>
+      <input id="elevation_m" name="elevation_m" type="number" value="{{ settings.elevation_m }}" placeholder="e.g. 250">
+    </div>
+    <div>
+      <label>Timezone</label>
+      <input name="timezone" value="{{ settings.timezone }}" placeholder="e.g. Europe/Prague">
+    </div>
+  </div>
+
+  <div style="margin: 1rem 0;">
+    <button type="button" id="use-location">📍 Detect Device Location</button>
+    <span id="location-status" class="muted" style="margin-left: 0.5rem;"></span>
+  </div>
+
+  <section>
+    <h3 style="color: var(--cyan);">Park Configuration</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+      <div>
+        <label>Park Mode</label>
+        <select name="park_mode">
+          {% for mode in ['zenith','home','custom'] %}
+          <option {% if settings.park_mode == mode %}selected{% endif %}>{{ mode }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Custom Park Altitude (&deg;)</label>
+        <input name="park_alt" type="number" value="{{ settings.park_alt }}" placeholder="0 - 90">
+      </div>
+      <div>
+        <label>Custom Park Azimuth (&deg;)</label>
+        <input name="park_az" type="number" value="{{ settings.park_az }}" placeholder="0 - 360">
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h3 style="color: var(--cyan);">Hardware Bring-up (Development / Simulation)</h3>
+    <p class="muted">Check a component to run it in simulation mode instead of real hardware — for wiring and debugging one piece at a time. Restart the controller service after changing these flags.</p>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin: 1rem 0;">
+      {% for name in hardware_components %}
+      <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; text-transform: none; font-size: 0.9rem; margin: 0; background: var(--bg-input); padding: 0.6rem 0.8rem; border: 1px solid var(--border-dim); border-radius: 4px;">
+        <input type="checkbox" name="hw_sim_{{ name }}" value="1" {% if settings['hw_sim_' ~ name] == '1' %}checked{% endif %}>
+        Simulate <strong>{{ name }}</strong>
+      </label>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem; align-items: center;">
+    <button class="success" style="padding: 0.7rem 1.75rem;">💾 Save Settings</button>
+    <span class="muted">Mount movement and alignment remain controller-only.</span>
+  </div>
+</form>
+
 <script>
 document.getElementById("use-location").addEventListener("click", function () {
   var status = document.getElementById("location-status");
@@ -26,7 +96,7 @@ document.getElementById("use-location").addEventListener("click", function () {
       if (pos.coords.altitude !== null) {
         document.getElementById("elevation_m").value = Math.round(pos.coords.altitude);
       }
-      status.textContent = "Location filled in — review it, then Save.";
+      status.textContent = "✓ Location filled in — review it, then Save.";
     },
     function (err) {
       status.textContent = "Couldn't get location: " + err.message;
