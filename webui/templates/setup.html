@@ -7,21 +7,21 @@
   <div class="muted">Setup Hotspot (JapyScope-Setup)</div>
 </div>
 
-<p>While connected to the <strong>JapyScope-Setup</strong> hotspot, enter your home/observatory Wi-Fi credentials.</p>
+<p>While connected to <strong>JapyScope-Setup</strong>, enter the home network details.</p>
 
-<form method="post" style="max-width: 24rem; margin: 1.5rem 0;">
+<form method="post" style="max-width: 22rem; margin: 1.25rem 0;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   
-  <label>Network SSID</label>
-  <input name="ssid" maxlength="32" required placeholder="e.g. MyObservatory_WiFi">
+  <label>SSID</label>
+  <input name="ssid" maxlength="32" required placeholder="e.g. MyHomeWiFi">
   
-  <label>WPA2/WPA3 Password</label>
-  <input name="password" type="password" minlength="8" required placeholder="Network security key">
+  <label>Password</label>
+  <input name="password" type="password" minlength="8" required placeholder="Network password">
   
-  <div style="margin-top: 1.25rem;">
-    <button type="submit" class="success" style="width: 100%; padding: 0.75rem;">📡 Connect to Network</button>
+  <div style="margin-top: 1rem;">
+    <button type="submit" class="success" style="width: 100%;">Connect</button>
   </div>
 </form>
 
-<p class="muted">The setup hotspot will close after the controller successfully connects to the specified network.</p>
+<p class="muted">The setup hotspot disappears after the controller joins the network.</p>
 {% endblock %}

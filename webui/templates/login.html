@@ -4,16 +4,16 @@
 {% block content %}
 <div class="card-panel-header">
   <h2>Security Authentication</h2>
-  <div class="muted">Access Code Required</div>
+  <div class="muted">Access code required</div>
 </div>
 
-<p>Enter the 6-digit access code currently displayed on the telescope controller e-ink screen.</p>
+<p>Enter the six-digit code shown on the controller.</p>
 
-<form method="post" style="max-width: 22rem; margin: 1.5rem 0;">
-  <label>6-Digit Access Code</label>
-  <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="000000" style="font-size: 1.4rem; letter-spacing: 0.25em; text-align: center; font-weight: bold; margin-bottom: 1rem;">
-  <button type="submit" class="success" style="width: 100%; padding: 0.75rem;">🔑 Authenticate</button>
+<form method="post" style="max-width: 20rem; margin: 1.25rem 0;">
+  <label>Code</label>
+  <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="000000" style="font-size: 1.3rem; letter-spacing: 0.2em; text-align: center; font-weight: bold; margin-bottom: 0.85rem;">
+  <button type="submit" class="success" style="width: 100%;">Enter</button>
 </form>
 
-<p class="muted">Generate a code on the controller under <strong>Menu &rarr; Wi-Fi / Web Access</strong>. Five wrong attempts cause a 30-second lockout.</p>
+<p class="muted">Generate a code under Menu &rarr; Wi-Fi / Web Access. Five wrong attempts cause a 30-second lockout.</p>
 {% endblock %}

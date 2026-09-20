@@ -4,15 +4,15 @@
 {% block content %}
 <div class="card-panel-header">
   <h2>Diagnostics &amp; System Logs</h2>
-  <div class="muted">Live system journal entries</div>
+  <div class="muted">System journal reader</div>
 </div>
 
-<p>View systemd journal entries for JapyScope services running on this Raspberry Pi.</p>
+<p class="muted">View systemd journal entries for JapyScope services running on this Raspberry Pi.</p>
 
 <form method="get" action="{{ url_for('diagnostics') }}" style="margin-bottom: 1rem;">
   <div class="flex-row">
     <div>
-      <label style="margin: 0 0 0.25rem 0;">Filter Service</label>
+      <label style="margin: 0 0 0.25rem 0;">Service</label>
       <select name="unit" onchange="this.form.submit()" style="max-width: 14rem;">
         <option value="all" {% if selected_unit == 'all' %}selected{% endif %}>All JapyScope Services</option>
         <option value="app" {% if selected_unit == 'app' %}selected{% endif %}>japyscope-app (Controller)</option>
@@ -34,8 +34,8 @@
     </div>
 
     <div style="align-self: flex-end;">
-      <button type="submit">🔄 Refresh</button>
-      <button type="button" id="copy-logs-btn">📋 Copy Logs</button>
+      <button type="submit">Refresh</button>
+      <button type="button" id="copy-logs-btn">Copy Logs</button>
     </div>
   </div>
 </form>
@@ -43,7 +43,7 @@
 <div class="log-box">
   <div class="log-box-header">
     <span>SYSTEMD JOURNAL &bull; {{ selected_unit|upper }} ({{ selected_lines }} lines)</span>
-    <span id="copy-status" style="color: var(--cyan);"></span>
+    <span id="copy-status" style="color: var(--accent-blue);"></span>
   </div>
   <pre id="log-content">{{ logs }}</pre>
 </div>
@@ -60,7 +60,7 @@ document.getElementById('copy-logs-btn').addEventListener('click', function() {
   const content = document.getElementById('log-content').innerText;
   navigator.clipboard.writeText(content).then(() => {
     const status = document.getElementById('copy-status');
-    status.textContent = '✓ Copied to clipboard';
+    status.textContent = 'Copied to clipboard';
     setTimeout(() => { status.textContent = ''; }, 3000);
   }).catch(err => {
     alert('Failed to copy: ' + err);

@@ -4,15 +4,15 @@
 {% block content %}
 <div class="card-panel-header">
   <h2>Configuration &amp; Settings</h2>
-  <div class="muted">Observing site coordinates and hardware profile</div>
+  <div class="muted">Site coordinates and hardware profile</div>
 </div>
 
 <form method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-  <h3 style="margin-top: 0; color: var(--cyan);">Observing Site Location</h3>
+  <h3 style="margin-top: 0; color: var(--accent-blue);">Observing Site Location</h3>
   
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
     <div>
       <label>Latitude (&deg;)</label>
       <input id="latitude" name="latitude" value="{{ settings.latitude }}" placeholder="e.g. 50.075538">
@@ -31,14 +31,14 @@
     </div>
   </div>
 
-  <div style="margin: 1rem 0;">
-    <button type="button" id="use-location">📍 Detect Device Location</button>
+  <div style="margin: 0.85rem 0;">
+    <button type="button" id="use-location">Detect Device Location</button>
     <span id="location-status" class="muted" style="margin-left: 0.5rem;"></span>
   </div>
 
   <section>
-    <h3 style="color: var(--cyan);">Park Configuration</h3>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+    <h3 style="color: var(--accent-blue);">Park Configuration</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem;">
       <div>
         <label>Park Mode</label>
         <select name="park_mode">
@@ -59,12 +59,12 @@
   </section>
 
   <section>
-    <h3 style="color: var(--cyan);">Hardware Bring-up (Development / Simulation)</h3>
-    <p class="muted">Check a component to run it in simulation mode instead of real hardware — for wiring and debugging one piece at a time. Restart the controller service after changing these flags.</p>
+    <h3 style="color: var(--accent-blue);">Hardware Simulation (Development)</h3>
+    <p class="muted">Check a component to run it in simulation mode instead of real hardware. Restart the controller service after changing these flags.</p>
     
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin: 1rem 0;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.65rem; margin: 0.85rem 0;">
       {% for name in hardware_components %}
-      <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; text-transform: none; font-size: 0.9rem; margin: 0; background: var(--bg-input); padding: 0.6rem 0.8rem; border: 1px solid var(--border-dim); border-radius: 4px;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; text-transform: none; font-size: 0.85rem; margin: 0; background: var(--bg-input); padding: 0.5rem 0.75rem; border: 1px solid var(--border-dim); border-radius: 3px;">
         <input type="checkbox" name="hw_sim_{{ name }}" value="1" {% if settings['hw_sim_' ~ name] == '1' %}checked{% endif %}>
         Simulate <strong>{{ name }}</strong>
       </label>
@@ -72,8 +72,8 @@
     </div>
   </section>
 
-  <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem; align-items: center;">
-    <button class="success" style="padding: 0.7rem 1.75rem;">💾 Save Settings</button>
+  <div style="margin-top: 1.25rem; display: flex; gap: 0.75rem; align-items: center;">
+    <button class="success">Save Settings</button>
     <span class="muted">Mount movement and alignment remain controller-only.</span>
   </div>
 </form>
@@ -96,10 +96,10 @@ document.getElementById("use-location").addEventListener("click", function () {
       if (pos.coords.altitude !== null) {
         document.getElementById("elevation_m").value = Math.round(pos.coords.altitude);
       }
-      status.textContent = "✓ Location filled in — review it, then Save.";
+      status.textContent = "Location detected — review then Save.";
     },
     function (err) {
-      status.textContent = "Couldn't get location: " + err.message;
+      status.textContent = "Location failed: " + err.message;
     },
     { enableHighAccuracy: true, timeout: 10000 }
   );

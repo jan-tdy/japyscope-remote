@@ -7,25 +7,25 @@
   <div class="muted">Manage custom celestial target lists</div>
 </div>
 
-<div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem;">
+<div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px; margin-bottom: 1.25rem;">
   <form method="post" action="{{ url_for('catalog_create') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label style="margin-top: 0;">Create New Catalog</label>
     <div class="flex-row">
       <input name="name" maxlength="80" placeholder="e.g. Messier Deep Sky Objects" required style="max-width: 22rem;">
-      <button class="success">➕ Create Catalog</button>
+      <button class="success">Create Catalog</button>
     </div>
   </form>
 </div>
 
 {% for catalog, items in catalogs %}
 <section>
-  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
-    <h3 style="margin: 0; color: var(--cyan); font-size: 1.15rem;">📁 {{ catalog.name }}</h3>
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+    <h3 style="margin: 0; color: var(--accent-blue); font-size: 1.05rem;">{{ catalog.name }}</h3>
     <div class="flex-row">
       <form class="inline" method="post" action="{{ url_for('catalog_rename', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input name="name" value="{{ catalog.name }}" maxlength="80" style="max-width: 14rem; padding: 0.4rem 0.6rem;">
+        <input name="name" value="{{ catalog.name }}" maxlength="80" style="max-width: 14rem; padding: 0.35rem 0.55rem;">
         <button type="submit">Rename</button>
       </form>
       <form class="inline" method="post" action="{{ url_for('catalog_delete', catalog_id=catalog.id) }}" onsubmit="return confirm('Delete this catalog and all its objects?')">
@@ -43,14 +43,14 @@
         <th>Declination (Dec)</th>
         <th>Type</th>
         <th>Observer Note</th>
-        <th style="width: 13rem; text-align: right;">Actions</th>
+        <th style="width: 12rem; text-align: right;">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for item in items %}
       <tr>
-        <td colspan="6" style="padding: 0.4rem 0.6rem;">
-          <form method="post" action="{{ url_for('item_edit', item_id=item.id) }}" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <td colspan="6" style="padding: 0.35rem 0.55rem;">
+          <form method="post" action="{{ url_for('item_edit', item_id=item.id) }}" style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input name="name" value="{{ item.name }}" required placeholder="Name" style="flex: 1; min-width: 8rem; max-width: 12rem;">
             <input name="ra" value="{{ item.ra }}" placeholder="RA" style="flex: 1; min-width: 6rem; max-width: 9rem;">
@@ -64,15 +64,15 @@
       </tr>
       {% else %}
       <tr>
-        <td colspan="6" class="muted" style="text-align: center; padding: 1.5rem;">No celestial objects in this catalog.</td>
+        <td colspan="6" class="muted" style="text-align: center; padding: 1.25rem;">No celestial objects in this catalog.</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; margin-top: 1.25rem;">
-    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 1rem; border-radius: 4px;">
-      <h4 style="margin-top: 0;">➕ Add Target Object</h4>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem;">
+    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px;">
+      <h4 style="margin-top: 0;">Add Target Object</h4>
       <form method="post" action="{{ url_for('item_add', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Object Name</label>
@@ -85,19 +85,19 @@
         <input name="type" placeholder="Galaxy, Nebula, Star...">
         <label>Notes</label>
         <input name="note" placeholder="Optional notes">
-        <div style="margin-top: 0.85rem;">
+        <div style="margin-top: 0.75rem;">
           <button class="success">Add Target</button>
         </div>
       </form>
     </div>
 
-    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 1rem; border-radius: 4px;">
-      <h4 style="margin-top: 0;">📥 Import from CSV</h4>
+    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px;">
+      <h4 style="margin-top: 0;">Import from CSV</h4>
       <form method="post" enctype="multipart/form-data" action="{{ url_for('catalog_import', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Select CSV File</label>
         <input type="file" name="file" accept=".csv,text/csv" required>
-        <p class="muted" style="margin: 0.5rem 0 1rem 0;">Columns: <code>name, ra, dec, type, note</code></p>
+        <p class="muted" style="margin: 0.4rem 0 0.85rem 0;">Columns: <code>name, ra, dec, type, note</code></p>
         <button>Import CSV</button>
       </form>
     </div>

@@ -11,7 +11,7 @@
 
 <header class="uefi-header">
   <div class="brand">
-    <span class="brand-badge">UEFI // SETUP</span>
+    <span class="brand-badge">SETUP UTILITY</span>
     <h1>JapyScope <span>Remote</span></h1>
   </div>
   
@@ -43,37 +43,37 @@
   {% if session.get('authenticated') %}
   <aside class="uefi-sidebar">
     <div class="sidebar-panel">
-      <div class="sidebar-heading">Navigation <span class="nav-num">[MENU]</span></div>
+      <div class="sidebar-heading">Menu <span class="nav-num">[NAV]</span></div>
       <nav class="sidebar-nav">
         <a class="nav-link {% if request.endpoint == 'status' %}active{% endif %}" href="{{ url_for('status') }}">
-          <span><span class="nav-icon">📊</span>Status</span>
+          <span>Status</span>
           <span class="nav-num">[01]</span>
         </a>
         <a class="nav-link {% if request.endpoint in ['catalog', 'catalog_create', 'catalog_rename', 'catalog_delete', 'item_add', 'item_delete', 'item_edit', 'catalog_import'] %}active{% endif %}" href="{{ url_for('catalog') }}">
-          <span><span class="nav-icon">🌌</span>Catalogs</span>
+          <span>Catalogs</span>
           <span class="nav-num">[02]</span>
         </a>
         <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">
-          <span><span class="nav-icon">⚙️</span>Settings</span>
+          <span>Settings</span>
           <span class="nav-num">[03]</span>
         </a>
         <a class="nav-link {% if request.endpoint == 'diagnostics' %}active{% endif %}" href="{{ url_for('diagnostics') }}">
-          <span><span class="nav-icon">🩺</span>Diagnostics</span>
+          <span>Diagnostics</span>
           <span class="nav-num">[04]</span>
         </a>
         <a class="nav-link {% if request.endpoint == 'system' %}active{% endif %}" href="{{ url_for('system') }}">
-          <span><span class="nav-icon">🖥️</span>System</span>
+          <span>System</span>
           <span class="nav-num">[05]</span>
         </a>
       </nav>
     </div>
 
     <div class="sidebar-panel">
-      <div class="sidebar-heading">Hardware <span class="nav-num">[INFO]</span></div>
-      <div class="muted" style="font-family: var(--font-mono); font-size: 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;">
+      <div class="sidebar-heading">System Info <span class="nav-num">[SYS]</span></div>
+      <div class="muted" style="font-family: var(--font-mono); font-size: 0.72rem; display: flex; flex-direction: column; gap: 0.25rem;">
         <div>Architecture: <strong>ARMv6 (32-bit)</strong></div>
         <div>Target: <strong>Raspberry Pi Zero W</strong></div>
-        <div>WebUI Port: <strong>:8080</strong></div>
+        <div>Port: <strong>:8080</strong></div>
       </div>
     </div>
   </aside>
@@ -97,11 +97,11 @@
 
 <footer class="uefi-footer">
   <div class="key-legend">
-    <span><span class="key-badge">[ESC]</span> Exit / Back</span>
-    <span><span class="key-badge">[ENTER]</span> Select / Save</span>
+    <span><span class="key-badge">[ESC]</span> Back</span>
+    <span><span class="key-badge">[ENTER]</span> Select</span>
     <span><span class="key-badge">[F5]</span> Refresh</span>
   </div>
-  <div>JapyScope Remote &copy; 2026 // Telescope Control Utility</div>
+  <div>JapyScope Remote &bull; Telescope Setup Utility</div>
 </footer>
 
 </body>

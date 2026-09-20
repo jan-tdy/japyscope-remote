@@ -7,9 +7,9 @@
   <h2>Telescope Mount Status</h2>
   <div class="muted">
     {% if live %}
-      <span style="color: var(--emerald); font-family: var(--font-mono); font-weight: bold;">● LIVE REFRESH ACTIVE (2s)</span>
+      <span style="color: var(--accent-green); font-family: var(--font-mono); font-weight: 600;">[ LIVE VIEW ACTIVE &bull; 2s ]</span>
     {% else %}
-      <span style="color: var(--text-dim); font-family: var(--font-mono);">STATIC SNAPSHOT</span>
+      <span style="color: var(--text-dim); font-family: var(--font-mono);">[ STATIC SNAPSHOT ]</span>
     {% endif %}
   </div>
 </div>
@@ -28,9 +28,9 @@
       <td>
         {% set val = state.get(key, 'unknown') %}
         {% if key in ['indi_connected', 'tracking', 'aligned'] and val|string == '1' %}
-          <span style="color: var(--emerald); font-weight: bold;">CONNECTED / YES</span>
+          <span style="color: var(--accent-green); font-weight: 600;">CONNECTED / YES</span>
         {% elif key == 'indi_connected' and val|string == '0' %}
-          <span style="color: var(--rose); font-weight: bold;">DISCONNECTED</span>
+          <span style="color: var(--accent-red); font-weight: 600;">DISCONNECTED</span>
         {% else %}
           <code>{{ val }}</code>
         {% endif %}
@@ -40,7 +40,7 @@
   </tbody>
 </table>
 
-<form method="post" style="margin-top: 1.25rem;">
+<form method="post" style="margin-top: 1rem;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="action" value="{{ 'stop' if live else 'start' }}">
   <button class="{% if live %}danger{% else %}success{% endif %}">
@@ -48,7 +48,7 @@
   </button>
 </form>
 
-<p class="muted" style="margin-top: 0.75rem;">
+<p class="muted" style="margin-top: 0.65rem;">
   {% if live %}
     Live view is active; this page refreshes every two seconds.
   {% else %}
