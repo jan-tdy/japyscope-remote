@@ -2,35 +2,30 @@
 {% block title %}Catalogs · JapyScope{% endblock %}
 
 {% block content %}
-<div class="card-panel-header">
-  <h2>Custom Observation Catalogs</h2>
-  <div class="muted">Manage custom celestial target lists</div>
-</div>
+<h2>Observation Catalogs</h2>
 
-<div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px; margin-bottom: 1.25rem;">
-  <form method="post" action="{{ url_for('catalog_create') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label style="margin-top: 0;">Create New Catalog</label>
-    <div class="flex-row">
-      <input name="name" maxlength="80" placeholder="e.g. Messier Deep Sky Objects" required style="max-width: 22rem;">
-      <button class="success">Create Catalog</button>
-    </div>
-  </form>
-</div>
+<form method="post" action="{{ url_for('catalog_create') }}" style="margin-bottom: 1.5rem;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="new-catalog-name">New catalog</label>
+  <div class="form-row">
+    <input id="new-catalog-name" name="name" maxlength="80" placeholder="Catalog name (e.g. Messier)" required>
+    <button class="primary">Create</button>
+  </div>
+</form>
 
 {% for catalog, items in catalogs %}
 <section>
-  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
-    <h3 style="margin: 0; color: var(--accent-blue); font-size: 1.05rem;">{{ catalog.name }}</h3>
-    <div class="flex-row">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+    <h3 style="margin: 0;">{{ catalog.name }}</h3>
+    <div class="form-row">
       <form class="inline" method="post" action="{{ url_for('catalog_rename', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input name="name" value="{{ catalog.name }}" maxlength="80" style="max-width: 14rem; padding: 0.35rem 0.55rem;">
+        <input name="name" value="{{ catalog.name }}" maxlength="80" style="max-width: 12rem;">
         <button type="submit">Rename</button>
       </form>
       <form class="inline" method="post" action="{{ url_for('catalog_delete', catalog_id=catalog.id) }}" onsubmit="return confirm('Delete this catalog and all its objects?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="danger">Delete catalog</button>
+        <button type="submit" class="danger">Delete catalog</button>
       </form>
     </div>
   </div>
@@ -38,72 +33,86 @@
   <table>
     <thead>
       <tr>
-        <th>Object Name</th>
-        <th>Right Ascension (RA)</th>
-        <th>Declination (Dec)</th>
+        <th>Name</th>
+        <th>RA</th>
+        <th>Dec</th>
         <th>Type</th>
-        <th>Observer Note</th>
-        <th style="width: 12rem; text-align: right;">Actions</th>
+        <th>Note</th>
+        <th style="text-align: right; width: 10rem;">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for item in items %}
       <tr>
-        <td colspan="6" style="padding: 0.35rem 0.55rem;">
-          <form method="post" action="{{ url_for('item_edit', item_id=item.id) }}" style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+        <td><strong>{{ item.name }}</strong></td>
+        <td>{{ item.ra or '—' }}</td>
+        <td>{{ item.dec or '—' }}</td>
+        <td>{{ item.type or '—' }}</td>
+        <td>{{ item.note or '—' }}</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <button type="button" onclick="var el = document.getElementById('edit-item-{{ item.id }}'); el.hidden = !el.hidden;">Edit</button>
+          <form class="inline" method="post" action="{{ url_for('item_delete', item_id=item.id) }}" onsubmit="return confirm('Delete {{ item.name }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input name="name" value="{{ item.name }}" required placeholder="Name" style="flex: 1; min-width: 8rem; max-width: 12rem;">
-            <input name="ra" value="{{ item.ra }}" placeholder="RA" style="flex: 1; min-width: 6rem; max-width: 9rem;">
-            <input name="dec" value="{{ item.dec }}" placeholder="Dec" style="flex: 1; min-width: 6rem; max-width: 9rem;">
-            <input name="type" value="{{ item.type }}" placeholder="Type" style="flex: 1; min-width: 6rem; max-width: 8rem;">
-            <input name="note" value="{{ item.note }}" placeholder="Note" style="flex: 2; min-width: 8rem;">
-            <button type="submit">Save</button>
-            <button type="submit" formaction="{{ url_for('item_delete', item_id=item.id) }}" class="danger">Delete</button>
+            <button type="submit" class="danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      <tr id="edit-item-{{ item.id }}" hidden class="edit-row">
+        <td colspan="6">
+          <form method="post" action="{{ url_for('item_edit', item_id=item.id) }}" class="inline-edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input name="name" value="{{ item.name }}" required placeholder="Name">
+            <input name="ra" value="{{ item.ra }}" placeholder="RA">
+            <input name="dec" value="{{ item.dec }}" placeholder="Dec">
+            <input name="type" value="{{ item.type }}" placeholder="Type">
+            <input name="note" value="{{ item.note }}" placeholder="Note">
+            <button type="submit" class="primary">Save</button>
+            <button type="button" onclick="document.getElementById('edit-item-{{ item.id }}').hidden = true;">Cancel</button>
           </form>
         </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="6" class="muted" style="text-align: center; padding: 1.25rem;">No celestial objects in this catalog.</td>
+        <td colspan="6" class="muted" style="text-align: center;">No objects in this catalog.</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem;">
-    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px;">
-      <h4 style="margin-top: 0;">Add Target Object</h4>
+  <div class="grid-cols-2" style="margin-top: 1rem;">
+    <div>
+      <h4>Add object</h4>
       <form method="post" action="{{ url_for('item_add', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label>Object Name</label>
-        <input name="name" placeholder="e.g. M31 or V445 Her" required>
+        <label>Name</label>
+        <input name="name" placeholder="Object name (e.g. M31)" required>
         <label>Right Ascension (RA)</label>
         <input name="ra" placeholder="HH:MM:SS or deg">
         <label>Declination (Dec)</label>
-        <input name="dec" placeholder="&plusmn;DD:MM:SS or deg">
-        <label>Object Type</label>
+        <input name="dec" placeholder="±DD:MM:SS or deg">
+        <label>Type</label>
         <input name="type" placeholder="Galaxy, Nebula, Star...">
-        <label>Notes</label>
+        <label>Note</label>
         <input name="note" placeholder="Optional notes">
         <div style="margin-top: 0.75rem;">
-          <button class="success">Add Target</button>
+          <button type="submit" class="primary">Add object</button>
         </div>
       </form>
     </div>
 
-    <div style="background: var(--bg-input); border: 1px solid var(--border-mid); padding: 0.85rem; border-radius: 3px;">
-      <h4 style="margin-top: 0;">Import from CSV</h4>
+    <div>
+      <h4>Import CSV</h4>
       <form method="post" enctype="multipart/form-data" action="{{ url_for('catalog_import', catalog_id=catalog.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label>Select CSV File</label>
+        <label>CSV File</label>
         <input type="file" name="file" accept=".csv,text/csv" required>
-        <p class="muted" style="margin: 0.4rem 0 0.85rem 0;">Columns: <code>name, ra, dec, type, note</code></p>
-        <button>Import CSV</button>
+        <p class="muted" style="margin: 0.4rem 0 0.75rem 0;">Columns: <code>name, ra, dec, type, note</code></p>
+        <button type="submit">Import CSV</button>
       </form>
     </div>
   </div>
 </section>
 {% else %}
-<p class="muted">No custom catalogs yet. Use the field above to create your first catalog.</p>
+<p class="muted">No custom catalogs yet. Create one above to get started.</p>
 {% endfor %}
 {% endblock %}

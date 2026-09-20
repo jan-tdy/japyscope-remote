@@ -172,8 +172,9 @@ fi
 
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
+getent group systemd-journal >/dev/null || groupadd --system systemd-journal
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
-usermod -a -G gpio,spi,dialout,netdev japyscope
+usermod -a -G gpio,spi,dialout,netdev,systemd-journal,adm japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
 printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/network-backend
 chmod 644 /etc/japyscope/network-backend
@@ -291,7 +292,7 @@ NMCONN
     chmod 600 "$nm_conn_dir/JapyScope Setup.nmconnection"
   fi
 fi
-printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
+printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff, /bin/journalctl *, /usr/bin/journalctl *' > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
