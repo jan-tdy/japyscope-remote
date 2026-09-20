@@ -12,6 +12,11 @@ Start with the combined journal:
 journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
 ```
 
+---
+
+<details markdown="block">
+  <summary>Problems already fixed in latest release</summary>
+   
 ## `pip install` fails on `dbus-python`: "meson-python: error: Could not find ninja version 1.8.2 or newer"
 
 **Fixed as of this doc** — if you're still hitting this, you have an old
@@ -210,6 +215,10 @@ its own previous, incomplete attempt's directory still there. It now
 detects an incomplete release directory (no `.install-complete` marker),
 removes it, and rebuilds automatically — you can just re-run `install.sh`
 after fixing whatever failed, no manual `rm -rf` needed.
+
+</details>
+
+---
 
 ## Filesystem went read-only / `dpkg`, `apt` fail with I/O or "Read-only file system" errors
 
