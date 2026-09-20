@@ -16,9 +16,11 @@ fi
 # UI's "Restart Wi-Fi setup" action (System page) / the eventual Dev
 # Tools code 5000 (docs/CODES.md) — is still installed and left working.
 no_ap=0
+force=0
 for arg in "$@"; do
   case $arg in
     --no-ap) no_ap=1 ;;
+    --force) force=1 ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
 done
@@ -185,6 +187,30 @@ install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 # the chroot deliberately excludes .git, so `git describe` in here would
 # otherwise always fall back to a timestamp.
 version=${JAPYSCOPE_VERSION_OVERRIDE:-$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)}
+
+# Guard against silently reverting a newer release. install.sh and the OTA
+# updater (install/update.py) share the same /opt/japyscope/current symlink
+# and releases/ directory: if update.py has since advanced current to a
+# release fetched from GitHub but this checkout is stale (no `git pull`
+# since), blindly relinking current to whatever version string this
+# checkout resolves to would silently downgrade a working device back to
+# old code. Only meaningful on a live system already running some version —
+# skip it for a fresh install (no current symlink yet) and for
+# install-factory.sh's chroot runs (JAPYSCOPE_VERSION_OVERRIDE set), which
+# have no current symlink of their own to compare against.
+if [[ $force -eq 0 && -z ${JAPYSCOPE_VERSION_OVERRIDE:-} && -L /opt/japyscope/current ]]; then
+  active_version=$(basename "$(readlink -f /opt/japyscope/current)")
+  if [[ -n $active_version && $active_version != "$version" ]]; then
+    echo "Refusing to switch /opt/japyscope/current from '$active_version' to '$version'." >&2
+    echo "This checkout ($source_dir) resolves to a different version than what's currently" >&2
+    echo "active on this device — often because an OTA update (japyscope-update.timer)" >&2
+    echo "already advanced it past this checkout, or because this checkout just needs a" >&2
+    echo "'git pull'. Update this checkout first, or re-run with --force if you really mean" >&2
+    echo "to switch this device to '$version'." >&2
+    exit 1
+  fi
+fi
+
 release_dir=/opt/japyscope/releases/$version
 marker="$release_dir/.install-complete"
 if [[ -e $release_dir && ! -e $marker ]]; then
