@@ -80,31 +80,22 @@
   .device{
     width:300px;
     height:471.8px;
-    background: var(--body-navy);
     position:relative;
     /* Corrected once already: the first pass's bottom corners included
        the render's soft cast shadow (a much lighter gray than the actual
        device, but still under the naive dark-pixel threshold), which
        read as an outward flare/foot that isn't real geometry — re-traced
        with a stricter dark-pixel cutoff that excludes the shadow. */
-    clip-path: polygon(
-      282.4px 0, 289.9px 1.5px, 295.1px 4.5px, 298.9px 10.5px, 298.9px 13.5px, 299.6px 14.2px,
-      299.6px 133.5px, 298.9px 134.2px, 298.9px 137.2px, 298.1px 138px, 288.4px 158.2px,
-      286.1px 161.2px, 285.4px 163.5px, 284.6px 164.2px, 283.9px 166.5px, 283.1px 167.2px,
-      282.4px 169.5px, 281.6px 170.2px, 274.9px 184.5px, 272.6px 187.5px, 267.4px 198.8px,
-      267.4px 455.2px, 266.6px 456px, 266.6px 459px, 265.9px 459.8px, 265.9px 461.2px,
-      265.1px 462px, 263.6px 465.8px, 262.1px 467.2px, 263.6px 468px, 263.6px 468.8px,
-      261.4px 470.2px, 253.1px 471.8px, 46.9px 471.8px, 40.9px 471px, 36.4px 468.8px,
-      36.4px 468px, 37.9px 467.2px, 36.4px 465.8px, 36.4px 465px, 34.1px 461.2px,
-      34.1px 459.8px, 33.4px 459px, 33.4px 456px, 32.6px 455.2px, 32.6px 198.8px,
-      27.4px 187.5px, 25.1px 184.5px, 18.4px 170.2px, 17.6px 169.5px, 16.9px 167.2px,
-      16.1px 166.5px, 15.4px 164.2px, 14.6px 163.5px, 13.9px 161.2px, 11.6px 158.2px,
-      4.9px 144px, 1.1px 137.2px, 1.1px 134.2px, 0.4px 133.5px, 0.4px 14.2px, 1.1px 13.5px,
-      1.1px 10.5px, 4.9px 4.5px, 10.1px 1.5px, 17.6px 0
-    );
     filter: drop-shadow(0 14px 26px rgba(0,0,0,0.55));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
   }
+  /* The shape is an SVG polygon, not CSS clip-path: html2canvas (used by
+     the "Download as JPG" button) doesn't support clip-path at all — it
+     silently skipped .device's whole background, so exports showed the
+     screen/keys/encoder floating with no body outline around them. An
+     inline SVG shape is real rasterizable content, so it captures
+     correctly there too. */
+  .device-shape{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .device-shape polygon{ fill:var(--body-navy); }
   .side-encoder{
     position:absolute; right:-13px; top:254px;
     width:22px; height:150px;
@@ -137,11 +128,15 @@
     background:var(--screen-bg);
     color:var(--screen-fg);
     border-radius:4px;
-    padding:9px 9px;
+    padding:7px 8px;
     overflow:hidden;
     font-family:"JetBrains Mono", "IBM Plex Mono", "Courier New", monospace;
-    font-size:.7rem;
-    line-height:1.4;
+    /* The tallest screens show 6 lines (title + VISIBLE_ROWS(4) + a dim
+       footer, e.g. MENU/LIST/RESULTS) — at .7rem/1.4 that ran past this
+       box's real 93px height and clipped the last line. .58rem/1.32 fits
+       6 lines in the available content height (93 - 2×7 padding). */
+    font-size:.58rem;
+    line-height:1.32;
     white-space:pre-wrap;
     word-break:break-word;
     box-shadow: inset 0 2px 6px rgba(0,0,0,0.35);
@@ -303,6 +298,9 @@
   <div class="col-device">
     <div class="device-shell">
       <div class="device">
+        <svg class="device-shape" viewBox="0 0 300 471.8" preserveAspectRatio="none" aria-hidden="true">
+          <polygon points="282.4,0 289.9,1.5 295.1,4.5 298.9,10.5 298.9,13.5 299.6,14.2 299.6,133.5 298.9,134.2 298.9,137.2 298.1,138 288.4,158.2 286.1,161.2 285.4,163.5 284.6,164.2 283.9,166.5 283.1,167.2 282.4,169.5 281.6,170.2 274.9,184.5 272.6,187.5 267.4,198.8 267.4,455.2 266.6,456 266.6,459 265.9,459.8 265.9,461.2 265.1,462 263.6,465.8 262.1,467.2 263.6,468 263.6,468.8 261.4,470.2 253.1,471.8 46.9,471.8 40.9,471 36.4,468.8 36.4,468 37.9,467.2 36.4,465.8 36.4,465 34.1,461.2 34.1,459.8 33.4,459 33.4,456 32.6,455.2 32.6,198.8 27.4,187.5 25.1,184.5 18.4,170.2 17.6,169.5 16.9,167.2 16.1,166.5 15.4,164.2 14.6,163.5 13.9,161.2 11.6,158.2 4.9,144 1.1,137.2 1.1,134.2 0.4,133.5 0.4,14.2 1.1,13.5 1.1,10.5 4.9,4.5 10.1,1.5 17.6,0"/>
+        </svg>
         <div class="screen-wrap" title="RGB backlight (night-vision friendly, color-mixing) — Menu → Backlight">
           <div class="screen" id="screen"></div>
         </div>
@@ -1917,7 +1915,12 @@
     var od = out.data;
     var gx = [-1,0,1,-2,0,2,-1,0,1];
     var gy = [-1,-2,-1,0,0,0,1,2,1];
-    var threshold = 40;
+    /* Lower than a typical Sobel threshold on purpose: the real device
+       shape (unlike the old plain rounded-rect placeholder) is mostly
+       large flat-navy regions with only subtle shading (box-shadows,
+       the screen's inset glow, faint key borders) — 40 missed nearly
+       all of that and rendered a near-empty outline. */
+    var threshold = 18;
     for(var y = 0; y < h; y++){
       for(var x = 0; x < w; x++){
         var edge = 255;
