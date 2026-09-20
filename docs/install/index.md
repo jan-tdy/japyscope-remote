@@ -33,12 +33,12 @@ title: Install wizard
   </section>
   <section class="wizard-step">
     <h2>Run the installer</h2>
-    <p>Copy or clone this repository to the Pi and open its root directory. Is this Pi's Wi-Fi already working — credentials set in Raspberry Pi Imager, or a wired connection?</p>
+    <p>On the Pi, run the following. Is this Pi's Wi-Fi already working — credentials set in Raspberry Pi Imager, or a wired connection?</p>
     <div class="step-options">
       <button class="step-option" data-answer="ap">Not yet — I'll join the setup hotspot to configure it.</button>
       <button class="step-option" data-answer="no-ap">Yes — don't bother starting a hotspot for it.</button>
     </div>
-    <pre><code data-command>sudo install/install.sh</code></pre>
+    <pre><code data-command>git clone https://github.com/jan-tdy/japyscope-remote && cd japyscope-remote && sudo install/install.sh</code></pre>
     <p class="notice" data-note hidden></p>
     <div class="step-options"><button class="step-option" data-answer="installed" data-gate>The installer completed without an error.</button><a class="step-option" href="{{ '/troubleshooting/' | relative_url }}">The installer failed — troubleshooting guide.</a></div>
   </section>
@@ -84,7 +84,7 @@ title: Install wizard
       ap: 'The installer sets up the JapyScope-Setup hotspot and starts it automatically at boot until it sees a known network.',
       'no-ap': "--no-ap only turns off that automatic boot-time check — the hotspot itself still gets installed, and Menu → Wi-Fi / Web Access or the Web UI's System page can start it by hand any time you do need to change networks."
     };
-    const commands = { ap: 'sudo install/install.sh', 'no-ap': 'sudo install/install.sh --no-ap' };
+    const commands = { ap: 'git clone https://github.com/jan-tdy/japyscope-remote && cd japyscope-remote && sudo install/install.sh', 'no-ap': 'git clone https://github.com/jan-tdy/japyscope-remote && cd japyscope-remote && sudo install/install.sh --no-ap' };
     const wifiHint = document.querySelector('#wifi-hint');
     document.querySelectorAll('[data-answer]').forEach(button => button.addEventListener('click', () => {
       button.closest('.step-options').querySelectorAll('[data-answer]').forEach(option => option.classList.remove('selected'));
