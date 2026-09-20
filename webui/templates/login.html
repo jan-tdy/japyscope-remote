@@ -1,4 +1,20 @@
-{% extends "base.html" %}{% block title %}Access · JapyScope{% endblock %}
-{% block content %}<h2>Access</h2><p>Enter the six-digit code shown on the controller.</p>
-<form method="post"><label>Code <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus></label><button>Enter</button></form>
-<p class="muted">Generate a code under Menu → Wi-Fi / Web Access. Five wrong attempts cause a 30-second lockout.</p>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Access · JapyScope{% endblock %}
+
+{% block content %}
+<div class="card-panel-header">
+  <h2>Security Authentication</h2>
+  <div class="muted">Access code required</div>
+</div>
+
+<p>Enter the six-digit code shown on the controller.</p>
+
+<form method="post" style="max-width: 20rem; margin: 1.25rem 0;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Code</label>
+  <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="000000" style="font-size: 1.3rem; letter-spacing: 0.2em; text-align: center; font-weight: bold; margin-bottom: 0.85rem;">
+  <button type="submit" class="success" style="width: 100%;">Enter</button>
+</form>
+
+<p class="muted">Generate a code under Menu &rarr; Wi-Fi / Web Access. Five wrong attempts cause a 30-second lockout.</p>
+{% endblock %}

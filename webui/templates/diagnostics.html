@@ -1,2 +1,99 @@
-{% extends "base.html" %}{% block title %}Diagnostics · JapyScope{% endblock %}
-{% block content %}<h2>Diagnostics</h2><p>Recent controller and Web UI journal entries:</p><pre>{{ logs }}</pre>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Diagnostics · JapyScope{% endblock %}
+
+{% block content %}
+<div class="card-panel-header">
+  <h2>Diagnostics &amp; System Logs</h2>
+  <div class="muted">System journal reader</div>
+</div>
+
+<p class="muted">View systemd journal entries for JapyScope services running on this Raspberry Pi.</p>
+
+<form method="get" action="{{ url_for('diagnostics') }}" style="margin-bottom: 1rem;">
+  <div class="flex-row">
+    <div>
+      <label style="margin: 0 0 0.25rem 0;">Service</label>
+      <select name="unit" onchange="this.form.submit()" style="max-width: 14rem;">
+        <option value="all" {% if selected_unit == 'all' %}selected{% endif %}>All JapyScope Services</option>
+        <option value="app" {% if selected_unit == 'app' %}selected{% endif %}>japyscope-app (Controller)</option>
+        <option value="webui" {% if selected_unit == 'webui' %}selected{% endif %}>japyscope-webui (Web Interface)</option>
+        <option value="wifi" {% if selected_unit == 'wifi' %}selected{% endif %}>japyscope-wifi-ap (Hotspot/AP)</option>
+        <option value="splash" {% if selected_unit == 'splash' %}selected{% endif %}>japyscope-splash (E-Ink Splash)</option>
+        <option value="update" {% if selected_unit == 'update' %}selected{% endif %}>japyscope-update (OTA Updater)</option>
+      </select>
+    </div>
+
+    <div>
+      <label style="margin: 0 0 0.25rem 0;">Lines</label>
+      <select name="lines" onchange="this.form.submit()" style="max-width: 8rem;">
+        <option value="50" {% if selected_lines == 50 %}selected{% endif %}>50 lines</option>
+        <option value="100" {% if selected_lines == 100 %}selected{% endif %}>100 lines</option>
+        <option value="200" {% if selected_lines == 200 %}selected{% endif %}>200 lines</option>
+        <option value="500" {% if selected_lines == 500 %}selected{% endif %}>500 lines</option>
+      </select>
+    </div>
+
+    <div style="align-self: flex-end;">
+      <button type="submit">Refresh</button>
+      <button type="button" id="copy-logs-btn">Copy Logs</button>
+    </div>
+  </div>
+</form>
+
+<div class="log-box">
+  <div class="log-box-header">
+    <span>SYSTEMD JOURNAL &bull; {{ selected_unit|upper }} ({{ selected_lines }} lines)</span>
+    <span id="copy-status" style="color: var(--accent-blue);"></span>
+  </div>
+  <pre id="log-content">{{ logs }}</pre>
+</div>
+
+<section>
+  <h3>Troubleshooting Command Reference</h3>
+  <p class="muted">To inspect logs directly from SSH console:</p>
+  <pre style="max-height: 8rem; margin-top: 0.5rem;"><code>journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
+systemctl status japyscope-splash japyscope-app japyscope-webui</code></pre>
+</section>
+
+<script>
+document.getElementById('copy-logs-btn').addEventListener('click', function() {
+  const logEl = document.getElementById('log-content');
+  const status = document.getElementById('copy-status');
+  const text = logEl.innerText;
+
+  function setStatus(msg) {
+    status.textContent = msg;
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  }
+
+  function fallbackCopy() {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(logEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const successful = document.execCommand('copy');
+      sel.removeAllRanges();
+      if (successful) {
+        setStatus('Copied to clipboard');
+      } else {
+        setStatus('Select & copy text manually');
+      }
+    } catch (e) {
+      setStatus('Select & copy text manually');
+    }
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus('Copied to clipboard');
+    }).catch(() => {
+      fallbackCopy();
+    });
+  } else {
+    fallbackCopy();
+  }
+});
+</script>
+{% endblock %}

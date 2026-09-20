@@ -1,4 +1,27 @@
-{% extends "base.html" %}{% block title %}Wi-Fi setup · JapyScope{% endblock %}
-{% block content %}<h2>Wi-Fi setup</h2><p>While connected to <strong>JapyScope-Setup</strong>, enter the home network details.</p>
-<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>SSID <input name="ssid" maxlength="32" required></label><label>Password <input name="password" type="password" minlength="8" required></label><button>Connect</button></form>
-<p class="muted">The setup hotspot disappears after the controller joins the network.</p>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Wi-Fi setup · JapyScope{% endblock %}
+
+{% block content %}
+<div class="card-panel-header">
+  <h2>Wi-Fi Provisioning</h2>
+  <div class="muted">Setup Hotspot (JapyScope-Setup)</div>
+</div>
+
+<p>While connected to <strong>JapyScope-Setup</strong>, enter the home network details.</p>
+
+<form method="post" style="max-width: 22rem; margin: 1.25rem 0;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  
+  <label>SSID</label>
+  <input name="ssid" maxlength="32" required placeholder="e.g. MyHomeWiFi">
+  
+  <label>Password</label>
+  <input name="password" type="password" minlength="8" required placeholder="Network password">
+  
+  <div style="margin-top: 1rem;">
+    <button type="submit" class="success" style="width: 100%;">Connect</button>
+  </div>
+</form>
+
+<p class="muted">The setup hotspot disappears after the controller joins the network.</p>
+{% endblock %}
