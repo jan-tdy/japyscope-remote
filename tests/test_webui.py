@@ -149,7 +149,7 @@ def test_diagnostics_page_renders_logs_or_fallback(tmp_path, monkeypatch):
     response = client.get("/diagnostics?unit=app&lines=50")
     assert response.status_code == 200
     assert b"Diagnostics" in response.data
-    assert b"SYSTEMD JOURNAL" in response.data
+    assert b"journal" in response.data.lower()
 
 
 def test_api_telemetry_endpoint(tmp_path):

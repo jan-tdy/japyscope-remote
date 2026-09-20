@@ -2,16 +2,12 @@
 {% block title %}System · JapyScope{% endblock %}
 
 {% block content %}
-<div class="card-panel-header">
-  <h2>System Operations &amp; Power</h2>
-  <div class="muted">Service controls and power management</div>
-</div>
-
+<h2>System</h2>
 <p class="muted">No mount controls are available here. Telescope slewing and alignment remain controller-only.</p>
 
 <section>
-  <h3 style="color: var(--accent-blue);">Service Management</h3>
-  <div style="display: flex; gap: 0.65rem; flex-wrap: wrap; margin-top: 0.65rem;">
+  <h3>Service Control</h3>
+  <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
     <form method="post" class="inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="restart-controller">
@@ -27,8 +23,8 @@
 </section>
 
 <section>
-  <h3 style="color: var(--accent-red);">Device Power Control</h3>
-  <div style="display: flex; gap: 0.65rem; flex-wrap: wrap; margin-top: 0.65rem;">
+  <h3>Power Management</h3>
+  <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
     <form method="post" class="inline" onsubmit="return confirm('Reboot the Raspberry Pi?')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="reboot">
@@ -44,8 +40,8 @@
 </section>
 
 <section>
-  <h3 style="color: var(--text-dim);">Session</h3>
-  <div style="margin-top: 0.65rem;">
+  <h3>Session</h3>
+  <div style="margin-top: 0.5rem;">
     <form method="post" action="{{ url_for('logout') }}" class="inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit">Log out</button>

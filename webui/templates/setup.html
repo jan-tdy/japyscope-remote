@@ -2,24 +2,20 @@
 {% block title %}Wi-Fi setup · JapyScope{% endblock %}
 
 {% block content %}
-<div class="card-panel-header">
-  <h2>Wi-Fi Provisioning</h2>
-  <div class="muted">Setup Hotspot (JapyScope-Setup)</div>
-</div>
-
-<p>While connected to <strong>JapyScope-Setup</strong>, enter the home network details.</p>
+<h2>Wi-Fi Setup</h2>
+<p>While connected to <strong>JapyScope-Setup</strong>, enter the network details to connect the telescope.</p>
 
 <form method="post" style="max-width: 22rem; margin: 1.25rem 0;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   
-  <label>SSID</label>
-  <input name="ssid" maxlength="32" required placeholder="e.g. MyHomeWiFi">
+  <label for="ssid">SSID</label>
+  <input id="ssid" name="ssid" maxlength="32" required placeholder="Network name">
   
-  <label>Password</label>
-  <input name="password" type="password" minlength="8" required placeholder="Network password">
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" minlength="8" required placeholder="Network password">
   
   <div style="margin-top: 1rem;">
-    <button type="submit" class="success" style="width: 100%;">Connect</button>
+    <button type="submit" class="primary" style="width: 100%;">Connect</button>
   </div>
 </form>
 

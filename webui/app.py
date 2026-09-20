@@ -383,29 +383,64 @@ def create_app(
             "update": ["japyscope-update"],
         }
         active_units = unit_mapping.get(unit_arg, unit_mapping["all"])
-        cmd = ["journalctl"]
+        args = []
         for u in active_units:
-            cmd.extend(["-u", u])
-        cmd.extend(["-n", str(lines), "--no-pager"])
+            args.extend(["-u", u])
+        args.extend(["-n", str(lines), "--no-pager"])
 
+        log_text = ""
         try:
             proc = subprocess.run(
-                cmd,
+                ["journalctl"] + args,
                 capture_output=True,
                 text=True,
                 timeout=5,
                 check=False,
             )
-            log_text = proc.stdout.strip() if proc.stdout else ""
-            if not log_text and proc.stderr:
-                log_text = f"Notice: {proc.stderr.strip()}"
-            if not log_text:
-                log_text = (
-                    f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --\n"
-                    "The selected services may not have generated journal entries yet, or journal access requires elevated permissions."
-                )
+            raw = proc.stdout.strip() if proc.stdout else ""
+            if "Hint: You are currently not seeing messages" in raw or "Users in the 'adm' or 'systemd-journal' group" in raw or not raw:
+                try:
+                    sudo_proc = subprocess.run(
+                        ["sudo", "-n", "journalctl"] + args,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    if sudo_proc.returncode == 0 and sudo_proc.stdout and sudo_proc.stdout.strip():
+                        raw = sudo_proc.stdout.strip()
+                except Exception:
+                    pass
+            log_text = raw
         except (OSError, subprocess.SubprocessError) as exc:
-            log_text = f"Diagnostics unavailable: {exc}"
+            try:
+                sudo_proc = subprocess.run(
+                    ["sudo", "-n", "journalctl"] + args,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if sudo_proc.returncode == 0 and sudo_proc.stdout and sudo_proc.stdout.strip():
+                    log_text = sudo_proc.stdout.strip()
+                else:
+                    log_text = f"Diagnostics unavailable: {exc}"
+            except Exception:
+                log_text = f"Diagnostics unavailable: {exc}"
+
+        if log_text:
+            cleaned = [
+                line for line in log_text.splitlines()
+                if not line.strip().startswith("Hint: You are currently not seeing messages")
+                and not line.strip().startswith("Users in the 'adm' or 'systemd-journal' group")
+            ]
+            log_text = "\n".join(cleaned).strip()
+
+        if not log_text:
+            log_text = (
+                f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --\n"
+                "The selected services may not have generated journal entries yet."
+            )
 
         return render_template(
             "diagnostics.html",
