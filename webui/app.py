@@ -16,7 +16,7 @@ import time
 from functools import wraps
 from typing import Callable, Optional
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
 
 from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
 
@@ -318,6 +318,20 @@ def create_app(
             repo.update_item(item_id, name, request.form.get("ra", "").strip(), request.form.get("dec", "").strip(), request.form.get("type", "").strip(), request.form.get("note", "").strip())
         return redirect(url_for("catalog"))
 
+    @app.route("/catalog/import-template")
+    @auth_required
+    def catalog_import_template():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["name", "ra", "dec", "type", "note"])
+        writer.writerow(["M31", "00:42:44", "+41:16:09", "Galaxy", "Andromeda Galaxy"])
+        writer.writerow(["M42", "05:35:17", "-05:23:28", "Nebula", "Orion Nebula"])
+        return Response(
+            buffer.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=japyscope-catalog-import-template.csv"},
+        )
+
     @app.route("/catalog/<int:catalog_id>/import", methods=["POST"])
     @auth_required
     def catalog_import(catalog_id: int):
@@ -388,45 +402,58 @@ def create_app(
             args.extend(["-u", u])
         args.extend(["-n", str(lines), "--no-pager"])
 
-        log_text = ""
+        permission_hints = (
+            "Hint: You are currently not seeing messages",
+            "Permission denied",
+            "No journal files were opened due to insufficient permissions",
+        )
+
+        def run_journalctl(use_sudo: bool) -> subprocess.CompletedProcess:
+            command = (["sudo", "-n"] if use_sudo else []) + ["journalctl"] + args
+            return subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+
+        # The webui service account has no journal/adm group membership (see
+        # install/systemd/japyscope-webui.service) — the plain call below
+        # almost always needs the sudo fallback. We still try it first so a
+        # future group grant works without a sudo hop, but the real bug this
+        # replaces was swallowing every failure (bad sudoers, no tty, sudo
+        # itself missing) into a generic "no entries" message that hid a real
+        # permission problem from whoever was looking at Diagnostics.
+        raw = ""
+        failure_detail = ""
+        direct = None
         try:
-            proc = subprocess.run(
-                ["journalctl"] + args,
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            raw = proc.stdout.strip() if proc.stdout else ""
-            if "Hint: You are currently not seeing messages" in raw or "Users in the 'adm' or 'systemd-journal' group" in raw or not raw:
-                try:
-                    sudo_proc = subprocess.run(
-                        ["sudo", "-n", "journalctl"] + args,
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        check=False,
-                    )
-                    if sudo_proc.returncode == 0 and sudo_proc.stdout and sudo_proc.stdout.strip():
-                        raw = sudo_proc.stdout.strip()
-                except Exception:
-                    pass
-            log_text = raw
+            direct = run_journalctl(use_sudo=False)
         except (OSError, subprocess.SubprocessError) as exc:
+            failure_detail = f"journalctl failed: {exc}"
+
+        needs_sudo = True
+        if direct is not None:
+            raw = (direct.stdout or "").strip()
+            direct_err = (direct.stderr or "").strip()
+            needs_sudo = (
+                direct.returncode != 0
+                or not raw
+                or any(hint in raw or hint in direct_err for hint in permission_hints)
+            )
+
+        if needs_sudo:
             try:
-                sudo_proc = subprocess.run(
-                    ["sudo", "-n", "journalctl"] + args,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                if sudo_proc.returncode == 0 and sudo_proc.stdout and sudo_proc.stdout.strip():
-                    log_text = sudo_proc.stdout.strip()
-                else:
-                    log_text = f"Diagnostics unavailable: {exc}"
-            except Exception:
-                log_text = f"Diagnostics unavailable: {exc}"
+                sudo_proc = run_journalctl(use_sudo=True)
+            except (OSError, subprocess.SubprocessError) as exc:
+                if not raw:
+                    failure_detail = f"sudo journalctl failed: {exc}"
+            else:
+                if sudo_proc.returncode == 0:
+                    raw = (sudo_proc.stdout or "").strip()
+                    failure_detail = ""
+                elif not raw:
+                    failure_detail = (
+                        (sudo_proc.stderr or "").strip()
+                        or f"sudo journalctl exited with status {sudo_proc.returncode}"
+                    )
+
+        log_text = raw
 
         if log_text:
             cleaned = [
@@ -437,10 +464,11 @@ def create_app(
             log_text = "\n".join(cleaned).strip()
 
         if not log_text:
-            log_text = (
-                f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --\n"
-                "The selected services may not have generated journal entries yet."
-            )
+            header = f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --"
+            if failure_detail:
+                log_text = f"{header}\nLog retrieval failed: {failure_detail}"
+            else:
+                log_text = f"{header}\nThe selected services may not have generated journal entries yet."
 
         return render_template(
             "diagnostics.html",
@@ -460,6 +488,7 @@ def create_app(
         commands = {
             "restart-controller": ["sudo", "systemctl", "restart", "japyscope-app.service"],
             "wifi-setup": ["sudo", "/usr/local/sbin/japyscope-wifi-ap", "--force"],
+            "update-now": ["sudo", "systemctl", "start", "japyscope-update.service"],
             "reboot": ["sudo", "systemctl", "reboot"],
             "poweroff": ["sudo", "systemctl", "poweroff"],
         }

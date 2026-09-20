@@ -23,6 +23,18 @@
 </section>
 
 <section>
+  <h3>Software Update</h3>
+  <p class="muted">Checks GitHub for a newer JapyScope release and, if found, downloads, verifies, and installs it. The controller and Web UI restart automatically when it finishes; a failed update rolls back on its own. Progress and results appear in <a href="{{ url_for('diagnostics', unit='update') }}">Diagnostics → japyscope-update</a>.</p>
+  <div style="margin-top: 0.5rem;">
+    <form method="post" class="inline" onsubmit="return confirm('Check for and install a JapyScope update now?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="update-now">
+      <button type="submit" class="primary">Check for update now</button>
+    </form>
+  </div>
+</section>
+
+<section>
   <h3>Power Management</h3>
   <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
     <form method="post" class="inline" onsubmit="return confirm('Reboot the Raspberry Pi?')">
