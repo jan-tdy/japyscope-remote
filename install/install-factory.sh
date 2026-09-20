@@ -22,9 +22,11 @@ set -euo pipefail
 #             /dev/mmcblk0. Double-check this with `lsblk` first — the
 #             card's existing filesystems are mounted and written to.
 #   --yes     skip the interactive confirmation prompt (for scripted use)
-#   --no-ap   forwarded to install.sh: skip the Wi-Fi setup access point
-#             entirely — ideal when the image's Wi-Fi is already
-#             configured (e.g. preseeded via Raspberry Pi Imager)
+#   --no-ap   forwarded to install.sh: don't auto-start the Wi-Fi setup
+#             hotspot at boot — ideal when the image's Wi-Fi is already
+#             configured (e.g. preseeded via Raspberry Pi Imager). The
+#             hotspot itself stays installed and can still be brought up
+#             manually (Web UI System page, Dev Tools code 5000)
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run this with sudo." >&2
@@ -242,15 +244,15 @@ else
   chroot "$mnt" /bin/bash -c "cd '$chroot_src' && ./install/install.sh \"\$@\"" -- "${install_args[@]}"
 fi
 
+ap_password=$(cat "$mnt/etc/japyscope/setup-ap-password" 2>/dev/null || echo "<not found — check install.sh's output above>")
+
 # Read while $mnt is still mounted — the EXIT trap unmounts everything
 # once this script itself exits, right after these final echoes.
 echo
 echo "Factory install complete on $device."
+echo "Wi-Fi setup password: $ap_password"
 if [[ $no_ap -eq 1 ]]; then
-  echo "Wi-Fi was left as already configured on the image (--no-ap)."
-else
-  ap_password=$(cat "$mnt/etc/japyscope/setup-ap-password" 2>/dev/null || echo "<not found — check install.sh's output above>")
-  echo "Wi-Fi setup password: $ap_password"
+  echo "(--no-ap: the setup hotspot won't come up automatically at boot, but this password still works for a manual Restart Wi-Fi setup later.)"
 fi
 echo "Eject the card, put it in the Pi Zero W, and power it on — it should"
 echo "boot straight into JapyScope with no further setup on the device itself."

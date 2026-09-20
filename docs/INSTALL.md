@@ -38,7 +38,7 @@ make it worse.
 
 1. Flash Bullseye Lite, Bookworm Lite, or Trixie Lite with Raspberry Pi
    Imager. Configure a user and enable SSH in the imager if the controller
-   has no keyboard. If you preconfigure Wi-Fi in the imager, install with
+   has no keyboard. If you preconfigure Wi-Fi in the imager, consider
    `--no-ap` (below) instead of step 3's plain command.
 2. Boot the Pi, copy or clone this repository, and enter its root directory.
 3. Run `sudo install/install.sh`.
@@ -55,16 +55,21 @@ points to the active version. Persistent data is in `/var/lib/japyscope`.
 The installer enables the daily OTA timer. Disable automatic application with
 `sudo systemctl disable --now japyscope-update.timer` if desired.
 
-### Skipping the Wi-Fi setup access point (`--no-ap`)
+### Disabling the automatic Wi-Fi setup hotspot (`--no-ap`)
 
 Run `sudo install/install.sh --no-ap` when the Pi's Wi-Fi is already working
 — for example, credentials preconfigured through Raspberry Pi Imager, or a
-wired/USB Ethernet controller. It skips the `JapyScope-Setup` hotspot
-entirely: no `hostapd`/`dnsmasq` (Bullseye) or NetworkManager hotspot
-profile, no AP password file, and `japyscope-wifi-ap`/its systemd unit are
-never installed or enabled. Reconfiguring Wi-Fi later from the Web UI's
-**System** page (`japyscope-wifi`) still works either way; only the
-fallback hotspot is affected.
+wired/USB Ethernet controller. It only disables `japyscope-wifi-ap.service`,
+the automatic check at every boot that brings the `JapyScope-Setup` hotspot
+up on its own when no client Wi-Fi has associated yet — so it never fires on
+a Pi whose Wi-Fi is already known-good.
+
+Everything else the hotspot needs — `hostapd`/`dnsmasq` (Bullseye) or the
+NetworkManager hotspot profile, the AP password file, and `japyscope-wifi-ap`
+itself — is still installed. The Web UI's **System** page **Restart Wi-Fi
+setup** action (and the eventual Dev Tools code `5000`, see `docs/CODES.md`)
+still brings the hotspot up manually on request either way — `--no-ap` only
+takes away the automatic fallback, never the manual one.
 
 ## Factory install from another computer (no boot/SSH needed)
 
@@ -83,8 +88,9 @@ one (starting services, `daemon-reload`) — the units are already enabled, so
 they start themselves normally the first time the card actually boots on the
 Pi. Flash Bullseye/Bookworm/Trixie Lite onto the card with Raspberry Pi
 Imager first, same as step 1 above; this script only does the JapyScope
-part. Pass `--no-ap` (same meaning as on `install.sh`) to skip the Wi-Fi
-setup hotspot, e.g. `sudo install/install-factory.sh /dev/sdX --no-ap`.
+part. Pass `--no-ap` (same meaning as on `install.sh`) to disable the
+automatic boot-time hotspot, e.g.
+`sudo install/install-factory.sh /dev/sdX --no-ap`.
 
 It also grows the card's rootfs partition/filesystem to fill the whole
 card before installing anything — a freshly-flashed image ships with a

@@ -25,7 +25,7 @@ below, which supersede the mockup where they conflict with it.
 
 | Area | Decision |
 |---|---|
-| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` skips the setup hotspot on any release, for a Pi whose Wi-Fi is already configured.) |
+| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` disables the setup hotspot's automatic boot-time fallback on any release, for a Pi whose Wi-Fi is already configured — the hotspot itself stays installed and can still be triggered manually.) |
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
@@ -96,8 +96,9 @@ The software-side handoff items are implemented:
 4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye,
    Bookworm, or Trixie Lite image: apt installs the release's `indi-bin` package, whose armhf file
    list confirms the `indi_skywatcherAltAzMount` driver binary, Python deps
-   (`requirements.txt`), venv, systemd units. `--no-ap` skips the Wi-Fi setup
-   hotspot entirely, for a Pi whose Wi-Fi is already configured.
+   (`requirements.txt`), venv, systemd units. `--no-ap` disables the Wi-Fi
+   setup hotspot's automatic boot-time fallback, for a Pi whose Wi-Fi is
+   already configured — the hotspot stays installed for manual use.
 5. **`install/systemd/*.service`** — includes `japyscope-app.service`,
    `japyscope-webui.service`, and a `japyscope-splash.service` oneshot that
    draws a static boot logo via partial refresh (per project memory: no
