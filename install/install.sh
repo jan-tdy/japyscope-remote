@@ -22,6 +22,19 @@ if [[ $arch != armhf ]]; then echo "Expected the 32-bit armhf image, found $arch
 
 export DEBIAN_FRONTEND=noninteractive
 
+# True when running on a real, booted system (systemd is actually PID 1
+# and reachable) — false under install-factory.sh's chroot (SD card
+# mounted and provisioned from another computer via a card reader,
+# before the Pi has ever booted this filesystem). `systemctl enable`,
+# `unmask`, and `disable` are pure symlink/file operations and work fine
+# either way; `start`/`restart`/`daemon-reload` need a live service
+# manager and hang or fail under chroot, so those are skipped when this
+# is false — the units are already enabled, so they start normally on
+# the real first boot instead.
+systemd_is_live() {
+  [[ -d /run/systemd/system ]]
+}
+
 # Real Pi Zero W bring-up hit repeated apt/dpkg failures from marginal power
 # and a degrading SD card (see docs/TROUBLESHOOTING.md's "Filesystem went
 # read-only"). These helpers self-heal what's safely fixable in software
@@ -129,7 +142,7 @@ else
   # hostapd/dnsmasq alongside it and fight for wlan0.
   apt_retry apt-get install -y --no-install-recommends network-manager
   systemctl enable NetworkManager.service
-  systemctl start NetworkManager.service
+  if systemd_is_live; then systemctl start NetworkManager.service; fi
   command -v nmcli >/dev/null
   network_backend=networkmanager
 fi
@@ -143,7 +156,11 @@ printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/netw
 chmod 644 /etc/japyscope/network-backend
 install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 
-version=$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)
+# JAPYSCOPE_VERSION_OVERRIDE lets install-factory.sh pass through the real
+# `git describe` of the host checkout it copied from — its own copy into
+# the chroot deliberately excludes .git, so `git describe` in here would
+# otherwise always fall back to a timestamp.
+version=${JAPYSCOPE_VERSION_OVERRIDE:-$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)}
 release_dir=/opt/japyscope/releases/$version
 marker="$release_dir/.install-complete"
 if [[ -e $release_dir && ! -e $marker ]]; then
@@ -209,18 +226,63 @@ sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/japyscope.conf"|' /etc/de
 else
   # The profile is deliberately non-autoconnecting: it is started only when
   # no configured client Wi-Fi has associated, by japyscope-wifi-ap.
-  nmcli connection delete id 'JapyScope Setup' >/dev/null 2>&1 || true
-  nmcli connection add type wifi ifname wlan0 con-name 'JapyScope Setup' autoconnect no ssid JapyScope-Setup
-  nmcli connection modify 'JapyScope Setup' wifi.mode ap wifi.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 ipv6.method disabled wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$(<"$ap_password_file")"
+  if systemd_is_live; then
+    nmcli connection delete id 'JapyScope Setup' >/dev/null 2>&1 || true
+    nmcli connection add type wifi ifname wlan0 con-name 'JapyScope Setup' autoconnect no ssid JapyScope-Setup
+    nmcli connection modify 'JapyScope Setup' wifi.mode ap wifi.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 ipv6.method disabled wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$(<"$ap_password_file")"
+  else
+    # No live NetworkManager to talk to (install-factory.sh's chroot) —
+    # nmcli needs its daemon running over D-Bus, which doesn't exist here.
+    # Write the equivalent connection profile as a keyfile directly;
+    # NetworkManager reads these unmodified on the real first boot. Must
+    # be root-only 0600, or NetworkManager silently ignores the file.
+    nm_conn_dir=/etc/NetworkManager/system-connections
+    install -d -m 700 "$nm_conn_dir"
+    nm_uuid=$(python3 -c 'import uuid; print(uuid.uuid4())')
+    nm_psk=$(<"$ap_password_file")
+    cat > "$nm_conn_dir/JapyScope Setup.nmconnection" <<NMCONN
+[connection]
+id=JapyScope Setup
+uuid=$nm_uuid
+type=wifi
+interface-name=wlan0
+autoconnect=false
+
+[wifi]
+mode=ap
+band=bg
+ssid=JapyScope-Setup
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$nm_psk
+
+[ipv4]
+method=shared
+address1=192.168.4.1/24
+
+[ipv6]
+method=disabled
+NMCONN
+    chown root:root "$nm_conn_dir/JapyScope Setup.nmconnection"
+    chmod 600 "$nm_conn_dir/JapyScope Setup.nmconnection"
+  fi
 fi
 printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
-systemctl daemon-reload
+if systemd_is_live; then systemctl daemon-reload; fi
 if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
 systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
-systemctl restart japyscope-wifi-ap.service
-systemctl restart japyscope-app.service japyscope-webui.service
-echo "Wi-Fi setup password: sudo cat $ap_password_file"
-echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
+if systemd_is_live; then
+  systemctl restart japyscope-wifi-ap.service
+  systemctl restart japyscope-app.service japyscope-webui.service
+  echo "Wi-Fi setup password: sudo cat $ap_password_file"
+  echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
+else
+  # install-factory.sh's chroot: nothing is actually running yet — the
+  # enabled units above start themselves normally on the real first boot.
+  echo "Installed JapyScope $version onto this filesystem (offline/factory install)."
+  echo "Wi-Fi setup password: $(cat "$ap_password_file")"
+fi

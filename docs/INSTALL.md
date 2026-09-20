@@ -53,6 +53,24 @@ the active version. Persistent data is in `/var/lib/japyscope`.
 The installer enables the daily OTA timer. Disable automatic application with
 `sudo systemctl disable --now japyscope-update.timer` if desired.
 
+## Factory install from another computer (no boot/SSH needed)
+
+`sudo install/install-factory.sh /dev/sdX` provisions a card the same way,
+from a Linux host with the card in a USB reader, before the Pi Zero W ever
+boots it — useful for prepping several controllers, or when there's no
+keyboard/network path to the Pi at all. `/dev/sdX` is the card's whole-disk
+device (check with `lsblk` first — its filesystems get mounted and written
+to). It needs `qemu-user-static`/`binfmt-support` installed on the host (the
+same technique `.github/workflows/build-libindi-armhf.yml` and
+`test-bookworm-armhf.yml` already use in CI): it mounts the card's boot and
+root partitions, chroots into the root filesystem under armhf emulation, and
+runs the ordinary `install.sh` inside it. That script detects it isn't
+running on a live, booted system and skips the handful of steps that need
+one (starting services, `daemon-reload`) — the units are already enabled, so
+they start themselves normally the first time the card actually boots on the
+Pi. Flash Bullseye/Bookworm Lite onto the card with Raspberry Pi Imager
+first, same as step 1 above; this script only does the JapyScope part.
+
 ## First connection
 
 When no saved Wi-Fi connection is active, join the WPA2-protected
