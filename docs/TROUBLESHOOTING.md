@@ -250,6 +250,14 @@ after fixing whatever failed, no manual `rm -rf` needed.
 
 ---
 
+## Wheel is building, and the Pi does not react, and the loading circle does not turn
+Wait at least 20 minutes (it is normal), if still nothing, wait a little more; if still nothing, hard-reboot by pulling the cable.
+
+## No route to host via SSH / screen showing nothing while LEDs on
+
+Wait a few minutes (wait at least 20 minutes); while normally it should boot under 6 minutes, first boot or filesystem-fix boot may take longer.
+If still nothing, check if your power source is really on.
+
 ## Filesystem went read-only / `dpkg`, `apt` fail with I/O or "Read-only file system" errors
 
 It happened to me about 5 times: That recurrence under
