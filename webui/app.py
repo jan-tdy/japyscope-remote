@@ -152,7 +152,7 @@ def create_app(
 
     @app.before_request
     def verify_csrf():
-        if request.method != "POST" or request.endpoint == "login":
+        if request.method != "POST":
             return None
         supplied = request.form.get("csrf_token", "")
         expected = session.get("csrf_token", "")

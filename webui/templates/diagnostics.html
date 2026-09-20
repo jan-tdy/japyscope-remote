@@ -57,14 +57,43 @@ systemctl status japyscope-splash japyscope-app japyscope-webui</code></pre>
 
 <script>
 document.getElementById('copy-logs-btn').addEventListener('click', function() {
-  const content = document.getElementById('log-content').innerText;
-  navigator.clipboard.writeText(content).then(() => {
-    const status = document.getElementById('copy-status');
-    status.textContent = 'Copied to clipboard';
+  const logEl = document.getElementById('log-content');
+  const status = document.getElementById('copy-status');
+  const text = logEl.innerText;
+
+  function setStatus(msg) {
+    status.textContent = msg;
     setTimeout(() => { status.textContent = ''; }, 3000);
-  }).catch(err => {
-    alert('Failed to copy: ' + err);
-  });
+  }
+
+  function fallbackCopy() {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(logEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const successful = document.execCommand('copy');
+      sel.removeAllRanges();
+      if (successful) {
+        setStatus('Copied to clipboard');
+      } else {
+        setStatus('Select & copy text manually');
+      }
+    } catch (e) {
+      setStatus('Select & copy text manually');
+    }
+  }
+
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus('Copied to clipboard');
+    }).catch(() => {
+      fallbackCopy();
+    });
+  } else {
+    fallbackCopy();
+  }
 });
 </script>
 {% endblock %}
