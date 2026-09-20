@@ -5,8 +5,8 @@ set -euo pipefail
 # card reader — no need to boot the Pi Zero W, attach a keyboard, or SSH
 # in first. Run this on a Linux host (needs root, loop-free block device
 # access, and qemu-user-static for armhf emulation) against a card
-# already flashed with Raspberry Pi OS Bullseye/Bookworm Lite, 32-bit
-# (armhf) — e.g. via Raspberry Pi Imager. It mounts the card's two
+# already flashed with Raspberry Pi OS Bullseye/Bookworm/Trixie Lite,
+# 32-bit (armhf) — e.g. via Raspberry Pi Imager. It mounts the card's two
 # partitions, chroots into the rootfs under qemu-arm-static emulation
 # (the same technique .github/workflows/build-libindi-armhf.yml and
 # test-bookworm-armhf.yml already use in CI), and runs the ordinary
@@ -16,12 +16,15 @@ set -euo pipefail
 # already enabled, so they start themselves normally on the Pi's real
 # first boot.
 #
-# Usage: sudo install/install-factory.sh /dev/sdX [--yes]
+# Usage: sudo install/install-factory.sh /dev/sdX [--yes] [--no-ap]
 #   /dev/sdX  the SD card's whole-disk device as seen by this host (NOT
 #             a partition — no trailing digit), e.g. /dev/sdb or
 #             /dev/mmcblk0. Double-check this with `lsblk` first — the
 #             card's existing filesystems are mounted and written to.
 #   --yes     skip the interactive confirmation prompt (for scripted use)
+#   --no-ap   forwarded to install.sh: skip the Wi-Fi setup access point
+#             entirely — ideal when the image's Wi-Fi is already
+#             configured (e.g. preseeded via Raspberry Pi Imager)
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run this with sudo." >&2
@@ -36,10 +39,12 @@ if [[ $(uname -s) != Linux ]]; then
 fi
 
 confirm_yes=0
+no_ap=0
 device=""
 for arg in "$@"; do
   case $arg in
     --yes|-y) confirm_yes=1 ;;
+    --no-ap) no_ap=1 ;;
     -*) echo "Unknown option: $arg" >&2; exit 1 ;;
     *)
       if [[ -n $device ]]; then echo "Only one device argument is expected." >&2; exit 1; fi
@@ -48,7 +53,7 @@ for arg in "$@"; do
   esac
 done
 if [[ -z $device ]]; then
-  echo "Usage: sudo install/install-factory.sh /dev/sdX [--yes]" >&2
+  echo "Usage: sudo install/install-factory.sh /dev/sdX [--yes] [--no-ap]" >&2
   exit 1
 fi
 if [[ ! -b $device ]]; then
@@ -182,10 +187,10 @@ fi
 # shellcheck disable=SC1091
 codename=$(. "$mnt/etc/os-release"; echo "${VERSION_CODENAME:-}")
 case $codename in
-  bullseye|bookworm) ;;
+  bullseye|bookworm|trixie) ;;
   *)
-    echo "JapyScope requires Raspberry Pi OS Bullseye or Bookworm Lite" >&2
-    echo "(32-bit) — found VERSION_CODENAME=${codename:-<none>}." >&2
+    echo "JapyScope requires Raspberry Pi OS Bullseye, Bookworm, or Trixie" >&2
+    echo "Lite (32-bit) — found VERSION_CODENAME=${codename:-<none>}." >&2
     exit 1
     ;;
 esac
@@ -229,18 +234,23 @@ rsync -a --delete --exclude='.git' "$source_dir/" "$mnt$chroot_src/"
 # version instead of the real tag. Pass the host checkout's actual
 # version through instead, when it has one.
 version_override=$(git -C "$source_dir" describe --tags --always 2>/dev/null || true)
+install_args=()
+if [[ $no_ap -eq 1 ]]; then install_args+=(--no-ap); fi
 if [[ -n $version_override ]]; then
-  chroot "$mnt" /bin/bash -c "cd '$chroot_src' && JAPYSCOPE_VERSION_OVERRIDE='$version_override' ./install/install.sh"
+  chroot "$mnt" /bin/bash -c "cd '$chroot_src' && JAPYSCOPE_VERSION_OVERRIDE='$version_override' ./install/install.sh \"\$@\"" -- "${install_args[@]}"
 else
-  chroot "$mnt" /bin/bash -c "cd '$chroot_src' && ./install/install.sh"
+  chroot "$mnt" /bin/bash -c "cd '$chroot_src' && ./install/install.sh \"\$@\"" -- "${install_args[@]}"
 fi
-
-ap_password=$(cat "$mnt/etc/japyscope/setup-ap-password" 2>/dev/null || echo "<not found — check install.sh's output above>")
 
 # Read while $mnt is still mounted — the EXIT trap unmounts everything
 # once this script itself exits, right after these final echoes.
 echo
 echo "Factory install complete on $device."
-echo "Wi-Fi setup password: $ap_password"
+if [[ $no_ap -eq 1 ]]; then
+  echo "Wi-Fi was left as already configured on the image (--no-ap)."
+else
+  ap_password=$(cat "$mnt/etc/japyscope/setup-ap-password" 2>/dev/null || echo "<not found — check install.sh's output above>")
+  echo "Wi-Fi setup password: $ap_password"
+fi
 echo "Eject the card, put it in the Pi Zero W, and power it on — it should"
 echo "boot straight into JapyScope with no further setup on the device itself."

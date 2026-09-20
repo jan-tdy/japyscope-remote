@@ -131,3 +131,21 @@ def test_login_locks_after_five_failures(tmp_path):
     client = app.test_client()
     for _ in range(4): assert client.post("/", data={"code": "000000"}).status_code == 401
     assert client.post("/", data={"code": "000000"}).status_code == 429
+
+
+def test_system_page_hides_wifi_setup_button_without_no_ap_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr("webui.app.os.path.exists", lambda path: path != "/usr/local/sbin/japyscope-wifi-ap")
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/system")
+    assert b"Restart Wi-Fi setup" not in response.data
+    response = client.post("/system", data={"csrf_token": csrf(client), "action": "wifi-setup"})
+    assert response.status_code == 400
+
+
+def test_system_page_shows_wifi_setup_button_when_the_ap_helper_is_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr("webui.app.os.path.exists", lambda path: path == "/usr/local/sbin/japyscope-wifi-ap")
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/system")
+    assert b"Restart Wi-Fi setup" in response.data
+    response = client.post("/system", data={"csrf_token": csrf(client), "action": "wifi-setup"})
+    assert response.status_code == 302

@@ -262,9 +262,10 @@ Check power, serial wiring, driver name, and port configuration.
 Run `sudo /usr/local/sbin/japyscope-wifi-ap --force`; the setup page is
 `http://192.168.4.1:8080/setup`. On Bullseye, inspect
 `systemctl status japyscope-wifi-ap hostapd dnsmasq` and their journals. On
-Bookworm, inspect `systemctl status japyscope-wifi-ap NetworkManager` and
-`journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager profile
-owns the radio and DHCP service.
+Bookworm or Trixie, inspect `systemctl status japyscope-wifi-ap NetworkManager`
+and `journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager
+profile owns the radio and DHCP service. (If the install was done with
+`install.sh --no-ap`, none of this exists at all — see the next section.)
 
 ## Setup AP starts on every boot even though Wi-Fi is already configured and working
 
@@ -278,7 +279,14 @@ a device with perfectly good Wi-Fi credentials that would have connected fine
 a couple of seconds later — and started the AP unnecessarily on every single
 boot, kicking any already-associated client off. `install/wifi-ap.sh` now
 polls for up to 20 seconds before falling back to starting the AP, using
-`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm.
+`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm/Trixie.
+
+If Wi-Fi is preconfigured (e.g. via Raspberry Pi Imager) and you never want
+the setup hotspot to exist at all — not even briefly during this poll —
+re-run `sudo install/install.sh --no-ap` (or use `--no-ap` on the original
+install/`install-factory.sh` run). It removes `japyscope-wifi-ap` and its
+systemd unit, the AP password file, and the hostapd/dnsmasq or
+NetworkManager hotspot config entirely, rather than just racing it at boot.
 
 If you're locked out because the AP already came up and you don't know its
 password (e.g. no physical e-ink display yet): it's stored in plain text at

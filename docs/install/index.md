@@ -18,10 +18,11 @@ title: Install wizard
   </section>
   <section class="wizard-step">
     <h2>Choose the right operating system</h2>
-    <p>Flash <strong>Raspberry Pi OS Bullseye/Bookworm Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use 64-bit, Trixie, or a desktop image: the installer intentionally supports Bullseye/Bookworm armhf only.</p>
+    <p>Flash <strong>Raspberry Pi OS Bullseye/Bookworm/Trixie Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use a 64-bit or desktop image: the installer intentionally supports Bullseye/Bookworm/Trixie armhf only. If you preconfigure Wi-Fi in the Imager, install with <code>--no-ap</code> later to skip the setup hotspot entirely.</p>
     <div class="step-options">
       <button class="step-option" data-answer="bullseye">I have selected Bullseye Lite, 32-bit.</button>
       <button class="step-option" data-answer="bookworm">I have selected Bookworm Lite, 32-bit.</button>
+      <button class="step-option" data-answer="trixie">I have selected Trixie Lite, 32-bit.</button>
     </div>
     <p class="notice" id="os-note" hidden></p>
   </section>
@@ -34,7 +35,7 @@ title: Install wizard
     <h2>Run the installer</h2>
     <p>Copy or clone this repository to the Pi, open its root directory, then run:</p>
     <pre><code>sudo install/install.sh</code></pre>
-    <p>The installer sets up INDI, dependencies, Wi-Fi onboarding, system services, and daily OTA updates.</p>
+    <p>The installer sets up INDI, dependencies, Wi-Fi onboarding, system services, and daily OTA updates. If your Wi-Fi is already configured and you don't want the setup hotspot at all, run <code>sudo install/install.sh --no-ap</code> instead.</p>
     <div class="step-options"><button class="step-option" data-answer="installed">The installer completed without an error.</button></div>
   </section>
   <section class="wizard-step">
@@ -71,7 +72,8 @@ title: Install wizard
     const osNote = document.querySelector('#os-note');
     const osNotes = {
       bullseye: 'Bullseye uses the legacy wpa_supplicant/hostapd Wi-Fi path.',
-      bookworm: 'Bookworm uses NetworkManager for both the saved Wi-Fi network and the setup hotspot.'
+      bookworm: 'Bookworm uses NetworkManager for both the saved Wi-Fi network and the setup hotspot.',
+      trixie: 'Trixie uses NetworkManager, same as Bookworm, for both the saved Wi-Fi network and the setup hotspot.'
     };
     document.querySelectorAll('[data-answer]').forEach(button => button.addEventListener('click', () => {
       button.closest('.wizard-step').querySelectorAll('[data-answer]').forEach(option => option.classList.remove('selected'));

@@ -5,15 +5,30 @@ if [[ $EUID -ne 0 ]]; then
   echo "Run this installer with sudo." >&2
   exit 1
 fi
+
+# --no-ap: skip everything related to the Wi-Fi setup access point
+# (hostapd/dnsmasq or the NetworkManager hotspot profile, the AP
+# password file, and japyscope-wifi-ap) — ideal when Wi-Fi is already
+# configured (e.g. preseeded via Raspberry Pi Imager) and the fallback
+# hotspot will never be needed. Normal client Wi-Fi (japyscope-wifi) is
+# unaffected either way.
+no_ap=0
+for arg in "$@"; do
+  case $arg in
+    --no-ap) no_ap=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd -- "$script_dir/.." && pwd)
 if [[ ! -r /etc/os-release ]]; then echo "Cannot identify this operating system." >&2; exit 1; fi
 # shellcheck disable=SC1091
 source /etc/os-release
 case ${VERSION_CODENAME:-} in
-  bullseye|bookworm) ;;
+  bullseye|bookworm|trixie) ;;
   *)
-  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye or Bookworm Lite (32-bit)." >&2
+  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite (32-bit)." >&2
   exit 1
   ;;
 esac
@@ -135,11 +150,15 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
 fi
 
 if [[ ${VERSION_CODENAME:-} == bullseye ]]; then
-  apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant
+  if [[ $no_ap -eq 1 ]]; then
+    apt_retry apt-get install -y --no-install-recommends wpasupplicant
+  else
+    apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant
+  fi
   network_backend=wpa_supplicant
 else
-  # Bookworm's supported network stack is NetworkManager; do not install
-  # hostapd/dnsmasq alongside it and fight for wlan0.
+  # Bookworm/Trixie's supported network stack is NetworkManager; do not
+  # install hostapd/dnsmasq alongside it and fight for wlan0.
   apt_retry apt-get install -y --no-install-recommends network-manager
   systemctl enable NetworkManager.service
   if systemd_is_live; then systemctl start NetworkManager.service; fi
@@ -200,6 +219,8 @@ if [[ ! -f /etc/japyscope/environment ]]; then
   chmod 600 /etc/japyscope/environment
 fi
 install -o root -g root -m 755 "$source_dir/install/wifi-config.sh" /usr/local/sbin/japyscope-wifi
+sudoers_cmds='/usr/local/sbin/japyscope-wifi *'
+if [[ $no_ap -eq 0 ]]; then
 install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap
 ap_password_file=/etc/japyscope/setup-ap-password
 if [[ ! -s $ap_password_file ]]; then
@@ -268,21 +289,27 @@ NMCONN
     chmod 600 "$nm_conn_dir/JapyScope Setup.nmconnection"
   fi
 fi
-printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
+sudoers_cmds+=', /usr/local/sbin/japyscope-wifi-ap --force'
+fi
+printf '%s\n' "japyscope ALL=(root) NOPASSWD: $sudoers_cmds, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff" > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
 if systemd_is_live; then systemctl daemon-reload; fi
-if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
-systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
+enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
+if [[ $no_ap -eq 0 ]]; then
+  if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
+  enable_units=(japyscope-wifi-ap.service "${enable_units[@]}")
+fi
+systemctl enable "${enable_units[@]}"
 if systemd_is_live; then
-  systemctl restart japyscope-wifi-ap.service
+  if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi
   systemctl restart japyscope-app.service japyscope-webui.service
-  echo "Wi-Fi setup password: sudo cat $ap_password_file"
+  if [[ $no_ap -eq 0 ]]; then echo "Wi-Fi setup password: sudo cat $ap_password_file"; fi
   echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
 else
   # install-factory.sh's chroot: nothing is actually running yet — the
   # enabled units above start themselves normally on the real first boot.
   echo "Installed JapyScope $version onto this filesystem (offline/factory install)."
-  echo "Wi-Fi setup password: $(cat "$ap_password_file")"
+  if [[ $no_ap -eq 0 ]]; then echo "Wi-Fi setup password: $(cat "$ap_password_file")"; fi
 fi

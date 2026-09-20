@@ -286,19 +286,24 @@ def create_app(
     @app.route("/system", methods=["GET", "POST"])
     @auth_required
     def system():
+        # Absent after an `install.sh --no-ap` install (no Wi-Fi setup
+        # hotspot, no sudoers grant for it) — offering the button anyway
+        # would queue an action that always fails silently in the background.
+        wifi_ap_available = os.path.exists("/usr/local/sbin/japyscope-wifi-ap")
         commands = {
             "restart-controller": ["sudo", "systemctl", "restart", "japyscope-app.service"],
-            "wifi-setup": ["sudo", "/usr/local/sbin/japyscope-wifi-ap", "--force"],
             "reboot": ["sudo", "systemctl", "reboot"],
             "poweroff": ["sudo", "systemctl", "poweroff"],
         }
+        if wifi_ap_available:
+            commands["wifi-setup"] = ["sudo", "/usr/local/sbin/japyscope-wifi-ap", "--force"]
         if request.method == "POST":
             action = request.form.get("action", "")
             if action in commands:
                 action_runner(commands[action]); flash(f"System action queued: {action}.", "ok")
             else: abort(400)
             return redirect(url_for("system"))
-        return render_template("system.html")
+        return render_template("system.html", wifi_ap_available=wifi_ap_available)
 
     if os.environ.get("JAPYSCOPE_DEV_MODE") == "1":
         @app.cli.command("gen-code")

@@ -25,12 +25,12 @@ below, which supersede the mockup where they conflict with it.
 
 | Area | Decision |
 |---|---|
-| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye or Bookworm, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm uses NetworkManager profiles.) |
+| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` skips the setup hotspot on any release, for a Pi whose Wi-Fi is already configured.) |
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
 | Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, and mount can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless, for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
-| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye or Bookworm Lite image — not a prebuilt SD image, Docker, or desktop installer |
+| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
 | OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within the installed release's repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
 | Firmware language | Python 3 |
@@ -70,7 +70,7 @@ japyscope-remote/
   shared/
     db.py               # DONE — SQLite models: catalogs (multi-catalog), settings, state, access_codes
   install/
-    install.sh           # DONE — Bullseye armhf bootstrap
+    install.sh           # DONE — Bullseye/Bookworm/Trixie armhf bootstrap, --no-ap option
     update.py             # DONE — verified GitHub Releases OTA + rollback
     systemd/               # DONE — app/Web UI/splash/Wi-Fi AP/update units
   docs/                     # architecture, install/update/troubleshooting, wiring, mockup
@@ -93,10 +93,11 @@ The software-side handoff items are implemented:
    `#tab-webui` (Wi-Fi AP setup, code-gated login with 5-attempt lockout,
    status with opt-in live position, multi-catalog CRUD + CSV import,
    settings, diagnostics, system), backed by `shared/db.py`.
-4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye or
-   Bookworm Lite image: apt installs the release's `indi-bin` package, whose armhf file
+4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye,
+   Bookworm, or Trixie Lite image: apt installs the release's `indi-bin` package, whose armhf file
    list confirms the `indi_skywatcherAltAzMount` driver binary, Python deps
-   (`requirements.txt`), venv, systemd units.
+   (`requirements.txt`), venv, systemd units. `--no-ap` skips the Wi-Fi setup
+   hotspot entirely, for a Pi whose Wi-Fi is already configured.
 5. **`install/systemd/*.service`** — includes `japyscope-app.service`,
    `japyscope-webui.service`, and a `japyscope-splash.service` oneshot that
    draws a static boot logo via partial refresh (per project memory: no
@@ -110,8 +111,8 @@ The software-side handoff items are implemented:
 
 **Still hardware-blocked:** fill in the selected e-paper controller protocol,
 map PyIndi properties against the live Sky-Watcher driver, confirm the physical
-RJ12 pinout, and exercise install/OTA on real Bullseye and Bookworm Pi Zero W devices. These are
-not safely guessable without the prototype.
+RJ12 pinout, and exercise install/OTA on real Bullseye, Bookworm, and Trixie
+Pi Zero W devices. These are not safely guessable without the prototype.
 
 **Deferred beyond v0 entirely**: a polished end-user manual as a PDF
    (use the PDF skill once on-device flows are stable).
@@ -122,8 +123,8 @@ not safely guessable without the prototype.
    controller state machine on a dev machine.
 2. `webui/app.py` run locally (Flask dev server) against a SQLite fixture.
 3. `install/install.sh` and `install/update.py` tested against a Raspberry
-   Pi OS Bullseye Lite image (QEMU or a spare Pi) before trusting them on
-   real Pi Zero W hardware.
+   Pi OS Bullseye, Bookworm, or Trixie Lite image (QEMU or a spare Pi)
+   before trusting them on real Pi Zero W hardware.
 4. `docs/mockup.html` opened via the GitHub Pages URL (or the Mockup tab in
    `docs/index.html`) to sanity-check current UX decisions (noting it does
    **not** reflect the behavior changes above — it's kept as the original
