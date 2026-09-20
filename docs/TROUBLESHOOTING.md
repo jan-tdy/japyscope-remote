@@ -171,6 +171,36 @@ any `http(s):` value verbatim, bypassing the whitelist:
 either — it tracks whatever Raspberry Pi OS currently ships (already
 Trixie as of this writing), not Bookworm specifically.
 
+## `test-trixie-armhf.yml` fails with "No space left on device"
+
+Fixed (`git pull` if you're hitting this on an old checkout). The real
+cause is an `e2fsprogs` version mismatch, not actually a lack of space:
+
+`arm-runner-action` grows the downloaded image by `image_additional_mb`
+(a plain `dd` append — that part always "succeeds"), then runs the
+**host** runner's `e2fsck`/`resize2fs` to actually extend the ext4
+filesystem into that new room. Trixie's base image was itself built with
+a much newer `e2fsprogs` (1.47.2) than Ubuntu 22.04 ships (1.46.5), which
+sets an ext4 feature bit ("unsupported feature(s)", `FEATURE_C12`) the
+older host tools don't recognize. `e2fsck`/`resize2fs` then fail *silently*
+from the workflow's point of view — `mount_image.sh` logs "Finished
+resizing disk image." either way — so the filesystem never actually grows,
+and `apt`/`tar` run out of the base image's small original room at the
+same exact point regardless of how high `image_additional_mb` is set (a
+first attempt raising it from 4096 to 8192 changed nothing, confirming
+this: the `dd` step correctly grew the image file both times, but the
+*filesystem* stayed the original size both times). The same version gap
+also breaks `arm-runner-action`'s own post-build image-shrink cleanup, so
+`optimize_image: 'no'` skips it — it only mattered for caching the output
+image, which this job doesn't do.
+
+Fixed by running this job on `ubuntu-24.04` instead of `ubuntu-22.04`:
+its `e2fsprogs` (1.47.0) is close enough to Trixie's own to actually
+perform the resize. This is unrelated to the arm1176-vs-cortex-a7 QEMU
+segfault in `build-libindi-armhf.yml`'s history — that was tied to the
+`arm1176` CPU model specifically, reproducing on every runner version;
+this job (like `test-bookworm-armhf.yml`) already uses `cortex-a7`.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
@@ -262,9 +292,11 @@ Check power, serial wiring, driver name, and port configuration.
 Run `sudo /usr/local/sbin/japyscope-wifi-ap --force`; the setup page is
 `http://192.168.4.1:8080/setup`. On Bullseye, inspect
 `systemctl status japyscope-wifi-ap hostapd dnsmasq` and their journals. On
-Bookworm, inspect `systemctl status japyscope-wifi-ap NetworkManager` and
-`journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager profile
-owns the radio and DHCP service.
+Bookworm or Trixie, inspect `systemctl status japyscope-wifi-ap NetworkManager`
+and `journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager
+profile owns the radio and DHCP service. (`--no-ap` only disables the
+automatic boot-time check — all of this is still installed and `--force`
+still brings the hotspot up manually either way, see the next section.)
 
 ## Setup AP starts on every boot even though Wi-Fi is already configured and working
 
@@ -278,7 +310,17 @@ a device with perfectly good Wi-Fi credentials that would have connected fine
 a couple of seconds later — and started the AP unnecessarily on every single
 boot, kicking any already-associated client off. `install/wifi-ap.sh` now
 polls for up to 20 seconds before falling back to starting the AP, using
-`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm.
+`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm/Trixie.
+
+If Wi-Fi is preconfigured (e.g. via Raspberry Pi Imager) and you'd rather
+not rely on this poll at every boot at all, re-run
+`sudo install/install.sh --no-ap` (or use `--no-ap` on the original
+install/`install-factory.sh` run). It disables `japyscope-wifi-ap.service` —
+the automatic boot-time check — entirely, instead of just racing it. The
+hotspot itself (`hostapd`/`dnsmasq` or the NetworkManager profile, the AP
+password, `japyscope-wifi-ap`) stays installed and can still be brought up
+manually any time from the Web UI's **System** page ("Restart Wi-Fi setup")
+or `sudo japyscope-wifi-ap --force`.
 
 If you're locked out because the AP already came up and you don't know its
 password (e.g. no physical e-ink display yet): it's stored in plain text at

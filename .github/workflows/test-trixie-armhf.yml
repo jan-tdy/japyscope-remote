@@ -1,0 +1,93 @@
+name: Smoke-test Trixie armhf install dependencies
+
+on:
+  pull_request:
+    paths:
+      - 'install/**'
+      - 'requirements*.txt'
+      - '.github/workflows/test-trixie-armhf.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'install/**'
+      - 'requirements*.txt'
+      - '.github/workflows/test-trixie-armhf.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    # NOT ubuntu-22.04 (what Bookworm/Bullseye's CI uses): its e2fsprogs
+    # (1.46.5) can't even read the ext4 feature bits Trixie's own,
+    # much newer e2fsprogs (1.47.2) sets by default on the base image
+    # ("unsupported feature(s)"/FEATURE_C12) -- resize2fs silently fails
+    # to actually grow the mounted filesystem (it logs "Finished
+    # resizing disk image." regardless), so image_additional_mb has *no*
+    # effect no matter how high it's set: apt still runs out of space at
+    # the exact same point every time, before the pinned INDI tarball
+    # even gets extracted. ubuntu-24.04 ships e2fsprogs 1.47.0, close
+    # enough to Trixie's own to actually perform the resize. This is
+    # independent of the earlier arm1176-vs-cortex-a7 QEMU segfault
+    # (see build-libindi-armhf.yml) -- that was specific to the arm1176
+    # CPU model on any runner version; this job already uses cortex-a7.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # The actual Raspberry Pi OS image, rather than generic Debian armhf:
+      # it validates the Pi Zero W's ARMv6-compatible toolchain, Trixie's
+      # Python 3.13/pip behavior, and its INDI package set. Trixie (like
+      # Bookworm) has no arm-runner-action raspios_lite alias, so this
+      # points directly at the real, currently-hosted image URL instead —
+      # same approach as test-bookworm-armhf.yml.
+      - name: Build and import the production dependency set
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: "https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-12-04/2025-12-04-raspios-trixie-armhf-lite.img.xz"
+          # QEMU's cortex-a7 model is more reliable on GitHub runners; the
+          # Raspberry Pi OS armhf toolchain still produces ARMv6-compatible
+          # output, which is what matters for the original Pi Zero W.
+          cpu: cortex-a7
+          image_additional_mb: 8192
+          # Skip the final e2fsck-based image shrink -- we don't keep the
+          # image afterward, so there's no reason to pay for it.
+          optimize_image: 'no'
+          bind_mount_repository: true
+          commands: |
+            set -eux
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              python3 python3-dev python3-venv python3-pip build-essential \
+              pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev \
+              libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev \
+              libcfitsio-dev curl ca-certificates indi-bin network-manager
+            test -x /usr/bin/indiserver
+            test -x /usr/bin/indi_skywatcherAltAzMount
+            nmcli --version
+
+            # Trixie's apt libindi-dev still predates the INDI 2.x API
+            # pyindi-client 2.2.0 needs. Mirror install.sh's pinned
+            # client-core setup (same prebuilt tarball as Bullseye/Bookworm
+            # — it's headers plus a client lib built against an older
+            # glibc, which newer glibc runs forward-compatibly).
+            . install/libindi-core.env
+            tmp_tarball=$(mktemp)
+            curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
+              "https://github.com/jan-tdy/japyscope-remote/releases/download/$LIBINDI_CORE_TAG/$LIBINDI_CORE_ASSET"
+            echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
+            tar -xzf "$tmp_tarball" -C /usr/local
+            rm -f "$tmp_tarball"
+            if [ -d /usr/local/lib/arm-linux-gnueabihf ]; then
+              find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
+            fi
+            ldconfig
+
+            python3 -m venv /tmp/japyscope-venv
+            /tmp/japyscope-venv/bin/python -m pip install --upgrade pip setuptools wheel
+            /tmp/japyscope-venv/bin/python -m pip install --require-hashes -r requirements.lock
+            /tmp/japyscope-venv/bin/python -m pip install --require-hashes --no-deps --no-build-isolation -r requirements-pyindi.lock
+            /tmp/japyscope-venv/bin/python -c 'import PyIndi; print(PyIndi.__file__)'

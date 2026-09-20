@@ -5,15 +5,33 @@ if [[ $EUID -ne 0 ]]; then
   echo "Run this installer with sudo." >&2
   exit 1
 fi
+
+# --no-ap: skip only the automatic boot-time Wi-Fi setup hotspot
+# (japyscope-wifi-ap.service, which brings the AP up on its own when no
+# client Wi-Fi is associated) — ideal when Wi-Fi is already configured on
+# the OS itself (e.g. preseeded via Raspberry Pi Imager) and that
+# automatic fallback should never fire. Everything the AP needs to be
+# brought up manually later — hostapd/dnsmasq or the NetworkManager
+# hotspot profile, the AP password, japyscope-wifi-ap itself, and the Web
+# UI's "Restart Wi-Fi setup" action (System page) / the eventual Dev
+# Tools code 5000 (docs/CODES.md) — is still installed and left working.
+no_ap=0
+for arg in "$@"; do
+  case $arg in
+    --no-ap) no_ap=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd -- "$script_dir/.." && pwd)
 if [[ ! -r /etc/os-release ]]; then echo "Cannot identify this operating system." >&2; exit 1; fi
 # shellcheck disable=SC1091
 source /etc/os-release
 case ${VERSION_CODENAME:-} in
-  bullseye|bookworm) ;;
+  bullseye|bookworm|trixie) ;;
   *)
-  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye or Bookworm Lite (32-bit)." >&2
+  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite (32-bit)." >&2
   exit 1
   ;;
 esac
@@ -135,11 +153,16 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
 fi
 
 if [[ ${VERSION_CODENAME:-} == bullseye ]]; then
+  # hostapd/dnsmasq are installed regardless of --no-ap: that flag only
+  # skips the automatic boot-time fallback (japyscope-wifi-ap.service), not
+  # the AP's own setup — the Web UI's "Restart Wi-Fi setup" action (and the
+  # eventual Dev Tools code 5000, see docs/CODES.md) must still be able to
+  # bring the hotspot up manually on request.
   apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant
   network_backend=wpa_supplicant
 else
-  # Bookworm's supported network stack is NetworkManager; do not install
-  # hostapd/dnsmasq alongside it and fight for wlan0.
+  # Bookworm/Trixie's supported network stack is NetworkManager; do not
+  # install hostapd/dnsmasq alongside it and fight for wlan0.
   apt_retry apt-get install -y --no-install-recommends network-manager
   systemctl enable NetworkManager.service
   if systemd_is_live; then systemctl start NetworkManager.service; fi
@@ -274,9 +297,17 @@ visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
 if systemd_is_live; then systemctl daemon-reload; fi
 if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
-systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
+# --no-ap only withholds japyscope-wifi-ap.service, the automatic
+# boot-time fallback that brings the hotspot up on its own when no client
+# Wi-Fi has associated yet. Manually invoking japyscope-wifi-ap --force
+# (the Web UI's "Restart Wi-Fi setup" action, eventually Dev Tools code
+# 5000) still works either way — everything it needs was just installed
+# above regardless of --no-ap.
+enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
+if [[ $no_ap -eq 0 ]]; then enable_units=(japyscope-wifi-ap.service "${enable_units[@]}"); fi
+systemctl enable "${enable_units[@]}"
 if systemd_is_live; then
-  systemctl restart japyscope-wifi-ap.service
+  if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi
   systemctl restart japyscope-app.service japyscope-webui.service
   echo "Wi-Fi setup password: sudo cat $ap_password_file"
   echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"

@@ -7,11 +7,11 @@ permalink: /install-reference/
 # Installation
 
 JapyScope targets the original Raspberry Pi Zero W (`armv6`). Use **Raspberry
-Pi OS Lite, 32-bit (armhf)**, either **Bullseye** or **Bookworm**. A 64-bit
-image will not boot on the original Zero W. The installer detects the release:
-Bullseye uses its legacy `wpa_supplicant`/hostapd setup, while Bookworm uses
-its default NetworkManager stack for both the saved client network and the
-setup hotspot.
+Pi OS Lite, 32-bit (armhf)**: **Bullseye**, **Bookworm**, or **Trixie**. A
+64-bit image will not boot on the original Zero W. The installer detects the
+release: Bullseye uses its legacy `wpa_supplicant`/hostapd setup, while
+Bookworm and Trixie both use their default NetworkManager stack for both the
+saved client network and the setup hotspot.
 
 ## Power and SD card (read this first)
 
@@ -36,22 +36,40 @@ make it worse.
 
 ## Prepare the card
 
-1. Flash Bullseye Lite or Bookworm Lite with Raspberry Pi Imager. Configure a user and enable
-   SSH in the imager if the controller has no keyboard.
+1. Flash Bullseye Lite, Bookworm Lite, or Trixie Lite with Raspberry Pi
+   Imager. Configure a user and enable SSH in the imager if the controller
+   has no keyboard. If you preconfigure Wi-Fi in the imager, consider
+   `--no-ap` (below) instead of step 3's plain command.
 2. Boot the Pi, copy or clone this repository, and enter its root directory.
 3. Run `sudo install/install.sh`.
 
 The installer refuses unsupported releases and non-`armhf` systems. It
 installs `indi-bin` (which includes `indiserver` and the verified
 `indi_skywatcherAltAzMount` executable), build prerequisites, Python
-dependencies, the Wi-Fi setup access point, and systemd units. Both releases
-fetch the pinned compatible INDI client core because their packaged headers
-are older than the INDI 2.x API required by `pyindi-client`. The installed
-tree is under `/opt/japyscope/releases/`; `/opt/japyscope/current` points to
-the active version. Persistent data is in `/var/lib/japyscope`.
+dependencies, the Wi-Fi setup access point, and systemd units. All three
+releases fetch the pinned compatible INDI client core because their packaged
+headers are older than the INDI 2.x API required by `pyindi-client`. The
+installed tree is under `/opt/japyscope/releases/`; `/opt/japyscope/current`
+points to the active version. Persistent data is in `/var/lib/japyscope`.
 
 The installer enables the daily OTA timer. Disable automatic application with
 `sudo systemctl disable --now japyscope-update.timer` if desired.
+
+### Disabling the automatic Wi-Fi setup hotspot (`--no-ap`)
+
+Run `sudo install/install.sh --no-ap` when the Pi's Wi-Fi is already working
+— for example, credentials preconfigured through Raspberry Pi Imager, or a
+wired/USB Ethernet controller. It only disables `japyscope-wifi-ap.service`,
+the automatic check at every boot that brings the `JapyScope-Setup` hotspot
+up on its own when no client Wi-Fi has associated yet — so it never fires on
+a Pi whose Wi-Fi is already known-good.
+
+Everything else the hotspot needs — `hostapd`/`dnsmasq` (Bullseye) or the
+NetworkManager hotspot profile, the AP password file, and `japyscope-wifi-ap`
+itself — is still installed. The Web UI's **System** page **Restart Wi-Fi
+setup** action (and the eventual Dev Tools code `5000`, see `docs/CODES.md`)
+still brings the hotspot up manually on request either way — `--no-ap` only
+takes away the automatic fallback, never the manual one.
 
 ## Factory install from another computer (no boot/SSH needed)
 
@@ -68,8 +86,11 @@ runs the ordinary `install.sh` inside it. That script detects it isn't
 running on a live, booted system and skips the handful of steps that need
 one (starting services, `daemon-reload`) — the units are already enabled, so
 they start themselves normally the first time the card actually boots on the
-Pi. Flash Bullseye/Bookworm Lite onto the card with Raspberry Pi Imager
-first, same as step 1 above; this script only does the JapyScope part.
+Pi. Flash Bullseye/Bookworm/Trixie Lite onto the card with Raspberry Pi
+Imager first, same as step 1 above; this script only does the JapyScope
+part. Pass `--no-ap` (same meaning as on `install.sh`) to disable the
+automatic boot-time hotspot, e.g.
+`sudo install/install-factory.sh /dev/sdX --no-ap`.
 
 It also grows the card's rootfs partition/filesystem to fill the whole
 card before installing anything — a freshly-flashed image ships with a
