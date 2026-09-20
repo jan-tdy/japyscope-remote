@@ -57,7 +57,8 @@
   <section>
     <h3>Hardware Bring-up (Development)</h3>
     <p class="muted">Check a component to run it simulated instead of real hardware. Restart the controller (System page) after changing these.</p>
-    
+    <p class="muted">Simulating <strong>keypad</strong> or <strong>encoder</strong> reads keypresses from a terminal, which needs an interactive session — it will never receive input when the controller runs as the <code>japyscope-app.service</code> systemd unit (no terminal attached). To actually use them, stop the service and run <code>python3 -m firmware.main --simulate</code> directly over SSH instead. <strong>display</strong> has no such requirement and works normally under the service.</p>
+
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem; margin: 1rem 0;">
       {% for name in hardware_components %}
       <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: normal; margin: 0;">

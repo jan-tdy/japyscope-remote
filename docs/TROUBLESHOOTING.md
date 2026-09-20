@@ -355,6 +355,27 @@ automatic boot-time check — all of this is still installed and `--force`
 still brings the hotspot up manually either way, see the next section.)
 
 
+## `SIM-001`: keyboard-simulated input never receives a key
+
+`hw_sim_keypad`/`hw_sim_encoder` (Settings page) switch input to a
+keyboard-driven backend that reads raw keystrokes from stdin — it needs a
+real, interactive terminal. Restarting `japyscope-app.service` (systemd,
+`Type=simple`) after enabling either of these gives it a detached process
+with no terminal (stdin is `/dev/null`): the backend starts, logs `SIM-001`,
+and then never produces a single event, because there is nothing to route an
+SSH session's keypresses into. Pressing a key or the real encoder does
+nothing, and nothing else appears in the logs either — the app is genuinely
+just waiting on input it can never receive.
+
+To actually exercise keyboard-simulated input, stop the service and run it
+in the foreground instead: `sudo systemctl stop japyscope-app.service` then
+`python3 -m firmware.main --simulate` directly in your SSH session (1-9/0 =
+digits, Enter = encoder push, Up/Down = encoder rotate, Backspace = BKSP, F
+= FN2). Leave `hw_sim_keypad`/`hw_sim_encoder` off and let
+`japyscope-app.service` run normally when testing real keypad/encoder
+hardware — only `hw_sim_display` is meaningful under systemd, since it needs
+no input and just prints frames to the journal.
+
 ## `SEARCH-001`: online SmartSearch unavailable
 
 This is non-fatal. The controller has already fallen back to built-in and all
