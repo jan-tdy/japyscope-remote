@@ -106,7 +106,10 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>CSV File</label>
         <input type="file" name="file" accept=".csv,text/csv" required>
-        <p class="muted" style="margin: 0.4rem 0 0.75rem 0;">Columns: <code>name, ra, dec, type, note</code></p>
+        <p class="muted" style="margin: 0.4rem 0 0.75rem 0;">
+          Columns: <code>name, ra, dec, type, note</code> ·
+          <a href="{{ url_for('catalog_import_template') }}">Download sample CSV</a>
+        </p>
         <button type="submit">Import CSV</button>
       </form>
     </div>
