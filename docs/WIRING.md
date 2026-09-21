@@ -15,6 +15,7 @@ are the firmware's current defaults (`firmware/hal/*/keypad.py`,
 board. Cross-check before trusting a pin.
 
 ## Mount connection (RJ12, not RJ45)
+{: #mount-connection}
 
 The controller connects directly to the mount's **RJ12** "Hand Control" port
 — this bypasses the stock SynScan hand controller entirely and speaks the
@@ -47,6 +48,7 @@ Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
 do not connect pin 6 (+12V) to the level shifter or Pi.
 
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
+{: #keypad}
 
 Stickers-only key legend, no physical modification to the keypad itself.
 Matrix scan pins (BCM numbering, `firmware/hal/input/keypad.py`):
@@ -71,6 +73,7 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 | Row 4 | FN2 | 0 | BKSP |
 
 ## Rotary encoder (KY-040)
+{: #rotary-encoder}
 
 | Signal | BCM pin |
 |---|---|
@@ -82,6 +85,7 @@ Also needs a printed D-shaft knob for the KY-040 shaft (JLC3DP, per project
 notes) — not a wiring item, tracked here as a reminder for the enclosure BOM.
 
 ## Display (e-ink, SPI) — panel not finalized
+{: #display}
 
 See `docs/ARCHITECTURE.md` for the 2.13"-vs-4.26" status. SPI wiring is the
 same regardless of panel size (`firmware/hal/display/epaper.py`):

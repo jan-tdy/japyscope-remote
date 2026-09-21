@@ -17,6 +17,26 @@ title: Install wizard
     <div class="step-options"><button class="step-option" data-answer="ready" data-gate>I have the Pi Zero W, good power, and a reliable SD card.</button><a class="step-option" href="{{ '/install-reference/#power-and-sd-card-read-this-first' | relative_url }}">I need the full hardware requirements first.</a></div>
   </section>
   <section class="wizard-step">
+    <h2>Wire the mount connection (RJ12)</h2>
+    <p><strong>Do all wiring in this and the next three steps with the Pi powered off</strong> — connect everything first, then power on once at the end. The controller connects directly to the mount's RJ12 "Hand Control" port over the Pi's UART, through a logic-level shifter (the mount side is 5V, the Pi's GPIO is 3.3V).</p>
+    <div class="step-options"><button class="step-option" data-answer="wired-mount" data-gate>I've wired the RJ12 mount connection.</button><a class="step-option" href="{{ '/wiring/#mount-connection' | relative_url }}">I need the exact pin table.</a></div>
+  </section>
+  <section class="wizard-step">
+    <h2>Wire the keypad</h2>
+    <p>The 3×4 matrix keypad connects to seven GPIO pins (four rows, three columns) — no physical modification to the keypad itself, just stickers for the key legend.</p>
+    <div class="step-options"><button class="step-option" data-answer="wired-keypad" data-gate>I've wired the keypad.</button><a class="step-option" href="{{ '/wiring/#keypad' | relative_url }}">I need the exact pin table.</a></div>
+  </section>
+  <section class="wizard-step">
+    <h2>Wire the rotary encoder</h2>
+    <p>The KY-040 rotary encoder needs three signal pins (rotation A, rotation B, push-button) plus power and ground. It also needs a 3D-printed D-shaft knob on its shaft — not a wiring step, but check it's on hand before closing up the enclosure.</p>
+    <div class="step-options"><button class="step-option" data-answer="wired-encoder" data-gate>I've wired the rotary encoder.</button><a class="step-option" href="{{ '/wiring/#rotary-encoder' | relative_url }}">I need the exact pin table.</a></div>
+  </section>
+  <section class="wizard-step">
+    <h2>Wire the display</h2>
+    <p>The e-ink display connects over the Pi's hardware SPI bus (six signals: data, clock, chip-select, data/command, reset, busy) — the same wiring regardless of which panel size ends up selected. The RGB backlight's exact pin assignment is still being finalized; if yours isn't wired yet, skip it for now — the firmware treats backlight control as a stub until then.</p>
+    <div class="step-options"><button class="step-option" data-answer="wired-display" data-gate>I've wired the display.</button><a class="step-option" href="{{ '/wiring/#display' | relative_url }}">I need the exact pin table.</a></div>
+  </section>
+  <section class="wizard-step">
     <h2>Choose the right operating system</h2>
     <p>Flash <strong>Raspberry Pi OS Bullseye/Bookworm/Trixie Lite, 32-bit</strong> with Raspberry Pi Imager. Do not use a 64-bit or desktop image: the installer intentionally supports Bullseye/Bookworm/Trixie armhf only.</p>
     <div class="step-options">
