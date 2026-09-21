@@ -9,6 +9,7 @@ real keypad.
 from __future__ import annotations
 
 import io
+import logging
 import queue
 import select
 import sys
@@ -19,6 +20,8 @@ from typing import Optional
 
 from .base import InputHAL
 from .keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, FN2
+
+logger = logging.getLogger(__name__)
 
 _ESCAPE_UP = "\x1b[A"
 _ESCAPE_DOWN = "\x1b[B"
@@ -45,6 +48,19 @@ class SimulatorInput(InputHAL):
                 tty.setcbreak(self._fd)
             except (termios.error, ValueError):
                 self._old_settings = None  # not a real TTY (e.g. piped input in tests)
+        if self._fd is None or self._old_settings is None:
+            # hw_sim_keypad/hw_sim_encoder (Settings page) pick this backend,
+            # but a systemd-managed japyscope-app.service has no interactive
+            # terminal (stdin is /dev/null) — this silently never produces a
+            # single event, with no other symptom than "nothing happens" and
+            # nothing in the logs. Log it loudly instead of staying quiet.
+            logger.warning(
+                "SIM-001 no interactive terminal on stdin — keyboard-simulated "
+                "input (hw_sim_keypad/hw_sim_encoder) will never receive a "
+                "keypress here. Run 'python3 -m firmware.main --simulate' "
+                "directly in a foreground terminal, not via systemd/journalctl, "
+                "to use keyboard-simulated input; see docs/TROUBLESHOOTING.md."
+            )
         self._thread.start()
 
     def _read_loop(self) -> None:
