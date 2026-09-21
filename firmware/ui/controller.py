@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import random
+import socket
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -94,6 +96,8 @@ class UIState:
     last_status_at: float = 0.0
     error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
+    dev_scripts: list[str] = field(default_factory=list)
+    dev_message: list[str] = field(default_factory=list)
 
 
 class ControllerUI:
@@ -105,6 +109,11 @@ class ControllerUI:
         "menu.system", "menu.about",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
+    # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
+    # same "real placeholder for future hardware/config" spirit as DRIVERS/
+    # INTERFACES above.
+    REPOS = ("jan-tdy/japyscope-remote",)
+    UPDATE_CHANNELS = (("stable", "Stable only"), ("prerelease", "Stable + prereleases"))
 
     def __init__(
         self,
@@ -115,10 +124,15 @@ class ControllerUI:
         search: Optional[SmartSearch] = None,
         clock: Callable[[], float] = time.time,
         backlight: Optional[BacklightHAL] = None,
+        indi_manager=None,
     ):
         self.display = display
         self.input = input_hal
         self.indi = indi_client
+        # Owns the indiserver subprocess (firmware.indi.manager.IndiServerManager) —
+        # None in --simulate mode, where there's no real indiserver to restart.
+        # Dev Tools code 1111.
+        self.indi_manager = indi_manager
         self.backlight = backlight or SimulatorBacklight()
         self.catalogs = CatalogRepo(conn)
         self.settings = SettingsRepo(conn)
@@ -308,6 +322,14 @@ class ControllerUI:
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
             lines = self._visible("Mount interface", ["RJ12 serial"])
+        elif screen == "DEV_REPO_SELECT":
+            lines = self._visible("Set repo", list(self.REPOS))
+        elif screen == "DEV_CHANNEL_SELECT":
+            lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
+        elif screen == "DEV_SCRIPT_SELECT":
+            lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "DEV_MESSAGE":
+            lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
             lines = ["Time synchronized", "using system NTP", "", "push/9=back"]
         elif screen == "SYSTEM_CONFIRM":
@@ -478,6 +500,28 @@ class ControllerUI:
                 self._set("MENU", 6)
             return
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
+        if s.screen == "DEV_REPO_SELECT":
+            if self._move(key, len(self.REPOS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("update_repo", self.REPOS[s.index])
+                self._set("IDLE")
+            return
+        if s.screen == "DEV_CHANNEL_SELECT":
+            if self._move(key, len(self.UPDATE_CHANNELS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
+                self._set("IDLE")
+            return
+        if s.screen == "DEV_SCRIPT_SELECT":
+            if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
+            return
+        if s.screen == "DEV_MESSAGE":
+            if key in ("9", ENC_PUSH): self._set("IDLE")
+            return
         if s.screen == "SYSTEM_CONFIRM":
             if key == "9": self._set("MENU", 8)
             elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
@@ -489,7 +533,8 @@ class ControllerUI:
             self._set(s.return_screen)
             return
         if s.screen in {"WIFI_SETUP", "DRIVER_SELECT", "IFACE_SELECT"} and key in ("9", ENC_PUSH):
-            self._set("MENU" if s.screen == "WIFI_SETUP" else "IDLE")
+            # All three are only reachable via Dev Tools codes (5000/5555/9600) — back always goes to IDLE.
+            self._set("IDLE")
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
             self._set("ALIGN_CHOOSE" if s.screen == "ALIGN_SMART_NA" else "IDLE")
@@ -576,6 +621,125 @@ class ControllerUI:
         if key == ENC_PUSH:
             s.digits.append(s.digit_value); s.digit_value = 0
             if len(s.digits) == 4:
-                if s.screen == "SUDO_SET": self.settings.set_password("sudo_password", "".join(map(str, s.digits)))
-                self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU")
+                code = "".join(map(str, s.digits))
+                if s.screen == "SUDO_SET":
+                    self.settings.set_password("sudo_password", code)
+                    self._set("MENU")
+                else:
+                    self._devtools_code(code)
             else: self.render()
+
+    def _devtools_code(self, code: str) -> None:
+        """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
+        full table, which must stay in sync with this method."""
+        if code == "0000":
+            self._set("IDLE")
+        elif code == "0022":
+            current = self.settings.get("update_repo", self.REPOS[0])
+            self._set("DEV_REPO_SELECT", self.REPOS.index(current) if current in self.REPOS else 0)
+        elif code == "0033":
+            channels = [c for c, _ in self.UPDATE_CHANNELS]
+            current = self.settings.get("update_channel", "stable")
+            self._set("DEV_CHANNEL_SELECT", channels.index(current) if current in channels else 0)
+        elif code == "0044":
+            self._devtools_ssh()
+        elif code == "1001":
+            self._devtools_message(["More INDI drivers", "(camera, focuser, etc.)", "Coming soon"])
+        elif code == "1111":
+            self._devtools_restart_indi()
+        elif code == "1234":
+            self._devtools_system_info()
+        elif code == "5000":
+            self._set("WIFI_SETUP")
+        elif code == "5555":
+            self._set("DRIVER_SELECT")
+        elif code == "9600":
+            self._set("IFACE_SELECT")
+        elif code == "9955":
+            self.state.dev_scripts = self._list_custom_scripts()
+            self._set("DEV_SCRIPT_SELECT")
+        elif code == "9999":
+            self._devtools_message(["Why did the astronomer", "break up with the Moon?", "Because it needed space."])
+        elif code == "4200":
+            self._devtools_message(["42.", "Now point it at something", "interesting."])
+        elif code == "1957":
+            self._devtools_message(["1957 — Sputnik beeped.", "This one just tracks quietly."])
+        elif code == "0905":
+            self._devtools_message(["Protocol 09:", "the code stays free.", "— JapySoft"])
+        else:
+            self._devtools_message(["Invalid code."])
+
+    def _devtools_restart_indi(self) -> None:
+        if self.indi_manager is None:
+            self._devtools_message(["INDI restart unavailable", "(no managed indiserver", "in this mode)"])
+            return
+        try:
+            self.indi_manager.restart()
+            self._devtools_message(["INDI server restarted"])
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: INDI restart failed: %s", exc)
+            self._devtools_message(["INDI restart failed", str(exc)[:32]])
+
+    def _devtools_system_info(self) -> None:
+        connected = self._truth(self.runtime.get("indi_connected", "false"))
+        self._devtools_message([
+            "System Info",
+            f"{self._local_ip()} · {socket.gethostname()}.local",
+            f"Uptime {self._uptime()} · INDI {'up' if connected else 'down'}",
+        ])
+
+    @staticmethod
+    def _uptime() -> str:
+        try:
+            with open("/proc/uptime", encoding="ascii") as source:
+                seconds = float(source.readline().split()[0])
+        except (OSError, ValueError, IndexError):
+            return "unknown"
+        minutes, _ = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h{minutes:02d}m"
+
+    def _devtools_message(self, lines: list[str]) -> None:
+        self.state.dev_message = list(lines)
+        self._set("DEV_MESSAGE")
+
+    def _devtools_ssh(self) -> None:
+        try:
+            subprocess.run(["systemctl", "enable", "--now", "ssh"], check=True, timeout=10)
+            status = "SSH enabled"
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Dev Tools: could not enable ssh: %s", exc)
+            status = "Could not enable SSH"
+        self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
+
+    @staticmethod
+    def _local_ip() -> str:
+        # UDP "connect" never sends a packet — just asks the routing table
+        # which local address would be used, which is all we need here.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        except OSError:
+            return "unknown"
+        finally:
+            sock.close()
+
+    @staticmethod
+    def _custom_scripts_dir() -> Path:
+        return Path(os.environ.get("JAPYSCOPE_CUSTOM_SCRIPTS_DIR", str(Path.home() / "custom")))
+
+    def _list_custom_scripts(self) -> list[str]:
+        try:
+            return sorted(p.name for p in self._custom_scripts_dir().glob("*.sh") if p.is_file())
+        except OSError:
+            return []
+
+    def _run_custom_script(self, name: str) -> None:
+        path = self._custom_scripts_dir() / name
+        try:
+            subprocess.Popen(["/bin/sh", str(path)], cwd=str(path.parent))
+            self._devtools_message([f"Running {name}", "", "(started in background)"])
+        except OSError as exc:
+            logger.error("Dev Tools: failed to run script %s: %s", name, exc)
+            self._devtools_message([f"Failed to run {name}", str(exc)[:32]])

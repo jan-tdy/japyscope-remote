@@ -91,6 +91,8 @@ DEFAULT_SETTINGS = {
     "backlight_g": "0",
     "backlight_b": "0",
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
+    "update_repo": "jan-tdy/japyscope-remote",  # OTA source repo — Dev Tools code 0022
+    "update_channel": "stable",  # stable | prerelease — Dev Tools code 0033
     # Per-component hardware bring-up overrides: "1" = simulated, "0"/absent
     # = real hardware. Independent of --simulate (which forces everything
     # simulated regardless of these) — for wiring up one piece at a time
