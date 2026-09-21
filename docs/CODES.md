@@ -55,29 +55,42 @@ Full T9 map (`firmware/hal/input/keys.py` order, letters per digit):
 
 ## Dev Tools codes
 
-4-digit code entered via rotate-per-digit (Home → Dev Tools). These already
-exist in the mockup (`handleDevtools()` in `docs/mockup.html`) — this table
-is a faithful port, not a wishlist. **Add new Dev Tools codes here as
-they're introduced** — don't scatter magic numbers in `firmware/ui/`
-without a matching entry in this table.
+4-digit code entered via rotate-per-digit (Home → Dev Tools). The real
+implementation lives in `firmware/ui/controller.py` (`ControllerUI._devtools_code()`)
+— that's what runs on the device. `docs/mockup.html`'s `handleDevtools()`
+is a browser-only prototype of the same behavior, kept in sync for
+prototyping/demo purposes, but it is **not** a substitute for the firmware
+implementation and a code must not be marked functional in this table
+until it actually works in `firmware/ui/`. **Add new Dev Tools codes
+here as they're introduced**, and wire them into both
+`firmware/ui/controller.py` and the mockup — don't scatter magic numbers
+in `firmware/ui/` without a matching entry in this table.
 
 | Code | Action | Notes |
 |---|---|---|
 | `0000` | Exit Dev Tools | |
-| `1111` | Restart INDI server | functional — calls into `firmware/indi/manager.py`'s restart |
-| `1234` | Show system info (IP, INDI version, uptime) | functional |
+| `0022` | Set repo | functional — opens repo selection (currently one option: `jan-tdy/japyscope-remote`); persists to `settings.update_repo`, read by `install/update.py` |
+| `0033` | Set update channel | functional — opens channel selection, Stable only / Stable + prereleases; persists to `settings.update_channel`, read by `install/update.py` (prerelease channel lists `/releases` and skips drafts instead of hitting `/releases/latest`) |
+| `0044` | SSH | functional — runs `systemctl enable --now ssh`, then shows the result plus IP/hostname and login user |
+| `1001` | Enable more INDI drivers (camera, focuser, etc.) | **coming soon** — placeholder message only, no drivers selectable yet |
+| `1111` | Restart INDI server | functional — calls `IndiServerManager.restart()` (via `ControllerUI.indi_manager`, wired from `firmware/main.py`); shows "unavailable" in `--simulate` mode, which has no managed indiserver |
+| `1234` | Show system info | functional — IP/hostname, uptime (`/proc/uptime`), INDI connection status (no fake version string — nothing exposes a real INDI version yet) |
 | `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
 | `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
 | `9600` | Select communication interface | functional — opens interface selection (currently one option: RJ12 direct to mount) |
-| `9999` | Easter egg (astronomer/Moon joke) | cosmetic only |
-| `4200` | Easter egg ("42.") | cosmetic only |
-| `1957` | Easter egg (Sputnik) | cosmetic only |
-| `0905` | Easter egg ("Protocol 09: the code stays free — JapySoft") | cosmetic only |
-| anything else | "Invalid code." | |
+| `9955` | Run custom script | functional — lists `.sh` scripts found in `{homepath}/custom` (`JAPYSCOPE_CUSTOM_SCRIPTS_DIR` env var overrides the directory) and runs the selected one via `/bin/sh`, fire-and-forget |
+| `9999` | Easter egg (astronomer/Moon joke) | functional, cosmetic only |
+| `4200` | Easter egg ("42.") | functional, cosmetic only |
+| `1957` | Easter egg (Sputnik) | functional, cosmetic only |
+| `0905` | Easter egg ("Protocol 09: the code stays free — JapySoft") | functional, cosmetic only |
+| anything else | Shows "Invalid code." | |
 
 None of the above currently require the sudo password — add the
 requirement here (and enforce it in `firmware/ui/`) the day a Dev Tools
 code becomes genuinely destructive (e.g. a future factory-reset code).
+`9955` runs arbitrary local `.sh` files, but only ones the device owner
+already placed in `{homepath}/custom` themselves — same trust level as
+having a shell on the device, not a remote-execution surface.
 
 ## Sudo password
 

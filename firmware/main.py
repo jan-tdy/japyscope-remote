@@ -84,7 +84,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             if manager is not None:
                 manager.start()
                 connect_indi(indi)
-            ui = ControllerUI(display, input_hal, indi, conn, backlight=backlight)
+            ui = ControllerUI(display, input_hal, indi, conn, backlight=backlight, indi_manager=manager)
             ui.run()
         return 0
     except (FileNotFoundError, ConnectionError) as exc:

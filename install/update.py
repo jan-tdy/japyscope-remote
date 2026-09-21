@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -20,14 +21,45 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger("japyscope.update")
-API_URL = "https://api.github.com/repos/jan-tdy/japyscope-remote/releases/latest"
+API_BASE = "https://api.github.com"
+DEFAULT_REPO = "jan-tdy/japyscope-remote"
+DEFAULT_CHANNEL = "stable"  # stable | prerelease — see docs/CODES.md Dev Tools code 0033
+API_URL = f"{API_BASE}/repos/{DEFAULT_REPO}/releases/latest"
 MAX_DOWNLOAD = 100 * 1024 * 1024
 
 
 class UpdateError(RuntimeError): pass
 
 
-def _fetch_json(url: str) -> dict:
+def _releases_url(repo: str, channel: str) -> str:
+    # "stable" hits GitHub's /releases/latest, which already excludes
+    # prereleases and drafts. "prerelease" has no equivalent single-release
+    # endpoint, so it lists releases (newest first) and Updater.latest()
+    # picks the first non-draft entry — prerelease or not.
+    if channel == "prerelease":
+        return f"{API_BASE}/repos/{repo}/releases"
+    return f"{API_BASE}/repos/{repo}/releases/latest"
+
+
+def _read_update_settings() -> tuple[str, str]:
+    """Dev Tools codes 0022/0033 write these to shared.db; fall back to the
+    hardcoded defaults if the DB isn't reachable (e.g. run standalone)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from shared.db import SettingsRepo, db_session
+
+        with db_session() as conn:
+            settings = SettingsRepo(conn)
+            return (
+                settings.get("update_repo", DEFAULT_REPO),
+                settings.get("update_channel", DEFAULT_CHANNEL),
+            )
+    except Exception as exc:  # noqa: BLE001 — never let a settings read block an update check
+        logger.warning("could not read update_repo/update_channel from shared.db: %s", exc)
+        return DEFAULT_REPO, DEFAULT_CHANNEL
+
+
+def _fetch_json(url: str) -> dict | list:
     request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "japyscope-updater/0"})
     with urlopen(request, timeout=15) as response:
         return json.load(response)
@@ -186,13 +218,27 @@ def _apt_upgrade() -> None:
 
 
 class Updater:
-    def __init__(self, root: Path = Path("/opt/japyscope"), api_url: str = API_URL):
+    def __init__(
+        self,
+        root: Path = Path("/opt/japyscope"),
+        repo: str = DEFAULT_REPO,
+        channel: str = DEFAULT_CHANNEL,
+        api_url: Optional[str] = None,
+    ):
         self.root = root
         self.releases = root / "releases"
         self.current = root / "current"
-        self.api_url = api_url
+        self.repo = repo
+        self.channel = channel
+        self.api_url = api_url or _releases_url(repo, channel)
 
-    def latest(self) -> dict: return _fetch_json(self.api_url)
+    def latest(self) -> dict:
+        if self.channel == "prerelease":
+            for release in _fetch_json(self.api_url):
+                if not release.get("draft"):
+                    return release
+            raise UpdateError(f"no non-draft releases found for {self.repo}")
+        return _fetch_json(self.api_url)
 
     def current_version(self) -> Optional[str]:
         if not self.current.is_symlink(): return None
@@ -291,14 +337,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("check", "apply", "system-upgrade"))
     parser.add_argument("--root", type=Path, default=Path("/opt/japyscope"))
-    parser.add_argument("--api-url", default=API_URL)
+    parser.add_argument("--repo", default=None, help="owner/repo (default: read from shared.db, else %s" % DEFAULT_REPO)
+    parser.add_argument("--channel", choices=("stable", "prerelease"), default=None, help="default: read from shared.db, else stable")
+    parser.add_argument("--api-url", default=None, help="override the computed GitHub API URL entirely")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.action == "system-upgrade":
             _apt_upgrade(); print("system packages upgraded")
         else:
-            updater = Updater(args.root, args.api_url)
+            repo, channel = args.repo, args.channel
+            if repo is None or channel is None:
+                db_repo, db_channel = _read_update_settings()
+                repo = repo or db_repo
+                channel = channel or db_channel
+            updater = Updater(args.root, repo=repo, channel=channel, api_url=args.api_url)
             if args.action == "check":
                 tag, available = updater.check(); print(f"{tag} {'available' if available else 'current'}")
             else: print(f"installed {updater.apply()}")

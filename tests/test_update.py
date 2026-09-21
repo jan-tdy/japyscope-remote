@@ -1,11 +1,12 @@
 import io
 import tarfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import install.update as update_module
-from install.update import UpdateError, Updater, _apt_upgrade, _safe_extract
+from install.update import UpdateError, Updater, _apt_upgrade, _read_update_settings, _releases_url, _safe_extract
 
 
 def add_file(bundle, name, data=b"x"):
@@ -97,6 +98,64 @@ def test_health_check_checks_services_separately(monkeypatch):
         ["systemctl", "is-active", "--quiet", "japyscope-app.service"],
         ["systemctl", "is-active", "--quiet", "japyscope-webui.service"],
     ]
+
+
+def test_releases_url_stable_uses_latest_endpoint():
+    assert _releases_url("jan-tdy/japyscope-remote", "stable") == "https://api.github.com/repos/jan-tdy/japyscope-remote/releases/latest"
+
+
+def test_releases_url_prerelease_uses_list_endpoint():
+    assert _releases_url("jan-tdy/japyscope-remote", "prerelease") == "https://api.github.com/repos/jan-tdy/japyscope-remote/releases"
+
+
+def test_updater_defaults_to_stable_repo_latest_url():
+    updater = Updater(Path("/opt/japyscope"))
+    assert updater.repo == "jan-tdy/japyscope-remote"
+    assert updater.channel == "stable"
+    assert updater.api_url.endswith("/releases/latest")
+
+
+def test_updater_latest_stable_returns_single_release(monkeypatch):
+    updater = Updater(Path("/opt/japyscope"), channel="stable")
+    monkeypatch.setattr(update_module, "_fetch_json", lambda url: {"tag_name": "v1"})
+    assert updater.latest() == {"tag_name": "v1"}
+
+
+def test_updater_latest_prerelease_skips_drafts(monkeypatch):
+    updater = Updater(Path("/opt/japyscope"), channel="prerelease")
+    releases = [
+        {"tag_name": "v2-draft", "draft": True},
+        {"tag_name": "v2-rc1", "draft": False, "prerelease": True},
+        {"tag_name": "v1", "draft": False, "prerelease": False},
+    ]
+    monkeypatch.setattr(update_module, "_fetch_json", lambda url: releases)
+    assert updater.latest() == {"tag_name": "v2-rc1", "draft": False, "prerelease": True}
+
+
+def test_updater_latest_prerelease_raises_when_only_drafts(monkeypatch):
+    updater = Updater(Path("/opt/japyscope"), channel="prerelease")
+    monkeypatch.setattr(update_module, "_fetch_json", lambda url: [{"tag_name": "v2-draft", "draft": True}])
+    with pytest.raises(UpdateError, match="no non-draft releases"):
+        updater.latest()
+
+
+def test_read_update_settings_reflects_devtools_selection(tmp_path, monkeypatch):
+    import shared.db as db_module
+    db_path = str(tmp_path / "japyscope.db")
+    with db_module.db_session(db_path) as conn:
+        db_module.SettingsRepo(conn).set("update_channel", "prerelease")
+    original_db_session = db_module.db_session
+    monkeypatch.setattr(db_module, "db_session", lambda *a, **k: original_db_session(db_path))
+    repo, channel = _read_update_settings()
+    assert repo == "jan-tdy/japyscope-remote"
+    assert channel == "prerelease"
+
+
+def test_read_update_settings_falls_back_when_db_unreachable(monkeypatch, tmp_path):
+    import shared.db as db_module
+    monkeypatch.setattr(db_module, "db_session", lambda *a, **k: (_ for _ in ()).throw(OSError("no db")))
+    repo, channel = _read_update_settings()
+    assert (repo, channel) == ("jan-tdy/japyscope-remote", "stable")
 
 
 def test_health_error_rolls_back_current_symlink(tmp_path, monkeypatch):
