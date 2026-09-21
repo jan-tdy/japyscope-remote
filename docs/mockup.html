@@ -539,6 +539,11 @@
      support, same idea as the catalog categories being examples to extend. */
   var DRIVERS = ["Sky-Watcher Alt-Az GTi (INDI)"];
   var INTERFACES = ["RJ12 (direct to mount)"];
+  var REPOS = ["japyscope-remote"];
+  var UPDATE_CHANNELS = ["Stable only", "Stable + prereleases"];
+  /* Simulated directory listing — the real firmware globs *.sh in
+     {homepath}/custom instead of hardcoding this array. */
+  var CUSTOM_SCRIPTS = ["backup-config.sh", "reindex-catalog.sh"];
   var HOME_POINT = {ra:"05h34m32s", dec:"+22°00′52″"};
 
   var BASIC_OBJECTS = [
@@ -588,7 +593,7 @@
       results:[], resIndex:0, selected:null,
       homeIndex:0, menuIndex:0, alignIndex:0, alignMoreIndex:0, alignConfirmIndex:0, parkConfirmIndex:0, parkedIndex:0, speed:1, starIdx:0,
       backlight:{R:1, G:0, B:0}, backlightChanIndex:0, backlightAutoOff:false, lastActivity:Date.now(),
-      driverIndex:0, interfaceIndex:0,
+      driverIndex:0, interfaceIndex:0, repoIndex:0, channelIndex:0, scriptIndex:0,
       sudoDigits:[null,null,null,null], sudoPos:0, sudoCurrent:0,
       slewWarnings:[], slewWarnBack:"IDLE",
       listItems:[], listIndex:0, listTitle:"", catIndex:0,
@@ -703,6 +708,9 @@
       case "PARKED": return renderParked();
       case "DRIVER_SELECT": return renderDriverSelect();
       case "IFACE_SELECT": return renderIfaceSelect();
+      case "REPO_SELECT": return renderRepoSelect();
+      case "CHANNEL_SELECT": return renderChannelSelect();
+      case "SCRIPT_SELECT": return renderScriptSelect();
       case "SUDO_SET": return renderSudoSet();
       default: return setLines(["?"]);
     }
@@ -1017,6 +1025,9 @@
       case "PARKED": return handlePark(key);
       case "DRIVER_SELECT": return handleDriverSelect(key);
       case "IFACE_SELECT": return handleIfaceSelect(key);
+      case "REPO_SELECT": return handleRepoSelect(key);
+      case "CHANNEL_SELECT": return handleChannelSelect(key);
+      case "SCRIPT_SELECT": return handleScriptSelect(key);
       case "SUDO_SET": return handleSudoSet(key);
       default: return;
     }
@@ -1324,6 +1335,66 @@
     setLines(lines);
   }
 
+  function renderRepoSelect(){
+    var lines = ["Select repo"];
+    REPOS.forEach(function(d,i){ lines.push((i===st.repoIndex?"&gt; ":"  ")+d); });
+    setLines(lines);
+  }
+
+  function handleRepoSelect(key){
+    var n = REPOS.length;
+    if(key === "ENC_UP"){ st.repoIndex = (st.repoIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.repoIndex = (st.repoIndex+1)%n; return render(); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Repo selected: "+REPOS[st.repoIndex]);
+      st.screen = "IDLE";
+      return render();
+    }
+  }
+
+  function renderChannelSelect(){
+    var lines = ["Update channel"];
+    UPDATE_CHANNELS.forEach(function(d,i){ lines.push((i===st.channelIndex?"&gt; ":"  ")+d); });
+    setLines(lines);
+  }
+
+  function handleChannelSelect(key){
+    var n = UPDATE_CHANNELS.length;
+    if(key === "ENC_UP"){ st.channelIndex = (st.channelIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.channelIndex = (st.channelIndex+1)%n; return render(); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Update channel selected: "+UPDATE_CHANNELS[st.channelIndex]);
+      st.screen = "IDLE";
+      return render();
+    }
+  }
+
+  function renderScriptSelect(){
+    if(CUSTOM_SCRIPTS.length === 0){
+      return setLines(["Run custom script", "No .sh scripts found", "in ~/custom", "9=back"]);
+    }
+    var lines = ["Run custom script"];
+    CUSTOM_SCRIPTS.forEach(function(d,i){ lines.push((i===st.scriptIndex?"&gt; ":"  ")+d); });
+    setLines(lines);
+  }
+
+  function handleScriptSelect(key){
+    var n = CUSTOM_SCRIPTS.length;
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(n === 0) return;
+    if(key === "ENC_UP"){ st.scriptIndex = (st.scriptIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.scriptIndex = (st.scriptIndex+1)%n; return render(); }
+    if(key === "ENC_PUSH"){
+      var script = CUSTOM_SCRIPTS[st.scriptIndex];
+      logAction("Running custom script: "+script);
+      setLines(["Running "+script+"…", "", "<span class=\"dim\">…</span>"]);
+      addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 1800));
+      return;
+    }
+  }
+
   function handleIfaceSelect(key){
     var n = INTERFACES.length;
     if(key === "ENC_UP"){ st.interfaceIndex = (st.interfaceIndex+n-1)%n; return render(); }
@@ -1529,6 +1600,27 @@
         } else if(code === "9600"){
           logAction("Dev Tools: select communication interface");
           addTimer(setTimeout(function(){ st.interfaceIndex=0; st.screen="IFACE_SELECT"; render(); }, 300));
+        } else if(code === "0022"){
+          logAction("Dev Tools: set repo");
+          addTimer(setTimeout(function(){ st.repoIndex=0; st.screen="REPO_SELECT"; render(); }, 300));
+        } else if(code === "0033"){
+          logAction("Dev Tools: set update channel");
+          addTimer(setTimeout(function(){ st.channelIndex=0; st.screen="CHANNEL_SELECT"; render(); }, 300));
+        } else if(code === "0044"){
+          logAction("Dev Tools: SSH");
+          addTimer(setTimeout(function(){
+            setLines(["SSH enabled","192.168.4.1 · japyscope.local","user: japyscope","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2600));
+          }, 300));
+        } else if(code === "9955"){
+          logAction("Dev Tools: run custom script");
+          addTimer(setTimeout(function(){ st.scriptIndex=0; st.screen="SCRIPT_SELECT"; render(); }, 300));
+        } else if(code === "1001"){
+          logAction("Dev Tools: enable more INDI drivers");
+          addTimer(setTimeout(function(){
+            setLines(["More INDI drivers","(camera, focuser, etc.)","Coming soon","<span class=\"dim\">…</span>"]);
+            addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+          }, 300));
         } else {
           addTimer(setTimeout(function(){
             setLines(["Invalid code."]);

@@ -64,11 +64,16 @@ without a matching entry in this table.
 | Code | Action | Notes |
 |---|---|---|
 | `0000` | Exit Dev Tools | |
+| `0022` | Set repo | opens repo selection (currently one option: `japyscope-remote`) |
+| `0033` | Set update channel | opens channel selection — Stable only / Stable + prereleases (i.e. whether OTA also installs GitHub prereleases) |
+| `0044` | SSH | shows SSH access info (IP/hostname, login user) |
+| `1001` | Enable more INDI drivers (camera, focuser, etc.) | **coming soon** — placeholder message only, no drivers selectable yet |
 | `1111` | Restart INDI server | functional — calls into `firmware/indi/manager.py`'s restart |
 | `1234` | Show system info (IP, INDI version, uptime) | functional |
 | `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
 | `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
 | `9600` | Select communication interface | functional — opens interface selection (currently one option: RJ12 direct to mount) |
+| `9955` | Run custom script | lists `.sh` scripts found in `{homepath}/custom` and runs the selected one |
 | `9999` | Easter egg (astronomer/Moon joke) | cosmetic only |
 | `4200` | Easter egg ("42.") | cosmetic only |
 | `1957` | Easter egg (Sputnik) | cosmetic only |
