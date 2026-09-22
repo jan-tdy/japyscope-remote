@@ -6,7 +6,7 @@ import requests
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
-from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, ENC_UP, FN2
+from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
 from firmware.ui import controller as controller_module
 from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
@@ -29,10 +29,11 @@ class Input(InputHAL):
 
 
 class Indi:
-    def __init__(self): self.synced = None; self.goto_target = None; self.parked = False
+    def __init__(self): self.synced = None; self.goto_target = None; self.parked = False; self.jogs = []
     def sync(self, ra, dec): self.synced = (ra, dec)
     def goto(self, ra, dec): self.goto_target = (ra, dec)
     def park(self): self.parked = True
+    def jog(self, direction, speed): self.jogs.append((direction, speed))
 
 
 def make_ui():
@@ -379,4 +380,60 @@ def test_devtools_easter_eggs_show_and_dismiss():
             assert ui.state.dev_message[0] == first_line
             ui.handle("9")
             assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_align_jog_screen_jogs_with_keypad_encoder_and_joystick():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "ALIGN_JOG"; ui.state.jog_target = "Vega"; ui.state.align_points = 0
+        ui.handle("2"); assert ui.indi.jogs[-1] == ("N", 1)
+        ui.handle("8"); assert ui.indi.jogs[-1] == ("S", 1)
+        ui.handle("4"); assert ui.indi.jogs[-1] == ("W", 1)
+        ui.handle("6"); assert ui.indi.jogs[-1] == ("E", 1)
+        ui.handle(ENC_UP); assert ui.indi.jogs[-1] == ("N", 1)  # joystick Y-axis
+        ui.handle(ENC_DOWN); assert ui.indi.jogs[-1] == ("S", 1)
+        ui.handle(JOY_LEFT); assert ui.indi.jogs[-1] == ("W", 1)  # joystick X-axis
+        ui.handle(JOY_RIGHT); assert ui.indi.jogs[-1] == ("E", 1)
+        assert ui.state.screen == "ALIGN_JOG"  # jogging doesn't change screen
+        assert len(ui.indi.jogs) == 8
+
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.align_points == 1
+    finally: conn.close(); os.unlink(path)
+
+
+def test_align_jog_survives_indi_not_implemented():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "ALIGN_JOG"
+        def fail(direction, speed): raise NotImplementedError("no hardware yet")
+        ui.indi.jog = fail
+        ui.handle(ENC_UP)  # must not raise, and must not leave the jog screen
+        assert ui.state.screen == "ALIGN_JOG"
+        ui.handle("9")
+        assert ui.state.screen == "ALIGN_CHOOSE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_track_screen_jogs_and_keeps_its_own_keys_working():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle(JOY_LEFT)
+        assert ui.indi.jogs[-1] == ("W", 1)
+        ui.handle("7")
+        assert ui.state.screen == "SPEED_ADJUST" and ui.state.return_screen == "TRACK"
+        ui.state.screen = "TRACK"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_jog_uses_the_current_speed():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"; ui.state.speed = 8
+        ui.handle("6")
+        assert ui.indi.jogs[-1] == ("E", 8)
     finally: conn.close(); os.unlink(path)

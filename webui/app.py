@@ -373,6 +373,7 @@ def create_app(
                 for key in editable: repo.set(key, request.form.get(key, "").strip())
                 for name in HARDWARE_COMPONENTS:
                     repo.set(f"hw_sim_{name}", "1" if request.form.get(f"hw_sim_{name}") == "1" else "0")
+                repo.set("joystick_enabled", "1" if request.form.get("joystick_enabled") == "1" else "0")
                 flash("Settings saved. Restart the controller for hardware changes to take effect.", "ok")
                 return redirect(url_for("settings"))
             values = repo.all()

@@ -36,6 +36,13 @@ class SimulatedIndiClient:
     def park(self) -> None: self.status.parked = True
     def get_status(self) -> MountStatus: return self.status
 
+    def jog(self, direction: str, speed: int) -> None:
+        step = 0.01 * speed  # degrees per nudge — arbitrary, just visibly responsive at every SPEEDS tier
+        if direction == "N": self.status.alt = min(90.0, self.status.alt + step)
+        elif direction == "S": self.status.alt = max(-90.0, self.status.alt - step)
+        elif direction == "E": self.status.az = (self.status.az + step) % 360
+        elif direction == "W": self.status.az = (self.status.az - step) % 360
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="JapyScope Remote hand controller")
@@ -75,9 +82,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     signal.signal(signal.SIGTERM, stop)
     try:
         with db_session(db_path) as conn:
-            flags = resolve_simulation_flags(args.simulate, SettingsRepo(conn))
+            settings = SettingsRepo(conn)
+            flags = resolve_simulation_flags(args.simulate, settings)
             display = make_display(flags["display"])
-            input_hal = make_input(flags["keypad"], flags["encoder"])
+            joystick_enabled = args.simulate or settings.get("joystick_enabled", "0") == "1"
+            joystick_simulated = flags["joystick"] if joystick_enabled else None
+            input_hal = make_input(flags["keypad"], flags["encoder"], joystick_simulated)
             backlight = make_backlight(flags["backlight"])
             manager = None if flags["mount"] else IndiServerManager(driver_binary=args.driver)
             indi = SimulatedIndiClient() if flags["mount"] else IndiClient()

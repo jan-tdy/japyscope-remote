@@ -10,15 +10,15 @@ Living document — extend freely as new codes/diagnostics are introduced.
 Covers every "enter a code" flow on the device plus a maintainer-facing
 error/status code list for support and troubleshooting.
 
-## Key map (physical 3×4 keypad + KY-040 encoder)
+## Key map (physical 3×4 keypad + KY-040 encoder + optional external joystick)
 
 | Key | Meaning |
 |---|---|
 | 1, 3 | unused (reserved) |
-| 2 | Jog Up (whenever the mount can move) |
-| 4 | Jog Left |
-| 6 | Jog Right |
-| 8 | Jog Down |
+| 2 | Jog Up — only handled on `ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
+| 4 | Jog Left — same screens |
+| 6 | Jog Right — same screens |
+| 8 | Jog Down — same screens |
 | 7 | Jog speed (opens speed adjust) |
 | 9 | **Back, one level — everywhere except inside SmartSearch text entry** (see below) |
 | 0 | digit "0" / T9 letter entry |
@@ -26,6 +26,28 @@ error/status code list for support and troubleshooting.
 | BKSP | delete last character (text entry) |
 | Encoder rotate | scroll (menus, lists) |
 | Encoder push | open / select / confirm |
+
+### External joystick (optional — `docs/WIRING.md`)
+
+A KY-023-style dual-axis joystick module, if connected (`shared.db`'s
+`joystick_enabled`), is a second, independent source of the very same
+events above — see `firmware/hal/input/joystick.py` and `keys.py`:
+
+| Joystick input | Reuses / adds |
+|---|---|
+| Y-axis up/down | `ENC_UP`/`ENC_DOWN` — same as rotating the encoder (scroll menus/lists) |
+| Push button | `ENC_PUSH` — same as pressing the encoder (select/confirm) |
+| X-axis left/right | `JOY_LEFT`/`JOY_RIGHT` (new, joystick-only) — Jog Left/Right on `ALIGN_JOG`/`TRACK`, same as keypad 4/6 |
+
+It's a drop-in alternative to the encoder for navigation, and the more
+natural way to do the 4-directional jog above (keypad 2/4/6/8 double as
+digit-entry T9 keys everywhere else; the joystick's axes never do).
+
+**No diagonal jog**: a push deflected on both axes at once (e.g. up-and-right)
+is deliberately treated as no input rather than snapped to one axis — the
+mount only jogs one cardinal direction (N/S/E/W) at a time. Push the stick
+cleanly toward one direction (see `firmware/hal/input/joystick.py`'s
+`_direction_from_axes()`).
 
 ### SmartSearch T9 exception
 
@@ -118,6 +140,7 @@ new failure modes are found during bring-up.
 | `INDI-001` | indiserver failed to start (binary not found / bad driver name) | `japyscope-app` journal |
 | `INDI-002` | indiserver started but mount driver never reported CONNECTED | `japyscope-app` journal |
 | `INDI-003` | indiserver crashed and was restarted by the watchdog | `japyscope-app` journal |
+| `INDI-004` | Manual jog (keypad 2/4/6/8 or joystick, `ALIGN_JOG`/`TRACK`) requested but `IndiClient.jog()` isn't wired up against the live driver yet | `japyscope-app` journal |
 | `OTA-001` | update check failed (no internet / GitHub API unreachable) | `japyscope-app` journal, Web UI → System |
 | `OTA-002` | downloaded release failed checksum verification | same |
 | `OTA-003` | new release failed its post-install health check, rolled back | same |

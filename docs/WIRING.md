@@ -11,8 +11,8 @@ file (not a second copy elsewhere) as each build phase confirms real pins.
 
 Status: **Fáza 0 / 1beta** — jumper-wire prototype, most pin numbers below
 are the firmware's current defaults (`firmware/hal/*/keypad.py`,
-`firmware/hal/display/epaper.py`), not yet verified against a soldered
-board. Cross-check before trusting a pin.
+`firmware/hal/display/epaper.py`, `firmware/hal/input/joystick.py`), not yet
+verified against a soldered board. Cross-check before trusting a pin.
 
 ## Mount connection (RJ12, not RJ45)
 {: #mount-connection}
@@ -84,6 +84,38 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 Also needs a printed D-shaft knob for the KY-040 shaft (JLC3DP, per project
 notes) — not a wiring item, tracked here as a reminder for the enclosure BOM.
 
+## External joystick (optional, KY-023-style)
+{: #joystick}
+
+Genuinely optional accessory, not enclosure-mounted — an external dual-axis
+analog joystick module (VRx/VRy + SW push button) on its own cable through
+the bottom-face pass-through (see "Power / enclosure notes" below), enabled
+in the Web UI Settings page's Joystick section (`shared.db`'s
+`joystick_enabled`, default off). Firmware never even opens the I2C bus for
+it unless that setting is on — see `firmware/hal/input/joystick.py`.
+
+The Pi Zero W has no native analog input, so VRx/VRy go through an ADS1115
+I2C ADC rather than straight into GPIO. SW is a plain digital GPIO input,
+same idea as the KY-040's own push button above.
+
+| Signal | Via | Pi pin |
+|---|---|---|
+| VRx | ADS1115 AIN0 | — |
+| VRy | ADS1115 AIN1 | — |
+| ADS1115 SDA | I2C1 | GPIO2 (physical pin 3) |
+| ADS1115 SCL | I2C1 | GPIO3 (physical pin 5) |
+| ADS1115 VDD/GND | — | 3V3 / GND |
+| ADS1115 ADDR | tied to GND (address `0x48`) | GND |
+| SW (push) | direct GPIO, `PUD_UP` | GPIO27 (physical pin 13) |
+
+The I2C interface itself needs enabling (`raspi-config` or
+`/boot/firmware/config.txt`'s `dtparam=i2c_arm=on`) — a manual bring-up
+step for now, same as SPI. The joystick's Y-axis and push button reuse the
+same event codes as the KY-040 rotary encoder above (`ENC_UP`/`ENC_DOWN`/
+`ENC_PUSH`), so it's a drop-in alternative for menu navigation; its X-axis
+(`JOY_LEFT`/`JOY_RIGHT`, unique to it) drives manual N/S/E/W jogging — see
+`docs/CODES.md`.
+
 ## Display (e-ink, SPI) — panel not finalized
 {: #display}
 
@@ -119,7 +151,8 @@ drive them.
 
 - No battery in the enclosure.
 - Bottom face: cable pass-through, mounting, joystick cable (external
-  joystick module, not enclosure-mounted), power connector.
+  joystick module, not enclosure-mounted — see "External joystick" above),
+  power connector.
 - Magnetic dock: 4× 6×2mm magnets, bracket glued to the OTA tube (16" tube
   only for now), matching through-holes (not pockets) in the enclosure back
   — required as genuine through-holes because JLC3DP prints unattended (no

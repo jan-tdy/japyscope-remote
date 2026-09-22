@@ -22,7 +22,7 @@ from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
-from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2
+from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
@@ -44,6 +44,16 @@ T9 = {
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
 STARS = ("Polaris", "Vega", "Capella", "Deneb", "Arcturus", "Altair")
+# Manual N/S/E/W jog, available on screens where the mount can move (see
+# docs/CODES.md) — from either the keypad's 2/4/6/8 or the external
+# joystick (ENC_UP/ENC_DOWN for its Y-axis, JOY_LEFT/JOY_RIGHT for its
+# X-axis; see keys.py for why the joystick reuses the encoder's codes).
+JOG_DIRECTIONS = {
+    "2": "N", ENC_UP: "N",
+    "8": "S", ENC_DOWN: "S",
+    "4": "W", JOY_LEFT: "W",
+    "6": "E", JOY_RIGHT: "E",
+}
 
 BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
     "Basic Objects": (
@@ -274,7 +284,7 @@ class ControllerUI:
         elif screen == "ALIGN_STAR_PICK":
             lines = self._visible(f"Point {s.align_points + 1}", STARS)
         elif screen == "ALIGN_JOG":
-            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "7=change speed", "push=confirm · 9=back"]
+            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
         elif screen == "ALIGN_MORE":
             lines = self._visible(f"Points: {s.align_points}", ["Add another point", "Finish alignment"])
         elif screen == "ALIGN_CONFIRM":
@@ -352,6 +362,22 @@ class ControllerUI:
         self.render()
         return True
 
+    def _jog(self, key: str) -> bool:
+        """Manual nudge for screens where the mount can move (see
+        JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
+        calling convention as `_move`, so callers fall through to their own
+        handling otherwise. Failure (real hardware not wired up yet — see
+        firmware/indi/client.py) just logs, same as `park()`'s failure
+        handling: a single missed nudge isn't worth leaving the jog screen."""
+        direction = JOG_DIRECTIONS.get(key)
+        if direction is None:
+            return False
+        try:
+            self.indi.jog(direction, self.state.speed)
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-004 jog failed: %s", exc)
+        return True
+
     def handle(self, key: str) -> None:
         s = self.state
         if s.screen == "BOOT_PARK_CHECK":
@@ -423,6 +449,7 @@ class ControllerUI:
             elif key == "9": self._set("IDLE")
             return
         if s.screen == "TRACK":
+            if self._jog(key): return
             if key == "9": self._set("IDLE")
             elif key == "7": self._speed("TRACK")
             return
@@ -445,6 +472,7 @@ class ControllerUI:
             elif key == ENC_PUSH: s.jog_target = STARS[s.index]; self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
+            if self._jog(key): return
             if key == "7": self._speed("ALIGN_JOG")
             elif key == "9": self._set("ALIGN_CHOOSE", 1)
             elif key == ENC_PUSH:

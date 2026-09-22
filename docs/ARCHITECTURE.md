@@ -28,8 +28,8 @@ below, which supersede the mockup where they conflict with it.
 | Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` disables the setup hotspot's automatic boot-time fallback on any release, for a Pi whose Wi-Fi is already configured — the hotspot itself stays installed and can still be triggered manually.) |
 | Mount connector | **RJ12** (not RJ45) |
 | Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
-| Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
-| Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, and mount can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless, for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
+| Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder, plus an **optional** external KY-023-style dual-axis joystick (`shared.db`'s `joystick_enabled`, off by default — see `docs/WIRING.md`/`docs/CODES.md`) as a drop-in alternative to the encoder plus manual N/S/E/W jogging |
+| Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, mount, and (when enabled) joystick can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless (joystick included), for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
 | Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
 | OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within the installed release's repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
@@ -52,6 +52,7 @@ not the mockup's**:
 - **T9 keymap fix in SmartSearch** — see `docs/CODES.md` for the exact mapping. Summary: "9" becomes a normal T9 letter key (w/x/y/z/9) *only inside SmartSearch*, and **FN2** takes over as "cancel/back out of SmartSearch" for that screen. Everywhere else, "9" keeps meaning "back, never an action."
 - **SmartSearch queries the internet** — this is SmartSearch's whole point: resolve object names against an online astronomical database (recommended: SIMBAD/Sesame name resolver — free, no API key, same one KStars/Stellarium use) in addition to local catalogs, so a newly-discovered/variable star not in any local list can still be found. Must degrade gracefully offline: fall back to local-only results with a note (see `CODES.md`'s `SEARCH-001`), not hang or fail the whole search.
 - **Language selection** — a new **Language** entry in Menu (between Backlight and Sudo Password) opens a list of UI languages (`firmware/ui/i18n.py`'s `LANGUAGES`); picking one persists to `settings.language` and takes effect immediately. v0 translates the highest-visibility screens only (Home, Menu, boot park check, park/unpark, About, shared footers) — anything not yet in `i18n.STRINGS` falls back to English. Not in the mockup at all.
+- **External joystick support (22.9)** — an optional KY-023-style dual-axis joystick (`docs/WIRING.md`, `firmware/hal/input/joystick.py`), off by default (`shared.db`'s `joystick_enabled`, toggled on the Web UI Settings page). Its Y-axis/push button reuse the encoder's `ENC_UP`/`ENC_DOWN`/`ENC_PUSH` codes (drop-in alternative for menu navigation everywhere), and its X-axis adds `JOY_LEFT`/`JOY_RIGHT` for manual N/S/E/W jogging on `ALIGN_JOG`/`TRACK` (`firmware/ui/controller.py`'s `_jog()`), alongside the matching keypad 2/4/6/8 jog keys documented but not previously wired up in `docs/CODES.md`. `IndiClient.jog()` is a `NotImplementedError` stub like `sync`/`goto`/`park` (see "Still hardware-blocked" below) but fully functional in `--simulate` via `SimulatedIndiClient.jog()`. Not in the mockup at all.
 
 ## Repository layout
 
@@ -60,7 +61,7 @@ japyscope-remote/
   firmware/
     hal/
       display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (stub pending real panel)
-      input/          # DONE — keys.py, base.py, simulator.py, keypad.py
+      input/          # DONE — keys.py, base.py, simulator.py, keypad.py, encoder.py, joystick.py (optional accessory), composite.py
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog
       client.py       # STUB — PyIndi property mapping awaits real hardware
@@ -111,9 +112,11 @@ The software-side handoff items are implemented:
    the scripts and their operational/error-code behavior.
 
 **Still hardware-blocked:** fill in the selected e-paper controller protocol,
-map PyIndi properties against the live Sky-Watcher driver, confirm the physical
-RJ12 pinout, and exercise install/OTA on real Bullseye, Bookworm, and Trixie
-Pi Zero W devices. These are not safely guessable without the prototype.
+map PyIndi properties against the live Sky-Watcher driver (including
+`IndiClient.jog()`'s `TELESCOPE_MOTION_NS`/`TELESCOPE_MOTION_WE` switches),
+confirm the physical RJ12 pinout, and exercise install/OTA on real Bullseye,
+Bookworm, and Trixie Pi Zero W devices. These are not safely guessable
+without the prototype.
 
 **Deferred beyond v0 entirely**: a polished end-user manual as a PDF
    (use the PDF skill once on-device flows are stable).
@@ -131,5 +134,5 @@ Pi Zero W devices. These are not safely guessable without the prototype.
    **not** reflect the behavior changes above — it's kept as the original
    interaction-design reference).
 5. `docs/WIRING.md` cross-checked against the physical build at each Fáza.
-6. `pytest` for covered behavior — 32 tests passing as of this pass (database,
+6. `pytest` for covered behavior — 140 tests passing as of this pass (database,
    HAL, INDI manager, UI state machine/search, Web UI, and OTA extraction).

@@ -36,6 +36,6 @@ def test_per_component_overrides_are_independent():
         assert flags == {
             "keypad": False, "encoder": True,
             "display": False, "backlight": False,
-            "mount": True,
+            "mount": True, "joystick": False,
         }
     finally: conn.close(); os.unlink(path)
