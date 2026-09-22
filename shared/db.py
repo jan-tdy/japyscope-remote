@@ -76,8 +76,9 @@ CREATE TABLE IF NOT EXISTS access_codes (
 # hw_sim_* settings below) — shared between firmware/main.py (which reads
 # them to pick real vs. simulated backends) and webui/app.py's Settings
 # page (which lets you flip them without needing firmware's own heavier
-# imports, e.g. RPi.GPIO attempts).
-HARDWARE_COMPONENTS = ("keypad", "encoder", "display", "backlight", "mount")
+# imports, e.g. RPi.GPIO attempts). "joystick"'s hw_sim flag only matters
+# when the accessory is actually enabled — see joystick_enabled below.
+HARDWARE_COMPONENTS = ("keypad", "encoder", "display", "backlight", "mount", "joystick")
 
 DEFAULT_SETTINGS = {
     "latitude": "0.0",
@@ -93,6 +94,15 @@ DEFAULT_SETTINGS = {
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
     "update_repo": "jan-tdy/japyscope-remote",  # OTA source repo — Dev Tools code 0022
     "update_channel": "stable",  # stable | prerelease — Dev Tools code 0033
+    # Whether the external joystick module (docs/WIRING.md, firmware/hal/
+    # input/joystick.py) is physically connected at all. Unlike the other
+    # HARDWARE_COMPONENTS, the joystick is a genuinely optional accessory —
+    # defaults to "0" so a fresh install with no joystick wired up never
+    # tries to open an I2C ADC that isn't there. "1" (Web UI Settings ->
+    # Joystick) makes firmware/main.py build a joystick input source, real
+    # or simulated per hw_sim_joystick below. --simulate always enables a
+    # simulated joystick regardless of this setting, for laptop-only dev.
+    "joystick_enabled": "0",
     # Per-component hardware bring-up overrides: "1" = simulated, "0"/absent
     # = real hardware. Independent of --simulate (which forces everything
     # simulated regardless of these) — for wiring up one piece at a time
@@ -103,6 +113,7 @@ DEFAULT_SETTINGS = {
     "hw_sim_display": "0",
     "hw_sim_backlight": "0",
     "hw_sim_mount": "0",
+    "hw_sim_joystick": "0",
 }
 
 

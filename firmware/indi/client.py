@@ -68,3 +68,10 @@ class IndiClient:
 
     def park(self) -> None:
         raise NotImplementedError("See get_status() — same reason.")
+
+    def jog(self, direction: str, speed: int) -> None:
+        """Manual nudge in one of the four SynScan-style directions ("N",
+        "S", "E", or "W" — see docs/CODES.md), at one of the SPEEDS tiers.
+        Maps to INDI's TELESCOPE_MOTION_NS/TELESCOPE_MOTION_WE switch
+        properties; see get_status() — same reason this isn't wired up yet."""
+        raise NotImplementedError("See get_status() — same reason.")

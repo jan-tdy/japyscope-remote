@@ -174,9 +174,15 @@ fi
 
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
+# For the optional external joystick's ADS1115 ADC (firmware/hal/input/
+# joystick.py, /dev/i2c-1) — same idea as the spi group above, needed only
+# if joystick_enabled is ever turned on. Enabling the I2C interface itself
+# (raspi-config or /boot/firmware/config.txt's dtparam=i2c_arm=on) is a
+# manual bring-up step, same as SPI today — see docs/WIRING.md.
+getent group i2c >/dev/null || groupadd --system i2c
 getent group systemd-journal >/dev/null || groupadd --system systemd-journal
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
-usermod -a -G gpio,spi,dialout,netdev,systemd-journal,adm japyscope
+usermod -a -G gpio,spi,i2c,dialout,netdev,systemd-journal,adm japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
 printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/network-backend
 chmod 644 /etc/japyscope/network-backend
