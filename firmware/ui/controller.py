@@ -28,6 +28,7 @@ from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
 from .search import SearchResult, SmartSearch
+from .themes import DEFAULT_THEME, THEMES, get_theme
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +116,8 @@ class ControllerUI:
     HOME = ("home.menu", "home.catalog", "home.dev_tools")
     MENU = (
         "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
-        "menu.location", "menu.backlight", "menu.language", "menu.sudo_password",
-        "menu.system", "menu.about",
+        "menu.location", "menu.backlight", "menu.language", "menu.theme",
+        "menu.sudo_password", "menu.system", "menu.about",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
     # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
@@ -216,16 +217,28 @@ class ControllerUI:
     def _t(self, key: str, **kwargs: object) -> str:
         return translate(key, self.settings.get("language", DEFAULT_LANGUAGE), **kwargs)
 
+    def _theme(self):
+        return get_theme(self.settings.get("ui_theme", DEFAULT_THEME))
+
     def _visible(self, title: str, values: Sequence[str], footer: str = "rotate · push · 9=back") -> list[str]:
         rows = max(1, self.display.visible_rows - 2)
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
+        theme = self._theme()
         lines = [title]
-        lines.extend(("> " if i == self.state.index else "  ") + values[i] for i in range(start, min(len(values), start + rows)))
+        for i in range(start, min(len(values), start + rows)):
+            selected = i == self.state.index
+            text = values[i]
+            if selected and theme.wrap:
+                text = f"{theme.wrap[0]}{text}{theme.wrap[1]}"
+            lines.append((theme.marker if selected else theme.unmarked) + text)
+            if selected and theme.invert:
+                self._invert_row = len(lines) - 1
         return [*lines, footer]
 
     def render(self) -> None:
         s = self.state
         screen = s.screen
+        self._invert_row: Optional[int] = None
         if screen == "BOOT":
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
@@ -249,6 +262,8 @@ class ControllerUI:
             lines = self._visible(self._t("menu.title"), [self._t(k) for k in self.MENU])
         elif screen == "LANGUAGE":
             lines = self._visible(self._t("language.title"), [name for name, _ in LANGUAGES])
+        elif screen == "THEME":
+            lines = self._visible(self._t("theme.title"), [theme.label for theme in THEMES])
         elif screen == "CATALOG_MENU":
             lines = self._visible("CATALOG", self.CATALOG)
         elif screen == "CUSTOM_CATALOGS":
@@ -352,7 +367,7 @@ class ControllerUI:
             lines = ["Cannot slew", s.error_message, "", "push/9=back"]
         else:
             lines = [screen]
-        self.display.draw_lines(lines[: self.display.visible_rows])
+        self.display.draw_lines(lines[: self.display.visible_rows], invert_row=self._invert_row)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         if key not in (ENC_UP, ENC_DOWN) or count <= 0:
@@ -527,6 +542,13 @@ class ControllerUI:
                 self.settings.set("language", LANGUAGES[s.index][1])
                 self._set("MENU", 6)
             return
+        if s.screen == "THEME":
+            if self._move(key, len(THEMES)): return
+            if key == "9": self._set("MENU", 7)
+            elif key == ENC_PUSH:
+                self.settings.set("ui_theme", THEMES[s.index].key)
+                self._set("MENU", 7)
+            return
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
         if s.screen == "DEV_REPO_SELECT":
             if self._move(key, len(self.REPOS)): return
@@ -551,7 +573,7 @@ class ControllerUI:
             if key in ("9", ENC_PUSH): self._set("IDLE")
             return
         if s.screen == "SYSTEM_CONFIRM":
-            if key == "9": self._set("MENU", 8)
+            if key == "9": self._set("MENU", 9)
             elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
             return
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
@@ -587,8 +609,12 @@ class ControllerUI:
             current = self.settings.get("language", DEFAULT_LANGUAGE)
             codes = [code for _, code in LANGUAGES]
             self._set("LANGUAGE", codes.index(current) if current in codes else 0)
-        elif s.index == 7: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
-        elif s.index == 8: self._set("SYSTEM_CONFIRM")
+        elif s.index == 7:
+            current = self.settings.get("ui_theme", DEFAULT_THEME)
+            keys = [theme.key for theme in THEMES]
+            self._set("THEME", keys.index(current) if current in keys else 0)
+        elif s.index == 8: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
+        elif s.index == 9: self._set("SYSTEM_CONFIRM")
         else: self._set("ABOUT")
 
     def _open_catalog(self) -> None:
