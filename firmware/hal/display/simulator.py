@@ -37,7 +37,9 @@ class SimulatorDisplay(DisplayHAL):
         print(f"[{self.profile.name} {self.profile.width}x{self.profile.height}]")
         for index, line in enumerate(sanitized_lines):
             if index == invert_row:
-                print(f"{self._REVERSE_VIDEO}{line}{self._RESET_VIDEO}")
+                # Pad to the full row width so the reverse video reads as a
+                # bar across the row, not just an inverted word.
+                print(f"{self._REVERSE_VIDEO}{line.ljust(width)}{self._RESET_VIDEO}")
             else:
                 print(line)
         print("=" * width)
