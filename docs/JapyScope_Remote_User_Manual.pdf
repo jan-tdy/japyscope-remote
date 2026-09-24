@@ -2,7 +2,7 @@
 %“Œ‹ž ReportLab Generated PDF document (opensource)
 1 0 obj
 <<
-/F1 2 0 R /F2+0 39 0 R /F3+0 43 0 R /F4 4 0 R /F5 9 0 R /F6 10 0 R 
+/F1 2 0 R /F2+0 39 0 R /F3+0 43 0 R /F4 7 0 R /F5 9 0 R /F6 10 0 R 
   /F7 11 0 R
 >>
 endobj
@@ -21,11 +21,6 @@ Gb"-6G?e,!f)MA3kMFhbH/3u<lZms*NNn'XMVVs?Z,IW@4_j=m<s3jT$R!m6/n2X8'tYk0&=$i0)b?<%
 endobj
 4 0 obj
 <<
-/BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding /Name /F4 /Subtype /Type1 /Type /Font
->>
-endobj
-5 0 obj
-<<
 /Contents 76 0 R /MediaBox [ 0 0 595.2756 841.8898 ] /Parent 75 0 R /Resources <<
 /Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ] /XObject <<
 /FormXob.b82843d97424db4c4016d0908186285f 3 0 R
@@ -36,7 +31,7 @@ endobj
   /Type /Page
 >>
 endobj
-6 0 obj
+5 0 obj
 <<
 /Contents 77 0 R /MediaBox [ 0 0 595.2756 841.8898 ] /Parent 75 0 R /Resources <<
 /Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
@@ -46,7 +41,7 @@ endobj
   /Type /Page
 >>
 endobj
-7 0 obj
+6 0 obj
 <<
 /Contents 78 0 R /MediaBox [ 0 0 595.2756 841.8898 ] /Parent 75 0 R /Resources <<
 /Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
@@ -54,6 +49,11 @@ endobj
 
 >> 
   /Type /Page
+>>
+endobj
+7 0 obj
+<<
+/BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding /Name /F4 /Subtype /Type1 /Type /Font
 >>
 endobj
 8 0 obj
@@ -548,7 +548,7 @@ endobj
 endobj
 45 0 obj
 <<
-/Author (JapySoft) /CreationDate (D:20260924173255+00'00') /Creator (\(unspecified\)) /Keywords () /ModDate (D:20260924173255+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+/Author (JapySoft) /CreationDate (D:20260924173631+00'00') /Creator (\(unspecified\)) /Keywords () /ModDate (D:20260924173631+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
   /Subject (JapyScope Remote hand controller and Web UI user manual) /Title (JapyScope Remote \204 User Manual) /Trapped /False
 >>
 endobj
@@ -703,17 +703,17 @@ endobj
 endobj
 75 0 obj
 <<
-/Count 21 /Kids [ 5 0 R 6 0 R 7 0 R 8 0 R 12 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 
+/Count 21 /Kids [ 4 0 R 5 0 R 6 0 R 8 0 R 12 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 
   19 0 R 20 0 R 21 0 R 22 0 R 24 0 R 26 0 R 28 0 R 30 0 R 33 0 R 34 0 R 
   35 0 R ] /Type /Pages
 >>
 endobj
 76 0 obj
 <<
-/Filter [ /ASCII85Decode /FlateDecode ] /Length 600
+/Filter [ /ASCII85Decode /FlateDecode ] /Length 362
 >>
 stream
-Gat=g>E@5e&;B$5/*:i^c$Fd3j!#la!^TtAi%](I\u:IlBe$Li*nr..D,m]=OW(c?k<$^sL4I6uo'a3qGjF=769lOg&kJ`"rs@QZikD(*VbnA7@PSuQVT0E#a3&g]`(=YJ.#jLD!4gY8.-Q*r&[O\J^t4^k?SQL;b7jO5j3?1_[pLK]"o(=??R?N:':sCFON/=cV]ic#OThPfUbeUto7Te&@5IEMVX!)\fkek)-)T8>@&ec,,*T<(/dISOqf"V-D$Ags3qUrKYWMspV6(M`_D:(p]OW4]+1YW=7'j6m_.NJ'WnZ<_->Gi%S8it6c3]3/qE/lEoN6CM0);FuQ$(ouWb`G)%o(r8ofAtU$ls^$5!WJWX%g=33c(:7o,@Vbod_HNk.3.6jJHbJ]`0-k4(q]hW?A?AIG7gD?LZ%(5pCU*fUS]pL("?CbZM30JE??0/.W3EGONr#891Z=d<Wa[s+6q`_@1!mOU5TB,?S2H6<F0q1RqSha(F:hjDlu=F3-s+@_5d#@q=+&hM%MQl%tU$0=T9UbPhltC7(,BKIO`H*\!iU<??c-;0LaS(NAJ;'q@2[6-<[oDiW/'8I[kWp]iH1&2F~>endstream
+Gat=f91o@A&:j6F'm$G`e'(LW=4&'W&(O[+m:.Z(gMOEGnD?=\QK"Z9O?gZn-@B/U+g=#+TB?[!AHfs`!ARPH+GUH,>I^i[`mDFT,a?(Q0j5!RZQ:p_@sR$#IUg`:90%O*N[Op+#mn1UUI[FJ.'HJM^9A`_3(PM'K?%ib_;05+0mu-9l4p>j@Pp>E[c&<=^E\Z".2Oc6G9>U6f:NTFG$W"6h6cYD8UO&nnD\RX!$tdi%&adnpcj#>mfKpcV#e9H;r):tg6ERb7^a:33[b-=!V3i_S-2D/6]UA?$?7H8:,']Sq^U"%PF&NR'4s4=]4TL:E0`ID=lef!/S8ng/;8elDP@h)q'B:R]agD_"N5gi~>endstream
 endobj
 77 0 obj
 <<
@@ -862,9 +862,9 @@ xref
 0000000163 00000 n 
 0000000270 00000 n 
 0000106803 00000 n 
-0000106918 00000 n 
-0000107186 00000 n 
-0000107391 00000 n 
+0000107071 00000 n 
+0000107276 00000 n 
+0000107481 00000 n 
 0000107596 00000 n 
 0000107864 00000 n 
 0000107976 00000 n 
@@ -934,30 +934,30 @@ xref
 0000635657 00000 n 
 0000635908 00000 n 
 0000636112 00000 n 
-0000636803 00000 n 
-0000638327 00000 n 
-0000638884 00000 n 
-0000640758 00000 n 
-0000643091 00000 n 
-0000644964 00000 n 
-0000646216 00000 n 
-0000648740 00000 n 
-0000651966 00000 n 
-0000654274 00000 n 
-0000656835 00000 n 
-0000659589 00000 n 
-0000662462 00000 n 
-0000664621 00000 n 
-0000666557 00000 n 
-0000668331 00000 n 
-0000669613 00000 n 
-0000671200 00000 n 
-0000672151 00000 n 
-0000673700 00000 n 
+0000636565 00000 n 
+0000638089 00000 n 
+0000638646 00000 n 
+0000640520 00000 n 
+0000642853 00000 n 
+0000644726 00000 n 
+0000645978 00000 n 
+0000648502 00000 n 
+0000651728 00000 n 
+0000654036 00000 n 
+0000656597 00000 n 
+0000659351 00000 n 
+0000662224 00000 n 
+0000664383 00000 n 
+0000666319 00000 n 
+0000668093 00000 n 
+0000669375 00000 n 
+0000670962 00000 n 
+0000671913 00000 n 
+0000673462 00000 n 
 trailer
 <<
 /ID 
-[<fb8cb9350c16535b69d3e3dee6b0429d><fb8cb9350c16535b69d3e3dee6b0429d>]
+[<26c1b4a5f87d64b51d6f6a6b62a94524><26c1b4a5f87d64b51d6f6a6b62a94524>]
 % ReportLab generated PDF document -- digest (opensource)
 
 /Info 45 0 R
@@ -965,5 +965,5 @@ trailer
 /Size 97
 >>
 startxref
-675871
+675633
 %%EOF
