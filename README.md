@@ -8,6 +8,7 @@ replacing the stock SynScan hand controller and driving INDI's
 Sky-Watcher Alt-Az mount driver directly.
 
 - **Docs site (wizard + wiki)**: [open the JapyScope documentation](https://jan-tdy.github.io/japyscope-remote/) (published via GitHub Pages/Jekyll)
+- **User manual (PDF)**: [docs/JapyScope_Remote_User_Manual.pdf](docs/JapyScope_Remote_User_Manual.pdf)
 - **Architecture, decisions, and current build status**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Interactive UX mockup on its own**: [docs/mockup.html](docs/mockup.html)
 - **Wiring/pinout**: [docs/WIRING.md](docs/WIRING.md)

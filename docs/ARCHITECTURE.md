@@ -119,8 +119,10 @@ confirm the physical RJ12 pinout, and exercise install/OTA on real Bullseye,
 Bookworm, and Trixie Pi Zero W devices. These are not safely guessable
 without the prototype.
 
-**Deferred beyond v0 entirely**: a polished end-user manual as a PDF
-   (use the PDF skill once on-device flows are stable).
+**Done**: a polished end-user manual as a PDF (`docs/JapyScope_Remote_User_Manual.pdf`,
+linked from the docs site's home page) covering the hand controller, the
+companion Web UI, and the SSH/Dev Tools basics — kept end-user-facing on
+purpose, not a substitute for this file.
 
 ## Verification
 
