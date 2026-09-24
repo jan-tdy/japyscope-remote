@@ -53,15 +53,21 @@ def enter_devtools_code(ui, code):
         ui.handle(ENC_PUSH)
 
 
-def test_boot_not_parked_syncs_before_idle():
+def test_boot_not_parked_walks_a_real_star_sync_before_idle():
     ui, conn, path = make_ui()
     try:
-        StateRepo(conn).set("ra", "12:00:00"); StateRepo(conn).set("dec", "+20:00:00")
         ui.start(); assert ui.state.screen == "BOOT_PARK_CHECK"
-        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)
+        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # "No — sync now"
+        assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.boot_sync is True
+        star = controller_module.STARS[0]
+        ui.handle(ENC_PUSH)  # pick the first star
+        assert ui.state.screen == "ALIGN_JOG" and ui.state.align_star is star
+        ui.handle(ENC_PUSH)  # confirm it's centered
         assert ui.state.screen == "IDLE"
-        assert ui.indi.synced == ("12:00:00", "+20:00:00")
+        assert ui.indi.synced == (star.ra, star.dec)
         assert StateRepo(conn).get("parked") == "false"
+        assert StateRepo(conn).get("aligned") == "true"
+        assert ui.state.boot_sync is False
     finally: conn.close(); os.unlink(path)
 
 
@@ -70,9 +76,27 @@ def test_boot_sync_failure_does_not_continue():
     try:
         def fail(*_args): raise ConnectionError("not connected")
         ui.indi.sync = fail
-        ui.start(); ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)
+        ui.start(); ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # "No — sync now"
+        ui.handle(ENC_PUSH)  # pick a star
+        ui.handle(ENC_PUSH)  # confirm it's centered -> sync fails
         assert ui.state.screen == "BOOT_SYNC_FAILED"
         assert StateRepo(conn).get("parked") is None
+        assert StateRepo(conn).get("aligned") is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_sync_failure_retry_returns_to_star_pick():
+    ui, conn, path = make_ui()
+    try:
+        def fail(*_args): raise ConnectionError("not connected")
+        ui.indi.sync = fail
+        ui.start(); ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)
+        ui.handle(ENC_PUSH); ui.handle(ENC_PUSH)
+        assert ui.state.screen == "BOOT_SYNC_FAILED"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.boot_sync is True
+        ui.handle("9")
+        assert ui.state.screen == "BOOT_PARK_CHECK" and ui.state.boot_sync is False
     finally: conn.close(); os.unlink(path)
 
 
@@ -441,7 +465,9 @@ def test_devtools_easter_eggs_show_and_dismiss():
 def test_align_jog_screen_jogs_with_keypad_encoder_and_joystick():
     ui, conn, path = make_ui()
     try:
-        ui.state.screen = "ALIGN_JOG"; ui.state.jog_target = "Vega"; ui.state.align_points = 0
+        star = controller_module.STARS[1]  # Vega
+        ui.state.screen = "ALIGN_JOG"
+        ui.state.align_star = star; ui.state.jog_target = star.name; ui.state.align_points = 0
         ui.handle("2"); assert ui.indi.jogs[-1] == ("N", 1)
         ui.handle("8"); assert ui.indi.jogs[-1] == ("S", 1)
         ui.handle("4"); assert ui.indi.jogs[-1] == ("W", 1)
@@ -455,6 +481,7 @@ def test_align_jog_screen_jogs_with_keypad_encoder_and_joystick():
 
         ui.handle(ENC_PUSH)
         assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.align_points == 1
+        assert ui.indi.synced == (star.ra, star.dec)
     finally: conn.close(); os.unlink(path)
 
 
@@ -468,6 +495,48 @@ def test_align_jog_survives_indi_not_implemented():
         assert ui.state.screen == "ALIGN_JOG"
         ui.handle("9")
         assert ui.state.screen == "ALIGN_CHOOSE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_align_jog_sync_failure_does_not_block_the_menu_flow():
+    """Unlike the boot-time single-star sync, a sync failure during the
+    Manual (2 stars) menu flow must not strand the user — real hardware
+    doesn't implement sync() yet, so this path has to keep working."""
+    ui, conn, path = make_ui()
+    try:
+        def fail(*_args): raise NotImplementedError("no hardware yet")
+        ui.indi.sync = fail
+        ui.state.screen = "ALIGN_JOG"
+        ui.state.align_star = controller_module.STARS[0]; ui.state.align_points = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.align_points == 1
+    finally: conn.close(); os.unlink(path)
+
+
+def test_manual_two_star_alignment_syncs_each_real_star():
+    ui, conn, path = make_ui()
+    try:
+        first, second = controller_module.STARS[0], controller_module.STARS[1]
+        ui.state.screen = "ALIGN_STAR_PICK"; ui.state.align_points = 0
+        ui.handle(ENC_PUSH)  # pick first star (index 0)
+        assert ui.state.align_star is first
+        ui.handle(ENC_PUSH)  # confirm centered -> sync(first)
+        assert ui.indi.synced == (first.ra, first.dec)
+        assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.align_points == 1
+
+        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # pick second star (index 1)
+        assert ui.state.align_star is second
+        ui.handle(ENC_PUSH)  # confirm centered -> sync(second)
+        assert ui.indi.synced == (second.ra, second.dec)
+        assert ui.state.screen == "ALIGN_MORE" and ui.state.align_points == 2
+
+        # "aligned" only flips once the user explicitly confirms, at the
+        # end of ALIGN_CONFIRM — not merely from syncing each star.
+        assert StateRepo(conn).get("aligned") is None
+        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # ALIGN_MORE -> "Finish alignment"
+        assert ui.state.screen == "ALIGN_CONFIRM"
+        ui.handle(ENC_PUSH)  # "Yes, done"
+        assert StateRepo(conn).get("aligned") == "true"
     finally: conn.close(); os.unlink(path)
 
 

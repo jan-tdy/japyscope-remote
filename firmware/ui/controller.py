@@ -44,7 +44,20 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
-STARS = ("Polaris", "Vega", "Capella", "Deneb", "Arcturus", "Altair")
+# Bright, easy-to-recognize alignment stars with real J2000 coordinates —
+# picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
+# IndiClient.sync() with these, which is what actually teaches the mount
+# driver's own pointing/alignment model where it's really pointed. Used for
+# both the Manual (2 stars) menu flow and the boot-time "No — sync now"
+# quick single-star sync (see JOG_DIRECTIONS' screens and BOOT_PARK_CHECK).
+STARS: tuple[SearchResult, ...] = (
+    SearchResult("Polaris", "02h31m49s", "+89°15′51″", source="align"),
+    SearchResult("Vega", "18h36m56s", "+38°47′01″", source="align"),
+    SearchResult("Capella", "05h16m41s", "+45°59′53″", source="align"),
+    SearchResult("Deneb", "20h41m26s", "+45°16′49″", source="align"),
+    SearchResult("Arcturus", "14h15m40s", "+19°10′56″", source="align"),
+    SearchResult("Altair", "19h50m47s", "+08°52′06″", source="align"),
+)
 # Manual N/S/E/W jog, available on screens where the mount can move (see
 # docs/CODES.md) — from either the keypad's 2/4/6/8 or the external
 # joystick (ENC_UP/ENC_DOWN for its Y-axis, JOY_LEFT/JOY_RIGHT for its
@@ -98,6 +111,8 @@ class UIState:
     list_items: list[SearchResult] = field(default_factory=list)
     align_points: int = 0
     jog_target: str = ""
+    align_star: Optional[SearchResult] = None
+    boot_sync: bool = False
     digits: list[int] = field(default_factory=list)
     digit_value: int = 0
     access_code: str = ""
@@ -297,7 +312,7 @@ class ControllerUI:
         elif screen == "ALIGN_SMART_NA":
             lines = ["Smart alignment", "Plate-solve unavailable", "", "push/9=back"]
         elif screen == "ALIGN_STAR_PICK":
-            lines = self._visible(f"Point {s.align_points + 1}", STARS)
+            lines = self._visible(f"Point {s.align_points + 1}", [star.name for star in STARS])
         elif screen == "ALIGN_JOG":
             lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
         elif screen == "ALIGN_MORE":
@@ -393,26 +408,59 @@ class ControllerUI:
             logger.error("INDI-004 jog failed: %s", exc)
         return True
 
+    def _confirm_align_point(self) -> None:
+        """Called when the wheel is pushed on ALIGN_JOG: the star picked on
+        ALIGN_STAR_PICK is now centered, so tell the mount driver "you are
+        pointed at this star's real coordinates" via INDI Sync — this is
+        what actually teaches the driver's pointing/alignment model,
+        star by star. Used by both the Manual (2 stars) menu flow and the
+        boot-time single-star quick sync (`s.boot_sync`)."""
+        s = self.state
+        star = s.align_star
+        if s.boot_sync:
+            if star is not None:
+                try:
+                    self.indi.sync(star.ra, star.dec)
+                except (NotImplementedError, ConnectionError) as exc:
+                    logger.error("INDI-002 boot Sync failed: %s", exc)
+                    self._set("BOOT_SYNC_FAILED")
+                    return
+            s.boot_sync = False
+            self.runtime.set("aligned", "true")
+            self.runtime.set("parked", "false")
+            self._set("IDLE")
+            return
+        if star is not None:
+            try:
+                self.indi.sync(star.ra, star.dec)
+            except (NotImplementedError, ConnectionError) as exc:
+                logger.error("INDI-002 alignment sync failed: %s", exc)
+        s.align_points += 1
+        self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
+
     def handle(self, key: str) -> None:
         s = self.state
         if s.screen == "BOOT_PARK_CHECK":
             if self._move(key, 2): return
             if key == ENC_PUSH:
-                parked = s.index == 0
-                if not parked:
-                    try:
-                        self.indi.sync(self.runtime.get("ra", "0"), self.runtime.get("dec", "0"))
-                    except (NotImplementedError, ConnectionError) as exc:
-                        logger.error("INDI-002 boot Sync failed: %s", exc)
-                        self._set("BOOT_SYNC_FAILED")
-                        return
-                self.runtime.set("parked", "true" if parked else "false")
-                self._set("PARKED" if parked else "IDLE")
+                if s.index == 0:
+                    self.runtime.set("parked", "true")
+                    self._set("PARKED")
+                else:
+                    # "No — sync now": point at a known star, center it, and
+                    # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
+                    # below, entered here with boot_sync set so confirming
+                    # the point returns to IDLE instead of looping into the
+                    # full Manual (2 stars) menu flow.
+                    s.boot_sync = True
+                    s.align_points = 0
+                    self._set("ALIGN_STAR_PICK")
             return
         if s.screen == "BOOT_SYNC_FAILED":
             if key == ENC_PUSH:
-                self._set("BOOT_PARK_CHECK", 1)
-                self.handle(ENC_PUSH)
+                s.boot_sync = True
+                s.align_points = 0
+                self._set("ALIGN_STAR_PICK")
             elif key == "9": self._set("BOOT_PARK_CHECK", 1)
             return
         if s.screen == "IDLE":
@@ -479,19 +527,29 @@ class ControllerUI:
             if key == "9": self._set("MENU", 1)
             elif key == ENC_PUSH:
                 if s.index == 0: self._set("ALIGN_SMART_NA")
-                else: s.align_points = 0; self._set("ALIGN_STAR_PICK")
+                else: s.align_points = 0; s.boot_sync = False; self._set("ALIGN_STAR_PICK")
             return
         if s.screen == "ALIGN_STAR_PICK":
             if self._move(key, len(STARS)): return
-            if key == "9": self._set("ALIGN_CHOOSE", 1)
-            elif key == ENC_PUSH: s.jog_target = STARS[s.index]; self._set("ALIGN_JOG")
+            if key == "9":
+                if s.boot_sync:
+                    s.boot_sync = False
+                    self._set("BOOT_PARK_CHECK", 1)
+                else:
+                    self._set("ALIGN_CHOOSE", 1)
+            elif key == ENC_PUSH:
+                s.align_star = STARS[s.index]
+                s.jog_target = s.align_star.name
+                self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
             if self._jog(key): return
             if key == "7": self._speed("ALIGN_JOG")
-            elif key == "9": self._set("ALIGN_CHOOSE", 1)
+            elif key == "9":
+                if s.boot_sync: self._set("ALIGN_STAR_PICK")
+                else: self._set("ALIGN_CHOOSE", 1)
             elif key == ENC_PUSH:
-                s.align_points += 1; self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
+                self._confirm_align_point()
             return
         if s.screen == "ALIGN_MORE":
             if self._move(key, 2): return
