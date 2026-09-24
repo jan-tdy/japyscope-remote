@@ -9,8 +9,8 @@ permalink: /wiring/
 Single source of truth for how the Raspberry Pi Zero W is wired. Update this
 file (not a second copy elsewhere) as each build phase confirms real pins.
 
-Status: **Fáza 0 / 1beta** — jumper-wire prototype, most pin numbers below
-are the firmware's current defaults (`firmware/hal/*/keypad.py`,
+Status: **Fáza 1beta / 1** — most pin numbers below are the firmware's
+current defaults (`firmware/hal/*/keypad.py`,
 `firmware/hal/display/epaper.py`, `firmware/hal/input/joystick.py`), not yet
 verified against a soldered board. Cross-check before trusting a pin.
 
