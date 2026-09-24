@@ -14,8 +14,8 @@ from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 class Display(DisplayHAL):
     def __init__(self):
-        super().__init__(); self.lines = []
-    def draw_lines(self, lines): self.lines = lines
+        super().__init__(); self.lines = []; self.invert_row = None
+    def draw_lines(self, lines, invert_row=None): self.lines = lines; self.invert_row = invert_row
 
 
 class Backlight(BacklightHAL):
@@ -115,10 +115,65 @@ def test_backlight_menu_calls_injected_backlight_hal():
 def test_system_menu_still_reachable_after_language_entry_added():
     ui, conn, path = make_ui()
     try:
-        ui.state.screen = "MENU"; ui.state.index = 8; ui.handle(ENC_PUSH)
+        ui.state.screen = "MENU"; ui.state.index = 9; ui.handle(ENC_PUSH)
         assert ui.state.screen == "SYSTEM_CONFIRM"
         ui.handle("9")
-        assert ui.state.screen == "MENU" and ui.state.index == 8
+        assert ui.state.screen == "MENU" and ui.state.index == 9
+    finally: conn.close(); os.unlink(path)
+
+
+def test_theme_selection_persists_and_defaults_to_arrow():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 7; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "THEME" and ui.state.index == 0  # default "arrow"
+        ui.handle(ENC_DOWN)  # -> invert
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "MENU" and ui.state.index == 7
+        assert SettingsRepo(conn).get("ui_theme") == "invert"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_theme_screen_preselects_current_choice():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("ui_theme", "brackets")
+        ui.state.screen = "MENU"; ui.state.index = 7; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "THEME" and ui.state.index == 2
+        ui.handle("9")
+        assert ui.state.screen == "MENU" and ui.state.index == 7
+    finally: conn.close(); os.unlink(path)
+
+
+def test_arrow_theme_marks_selected_row_with_prefix_not_invert():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.invert_row is None
+        assert ui.display.lines[1].startswith("> ")
+    finally: conn.close(); os.unlink(path)
+
+
+def test_invert_theme_flags_selected_row_without_text_marker():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("ui_theme", "invert")
+        ui._set("MENU", 2)
+        # visible_rows=4 for the default profile, so only 2 menu rows are
+        # shown at a time (title + 2 rows + footer) and the window scrolls
+        # to keep the selected item (index 2) as the first visible row.
+        assert ui.display.invert_row == 1
+        assert ui.display.lines[1] == ui._t("menu.park_toggle")
+    finally: conn.close(); os.unlink(path)
+
+
+def test_brackets_theme_wraps_selected_row_without_invert():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("ui_theme", "brackets")
+        ui._set("MENU", 0)
+        assert ui.display.invert_row is None
+        assert ui.display.lines[1] == f"[{ui._t('menu.time_sync')}]"
     finally: conn.close(); os.unlink(path)
 
 

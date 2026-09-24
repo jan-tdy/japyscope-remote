@@ -6,6 +6,8 @@ the firmware can be developed and tested with --simulate on any machine.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from .base import DisplayHAL
 
 
@@ -52,19 +54,24 @@ class EPaperDisplay(DisplayHAL):
     def _init_controller(self) -> None:
         raise NotImplementedError("See _reset().")
 
-    def _render_text_to_bitmap(self, lines: list[str]) -> bytes:
+    def _render_text_to_bitmap(self, lines: list[str], invert_row: Optional[int] = None) -> bytes:
         """Render lines after the panel and rasterizer are selected.
 
         Pillow 12 no longer supports Bullseye's Python 3.9, while older
         releases have known image-decoder vulnerabilities.  Do not pin an
         unsafe/incompatible dependency for a method that cannot yet reach
         hardware; implement the final rasterizer with the panel protocol.
+
+        `invert_row`, when given, is the one row (an "Invert" interface
+        theme's selected menu/list row — see `firmware/ui/themes.py`) that
+        must be drawn with swapped black/white pixels instead of the panel's
+        normal polarity.
         """
         raise NotImplementedError("Text rasterizer is selected with the physical e-paper panel")
 
-    def draw_lines(self, lines: list[str]) -> None:
+    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None) -> None:
         self._ensure_hardware()
-        bitmap = self._render_text_to_bitmap(lines)
+        bitmap = self._render_text_to_bitmap(lines, invert_row)
         self._spi_write_frame(bitmap)
 
     def _spi_write_frame(self, bitmap: bytes) -> None:
