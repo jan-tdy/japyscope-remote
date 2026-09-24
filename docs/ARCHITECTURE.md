@@ -13,9 +13,9 @@ directly to the mount's **RJ12** "Hand Control" port (via a 3.3V↔5V
 logic-level shifter) and drives INDI's existing Sky-Watcher Alt-Az mount
 driver directly — no custom motor-protocol code needed.
 
-No hardware exists yet (still Fáza 0/1beta), but firmware v0 is being built
-now so installation, OTA updates, and INDI process management are implemented
-before the first prototype is wired up. The UX for both the hand
+Hardware bring-up is underway (Fáza 1beta/1), alongside firmware v0, so
+installation, OTA updates, and INDI process management are implemented
+as the build progresses. The UX for both the hand
 controller and its companion Web UI is fully defined by the interactive
 HTML/JS mockup published as part of this site (`docs/mockup.html` — open
 the [Mockup tab](index.html#mockup) via GitHub Pages) plus the decisions
