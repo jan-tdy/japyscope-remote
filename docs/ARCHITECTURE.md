@@ -53,7 +53,7 @@ not the mockup's**:
 - **SmartSearch queries the internet** — this is SmartSearch's whole point: resolve object names against an online astronomical database (recommended: SIMBAD/Sesame name resolver — free, no API key, same one KStars/Stellarium use) in addition to local catalogs, so a newly-discovered/variable star not in any local list can still be found. Must degrade gracefully offline: fall back to local-only results with a note (see `CODES.md`'s `SEARCH-001`), not hang or fail the whole search.
 - **Language selection** — a new **Language** entry in Menu (between Backlight and Sudo Password) opens a list of UI languages (`firmware/ui/i18n.py`'s `LANGUAGES`); picking one persists to `settings.language` and takes effect immediately. v0 translates the highest-visibility screens only (Home, Menu, boot park check, park/unpark, About, shared footers) — anything not yet in `i18n.STRINGS` falls back to English. Not in the mockup at all.
 - **External joystick support (22.9)** — an optional KY-023-style dual-axis joystick (`docs/WIRING.md`, `firmware/hal/input/joystick.py`), off by default (`shared.db`'s `joystick_enabled`, toggled on the Web UI Settings page). Its Y-axis/push button reuse the encoder's `ENC_UP`/`ENC_DOWN`/`ENC_PUSH` codes (drop-in alternative for menu navigation everywhere), and its X-axis adds `JOY_LEFT`/`JOY_RIGHT` for manual N/S/E/W jogging on `ALIGN_JOG`/`TRACK` (`firmware/ui/controller.py`'s `_jog()`), alongside the matching keypad 2/4/6/8 jog keys documented but not previously wired up in `docs/CODES.md`. `IndiClient.jog()` is a `NotImplementedError` stub like `sync`/`goto`/`park` (see "Still hardware-blocked" below) but fully functional in `--simulate` via `SimulatedIndiClient.jog()`. Not in the mockup at all.
-- **Interface theme selection (23.9)** — a new **Interface Theme** entry in Menu (between Language and Sudo Password) opens a list of black/white themes (`firmware/ui/themes.py`'s `THEMES`) that only change how the *selected* row of a list/menu is marked — the panel has no other colors. `arrow` (default) prefixes it with `> `; `brackets` wraps it in `[ ]`; `invert` asks the display to swap that one row to black background/white text via `DisplayHAL.draw_lines`'s new `invert_row` parameter, honored today by `SimulatorDisplay` (ANSI reverse video) and left for the real e-paper rasterizer to honor once it exists (`firmware/hal/display/epaper.py` is still a `NotImplementedError` stub — see "Still hardware-blocked" below). Picking a theme persists to `settings.ui_theme` and takes effect immediately. Not in the mockup at all.
+- **Interface theme selection (23.9)** — a new **Interface Theme** entry in Menu (between Language and Sudo Password) opens a list of black/white themes (`firmware/ui/themes.py`'s `THEMES`) that only change how the *selected* row of a list/menu is marked — the panel has no other colors. `arrow` (default) prefixes it with `> `; `brackets` wraps it in `[ ]`; `invert` asks the display to swap that one row to black background/white text via `DisplayHAL.draw_lines`'s new `invert_row` parameter, honored by both `SimulatorDisplay` (ANSI reverse video) and the real e-paper rasterizer (`firmware/hal/display/rasterizer.py` inverts the whole row's pixel band, not just the glyphs — untested against real hardware, see "Still hardware-blocked" below). Picking a theme persists to `settings.ui_theme` and takes effect immediately. Not in the mockup at all.
 - **Alignment now actually syncs (24.9)** — `firmware/ui/controller.py`'s `STARS` are now `SearchResult`s carrying real J2000 coordinates (previously bare names with no position data at all). Confirming a centered star on `ALIGN_JOG` (`_confirm_align_point()`) calls `IndiClient.sync(star.ra, star.dec)` with those coordinates — this is what actually teaches the mount driver's own pointing/alignment model, once per star, matching how real multi-star INDI alignment works; it previously did nothing but increment a counter. The boot-time park question's **No — sync now** answer no longer blind-syncs on stale/placeholder `state.ra`/`state.dec` — it now sets `state.boot_sync` and reuses the same `ALIGN_STAR_PICK`/`ALIGN_JOG` screens for a real single-star pick-and-center-and-sync, then returns to `IDLE` (marking `aligned` true) instead of looping into the full Manual (2 stars) flow. Not in the mockup at all.
 
 ## Repository layout
@@ -62,7 +62,7 @@ not the mockup's**:
 japyscope-remote/
   firmware/
     hal/
-      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (stub pending real panel)
+      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (SSD1680 full-refresh driver + font5x7.py/rasterizer.py, untested against real hardware — see "Still hardware-blocked")
       input/          # DONE — keys.py, base.py, simulator.py, keypad.py, encoder.py, joystick.py (optional accessory), composite.py
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog
@@ -113,8 +113,12 @@ The software-side handoff items are implemented:
 7. **`docs/INSTALL.md`, `docs/UPDATE.md`, `docs/TROUBLESHOOTING.md`** document
    the scripts and their operational/error-code behavior.
 
-**Still hardware-blocked:** fill in the selected e-paper controller protocol,
-map PyIndi properties against the live Sky-Watcher driver (including
+**Still hardware-blocked:** verify the e-paper controller protocol against a
+real panel (`firmware/hal/display/epaper.py` implements the SSD1680
+reset/init/full-refresh sequence and a dependency-free text rasterizer
+against the datasheet, but the RAM bit polarity, reset timing, and
+partial-refresh LUT are unconfirmed without hardware — see that module's
+docstring), map PyIndi properties against the live Sky-Watcher driver (including
 `IndiClient.jog()`'s `TELESCOPE_MOTION_NS`/`TELESCOPE_MOTION_WE` switches),
 confirm the physical RJ12 pinout, and exercise install/OTA on real Bullseye,
 Bookworm, and Trixie Pi Zero W devices. These are not safely guessable
