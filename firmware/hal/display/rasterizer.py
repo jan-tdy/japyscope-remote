@@ -26,6 +26,38 @@ def stride_for(width: int) -> int:
     return (width + 7) // 8
 
 
+def rotate_90(buf: bytes, width: int, height: int, clockwise: bool = True) -> bytes:
+    """Rotate a row-major 1bpp `width`x`height` buffer 90 degrees, producing
+    a `height`x`width` buffer — needed when a profile's logical drawing
+    canvas doesn't match its controller's native RAM source/gate axes (see
+    `profiles.py`'s `native_width`/`native_height` and `epaper.py`'s
+    `_to_native_orientation`). Every destination pixel maps from exactly one
+    source pixel (rotation is a bijection over the full rectangle), so an
+    unset destination bit is never left over from initialization — it's
+    always the true rotated value of some source pixel.
+
+    `clockwise` picks the rotation direction; which one matches the panel's
+    physical mounting is the one thing here that can't be confirmed without
+    the hardware in hand (see epaper.py's `_ROTATE_CLOCKWISE`) — flip it if
+    the drawn frame comes out mirrored/rotated the wrong way.
+    """
+    src_stride = stride_for(width)
+    dst_width, dst_height = height, width
+    dst_stride = stride_for(dst_width)
+    out = bytearray(dst_stride * dst_height)
+    for y in range(height):
+        row_start = y * src_stride
+        for x in range(width):
+            if not (buf[row_start + x // 8] >> (7 - (x % 8))) & 1:
+                continue
+            if clockwise:
+                nx, ny = height - 1 - y, x
+            else:
+                nx, ny = y, width - 1 - x
+            out[ny * dst_stride + nx // 8] |= 0x80 >> (nx % 8)
+    return bytes(out)
+
+
 def _set_black(buf: bytearray, stride: int, width: int, height: int, x: int, y: int) -> None:
     if 0 <= x < width and 0 <= y < height:
         buf[y * stride + x // 8] &= ~(0x80 >> (x % 8)) & 0xFF

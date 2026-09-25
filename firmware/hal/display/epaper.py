@@ -8,12 +8,14 @@ part genuinely is vendor/part-number specific and stays out of scope until
 the exact part is ordered and its datasheet is in hand (partial refresh
 would only be worth adding later as a menu/list scroll optimization).
 
-Not runnable without the actual panel: reset timing and RAM bit polarity
-below follow the SSD1680 datasheet's typical values (used near-identically
-across Waveshare/GoodDisplay 2.13" modules), but haven't been checked
-against a soldered board — verify against docs/WIRING.md once hardware
-exists. Kept import-safe (spidev/RPi.GPIO imported lazily) so the rest of
-the firmware can be developed and tested with --simulate on any machine.
+Not runnable without the actual panel: reset timing, RAM bit polarity, and
+which way `_ROTATE_CLOCKWISE` should turn the logical canvas to reach the
+2.13" profile's native portrait RAM axes (profiles.py) all follow the
+SSD1680 datasheet's typical values / the panel's physical mounting, but
+haven't been checked against a soldered board — verify against
+docs/WIRING.md once hardware exists. Kept import-safe (spidev/RPi.GPIO
+imported lazily) so the rest of the firmware can be developed and tested
+with --simulate on any machine.
 """
 from __future__ import annotations
 
@@ -22,6 +24,13 @@ from typing import Optional
 
 from .base import DisplayHAL
 from .rasterizer import render as render_text_to_bitmap
+from .rasterizer import rotate_90, stride_for
+
+# Which way rotate_90() turns the logical canvas to reach a profile's native
+# RAM axes (see profiles.py's native_width/native_height). The one thing
+# that can't be confirmed without the physical panel in hand — flip this if
+# the drawn frame comes out mirrored/rotated the wrong way once wired up.
+_ROTATE_CLOCKWISE = True
 
 # SSD1680 command bytes used here (subset — see datasheet ch. 8).
 _CMD_SW_RESET = 0x12
@@ -72,11 +81,24 @@ class EPaperDisplay(DisplayHAL):
         GPIO.setup(self.dc_pin, GPIO.OUT)
         GPIO.setup(self.rst_pin, GPIO.OUT)
         GPIO.setup(self.busy_pin, GPIO.IN)
-        self._spi = spidev.SpiDev()
-        self._spi.open(0, 0)
-        self._spi.max_speed_hz = 4_000_000
-        self._reset()
-        self._init_controller()
+        spi = spidev.SpiDev()
+        spi.open(0, 0)
+        spi.max_speed_hz = 4_000_000
+        self._spi = spi
+        self._bring_up()
+
+    def _bring_up(self) -> None:
+        """Reset + init the controller, undoing `self._spi` on failure (e.g.
+        BUSY never clearing) so the next draw_lines() call retries hardware
+        bring-up from scratch instead of _ensure_hardware() silently seeing
+        a non-None `self._spi` and skipping setup forever."""
+        try:
+            self._reset()
+            self._init_controller()
+        except Exception:
+            self._spi.close()
+            self._spi = None
+            raise
 
     # -- low-level SPI/GPIO helpers -----------------------------------
 
@@ -118,18 +140,23 @@ class EPaperDisplay(DisplayHAL):
         self._write_command(_CMD_SW_RESET)
         self._wait_busy()
 
-        height_minus_1 = profile.height - 1
+        # Native RAM axes, not the logical width/height — see profiles.py's
+        # native_width/native_height and _to_native_orientation() below.
+        # SSD1680's source axis maxes out at 176px, so the 2.13" profile's
+        # 250px-wide logical canvas would silently exceed it if used here
+        # directly (PR #25 review).
+        gate_minus_1 = profile.native_height - 1
         self._write_command(
             _CMD_DRIVER_OUTPUT_CONTROL,
-            bytes([height_minus_1 & 0xFF, (height_minus_1 >> 8) & 0xFF, 0x00]),
+            bytes([gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF, 0x00]),
         )
         self._write_command(_CMD_DATA_ENTRY_MODE, bytes([0x03]))  # X then Y, both incrementing
 
-        stride = (profile.width + 7) // 8
-        self._write_command(_CMD_SET_RAM_X_ADDRESS, bytes([0x00, (stride - 1) & 0xFF]))
+        source_stride = stride_for(profile.native_width)
+        self._write_command(_CMD_SET_RAM_X_ADDRESS, bytes([0x00, (source_stride - 1) & 0xFF]))
         self._write_command(
             _CMD_SET_RAM_Y_ADDRESS,
-            bytes([0x00, 0x00, height_minus_1 & 0xFF, (height_minus_1 >> 8) & 0xFF]),
+            bytes([0x00, 0x00, gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF]),
         )
         self._write_command(_CMD_BORDER_WAVEFORM, bytes([0x05]))
         self._write_command(_CMD_TEMP_SENSOR_CONTROL, bytes([0x80]))  # internal sensor
@@ -151,9 +178,22 @@ class EPaperDisplay(DisplayHAL):
         bitmap = self._render_text_to_bitmap(lines, invert_row)
         self._spi_write_frame(bitmap)
 
+    def _to_native_orientation(self, bitmap: bytes) -> bytes:
+        """Rotate the logical width x height bitmap to match the
+        controller's native RAM axes, when they differ (see profiles.py)."""
+        profile = self.profile
+        if (profile.native_width, profile.native_height) == (profile.width, profile.height):
+            return bitmap
+        if (profile.native_width, profile.native_height) == (profile.height, profile.width):
+            return rotate_90(bitmap, profile.width, profile.height, clockwise=_ROTATE_CLOCKWISE)
+        raise ValueError(
+            f"{profile.name}: native {profile.native_width}x{profile.native_height} doesn't "
+            f"match logical {profile.width}x{profile.height} directly or transposed"
+        )
+
     def _spi_write_frame(self, bitmap: bytes) -> None:
         self._set_cursor(0, 0)
-        self._write_command(_CMD_WRITE_RAM_BW, bitmap)
+        self._write_command(_CMD_WRITE_RAM_BW, self._to_native_orientation(bitmap))
         # 0xF7: full refresh using the controller's OTP LUT — no
         # panel-specific waveform table needed (see module docstring).
         self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([0xF7]))
