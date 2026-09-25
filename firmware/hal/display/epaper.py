@@ -19,12 +19,15 @@ with --simulate on any machine.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
 from .base import DisplayHAL
 from .rasterizer import render as render_text_to_bitmap
 from .rasterizer import rotate_90, stride_for
+
+logger = logging.getLogger(__name__)
 
 # Which way rotate_90() turns the logical canvas to reach a profile's native
 # RAM axes (see profiles.py's native_width/native_height). The one thing
@@ -99,6 +102,11 @@ class EPaperDisplay(DisplayHAL):
             self._spi.close()
             self._spi = None
             raise
+        else:
+            logger.info(
+                "%s bring-up complete (dc=BCM%d rst=BCM%d busy=BCM%d)",
+                self.profile.controller, self.dc_pin, self.rst_pin, self.busy_pin,
+            )
 
     # -- low-level SPI/GPIO helpers -----------------------------------
 
@@ -114,7 +122,16 @@ class EPaperDisplay(DisplayHAL):
             self._spi.writebytes(list(data[offset : offset + _SPI_CHUNK]))
 
     def _wait_busy(self, timeout_s: float = 5.0) -> None:
-        deadline = time.monotonic() + timeout_s
+        # Logged at INFO (not DEBUG) because it's the cheapest hardware-bring-up
+        # diagnostic available without a scope: real SSD1680 panels hold BUSY
+        # high for tens of milliseconds during reset/init/refresh. A wait that
+        # clears in ~0ms on every call, with the panel showing no visible
+        # activity, means BUSY (and likely the rest of the SPI bus) isn't
+        # actually reaching the panel — a wiring problem, not a code one; the
+        # SPI/GPIO calls here "succeed" regardless of what's physically wired
+        # on the other end. See docs/WIRING.md.
+        start = time.monotonic()
+        deadline = start + timeout_s
         while self._gpio.input(self.busy_pin) == self._gpio.HIGH:
             if time.monotonic() > deadline:
                 raise TimeoutError(
@@ -122,6 +139,16 @@ class EPaperDisplay(DisplayHAL):
                     f"past {timeout_s}s — check docs/WIRING.md wiring/pin numbers"
                 )
             time.sleep(0.01)
+        elapsed = time.monotonic() - start
+        logger.info("%s BUSY (BCM%d) cleared after %.3fs", self.profile.controller, self.busy_pin, elapsed)
+        if elapsed < 0.005:
+            logger.warning(
+                "BUSY (BCM%d) cleared suspiciously fast (%.3fs) — a real %s panel holds it "
+                "high for tens of ms during reset/init/refresh; this near-instant clear usually "
+                "means BUSY isn't actually wired to the panel (floating pin), which often means "
+                "the rest of the SPI bus isn't either — check continuity against docs/WIRING.md",
+                self.busy_pin, elapsed, self.profile.controller,
+            )
 
     # -- panel bring-up -------------------------------------------------
 
