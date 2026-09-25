@@ -2,20 +2,21 @@
 `profiles.py` confirms for the 2.13" panel (also covers the 4.26"/SSD1677
 profile — SSD1677 is command-compatible with SSD1680 for the subset used
 here). Full-refresh only: `DisplayHAL.draw_lines` replaces the whole screen
-each call (see base.py), which is exactly what a full refresh does, so
-there's no need for the panel's partial-refresh custom waveform LUT — that
-part genuinely is vendor/part-number specific and stays out of scope until
-the exact part is ordered and its datasheet is in hand (partial refresh
-would only be worth adding later as a menu/list scroll optimization).
+each call (see base.py).
 
-Not runnable without the actual panel: reset timing, RAM bit polarity, and
-which way `_ROTATE_CLOCKWISE` should turn the logical canvas to reach the
-2.13" profile's native portrait RAM axes (profiles.py) all follow the
-SSD1680 datasheet's typical values / the panel's physical mounting, but
-haven't been checked against a soldered board — verify against
-docs/WIRING.md once hardware exists. Kept import-safe (spidev/RPi.GPIO
-imported lazily) so the rest of the firmware can be developed and tested
-with --simulate on any machine.
+The 2.13" panel on Seeed's XIAO ePaper driver board has no usable
+full-refresh waveform in its OTP: a refresh with 0x22=0xF7 ("load LUT from
+OTP") ends within a few milliseconds and never moves a pixel. Like
+Waveshare's epd2in13_V3 driver and ESPHome's `2.13inv3` model (confirmed
+working on this exact board), the driver loads the waveform and drive
+voltages into registers at init and refreshes with 0x22=0xC7. Profiles
+without an entry in `_REGISTER_WAVEFORMS` keep the OTP refresh.
+
+Still unconfirmed on hardware: which way `_ROTATE_CLOCKWISE` should turn the
+logical canvas to reach the 2.13" profile's native portrait RAM axes
+(profiles.py). Kept import-safe (spidev/RPi.GPIO imported lazily) so the
+rest of the firmware can be developed and tested with --simulate on any
+machine.
 """
 from __future__ import annotations
 
@@ -50,6 +51,40 @@ _CMD_WRITE_RAM_BW = 0x24
 _CMD_DISPLAY_UPDATE_CONTROL_2 = 0x22
 _CMD_MASTER_ACTIVATION = 0x20
 _CMD_DEEP_SLEEP = 0x10
+_CMD_WRITE_LUT = 0x32
+_CMD_END_OPTION = 0x3F
+_CMD_GATE_VOLTAGE = 0x03
+_CMD_SOURCE_VOLTAGE = 0x04
+_CMD_WRITE_VCOM = 0x2C
+
+# 0x22 display-update sequences: display mode 1 with the waveform from OTP,
+# or with the waveform already loaded into registers via 0x32.
+_UPDATE_FULL_OTP_LUT = 0xF7
+_UPDATE_FULL_REGISTER_LUT = 0xC7
+
+# Waveshare epd2in13_V3.py `lut_full_update` (same bytes ESPHome's 2.13inv3
+# loads): 153 bytes for 0x32 — 5x12 voltage selects, 12x7 phase timings,
+# 6 frame-rate bytes, 3 XON bytes.
+FULL_UPDATE_WAVEFORM_2_13 = bytes(
+    [0x80, 0x4A, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x40, 0x4A, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x80, 0x4A, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x40, 0x4A, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0] * 12
+    + [0xF, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0xF, 0x0, 0x0, 0xF, 0x0, 0x0, 0x2]
+    + [0xF, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0] * (8 * 7)
+    + [0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x0, 0x0, 0x0]
+)
+# The five bytes that follow the LUT in Waveshare's list:
+# EOPT (0x3F), VGH (0x03), VSH1/VSH2/VSL (0x04), VCOM (0x2C).
+FULL_UPDATE_VOLTAGES_2_13 = (0x22, 0x17, bytes([0x41, 0x00, 0x32]), 0x36)
+
+_REGISTER_WAVEFORMS = {
+    "2.13in": (FULL_UPDATE_WAVEFORM_2_13, FULL_UPDATE_VOLTAGES_2_13),
+}
 
 # spidev's SPI_IOC_WR_MAX xfer size on the Pi is 4096 bytes by default;
 # chunk defensively rather than assume /sys/module/spidev/parameters/bufsiz.
@@ -199,6 +234,18 @@ class EPaperDisplay(DisplayHAL):
         self._write_command(_CMD_DISPLAY_UPDATE_CONTROL, bytes([0x00, 0x80]))
         self._set_cursor(0, 0)
         self._wait_busy(phase="init")
+        self._load_register_waveform()
+
+    def _load_register_waveform(self) -> None:
+        waveform = _REGISTER_WAVEFORMS.get(self.profile.name)
+        if waveform is None:
+            return
+        lut, (eopt, vgh, source, vcom) = waveform
+        self._write_command(_CMD_WRITE_LUT, lut)
+        self._write_command(_CMD_END_OPTION, bytes([eopt]))
+        self._write_command(_CMD_GATE_VOLTAGE, bytes([vgh]))
+        self._write_command(_CMD_SOURCE_VOLTAGE, source)
+        self._write_command(_CMD_WRITE_VCOM, bytes([vcom]))
 
     def _set_cursor(self, x_byte: int, y: int) -> None:
         self._write_command(_CMD_SET_RAM_X_COUNTER, bytes([x_byte & 0xFF]))
@@ -230,9 +277,10 @@ class EPaperDisplay(DisplayHAL):
     def _spi_write_frame(self, bitmap: bytes) -> None:
         self._set_cursor(0, 0)
         self._write_command(_CMD_WRITE_RAM_BW, self._to_native_orientation(bitmap))
-        # 0xF7: full refresh using the controller's OTP LUT — no
-        # panel-specific waveform table needed (see module docstring).
-        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([0xF7]))
+        update = (
+            _UPDATE_FULL_REGISTER_LUT if self.profile.name in _REGISTER_WAVEFORMS else _UPDATE_FULL_OTP_LUT
+        )
+        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([update]))
         self._write_command(_CMD_MASTER_ACTIVATION)
         # A real full refresh is electromechanical — on the order of a
         # second or more, not milliseconds; see _wait_busy()'s docstring.
