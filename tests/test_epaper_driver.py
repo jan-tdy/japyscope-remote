@@ -12,8 +12,15 @@ from firmware.hal.display.epaper import (
     _CMD_MASTER_ACTIVATION,
     _CMD_SET_RAM_X_ADDRESS,
     _CMD_SET_RAM_Y_ADDRESS,
+    _CMD_END_OPTION,
+    _CMD_GATE_VOLTAGE,
+    _CMD_SOURCE_VOLTAGE,
     _CMD_SW_RESET,
+    _CMD_WRITE_LUT,
     _CMD_WRITE_RAM_BW,
+    _CMD_WRITE_VCOM,
+    FULL_UPDATE_VOLTAGES_2_13,
+    FULL_UPDATE_WAVEFORM_2_13,
     EPaperDisplay,
 )
 from firmware.hal.display.profiles import PROFILE_2_13, PROFILE_4_26
@@ -111,6 +118,40 @@ def _data_after(spi: _FakeSPI, cmd: int) -> list[int]:
     commands = spi.writes
     idx = next(i for i, w in enumerate(commands) if w == [cmd])
     return commands[idx + 1]
+
+
+def test_full_update_waveform_is_a_complete_ssd1680_lut():
+    assert len(FULL_UPDATE_WAVEFORM_2_13) == 153
+
+
+def test_init_loads_register_waveform_for_2_13():
+    display, _, spi = _wired_display()
+    display._init_controller()
+
+    # Compared as one ordered slice: 0x03 also appears earlier as the data
+    # byte of DATA_ENTRY_MODE, so looking commands up individually is ambiguous.
+    start = spi.writes.index([_CMD_WRITE_LUT])
+    eopt, vgh, source, vcom = FULL_UPDATE_VOLTAGES_2_13
+    assert spi.writes[start:] == [
+        [_CMD_WRITE_LUT], list(FULL_UPDATE_WAVEFORM_2_13),
+        [_CMD_END_OPTION], [eopt],
+        [_CMD_GATE_VOLTAGE], [vgh],
+        [_CMD_SOURCE_VOLTAGE], list(source),
+        [_CMD_WRITE_VCOM], [vcom],
+    ]
+
+
+def test_refresh_uses_register_waveform_on_2_13_and_otp_elsewhere():
+    display, _, spi = _wired_display()
+    display._spi_write_frame(render(PROFILE_2_13, ["x"]))
+    assert _data_after(spi, _CMD_DISPLAY_UPDATE_CONTROL_2) == [0xC7]
+
+    other = EPaperDisplay(profile=PROFILE_4_26)
+    other._gpio, other._spi = _FakeGPIO(), _FakeSPI()
+    other._init_controller()
+    assert [_CMD_WRITE_LUT] not in other._spi.writes
+    other._spi_write_frame(render(PROFILE_4_26, ["x"]))
+    assert _data_after(other._spi, _CMD_DISPLAY_UPDATE_CONTROL_2) == [0xF7]
 
 
 def test_init_controller_uses_native_ram_axes_not_logical():

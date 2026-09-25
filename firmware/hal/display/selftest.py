@@ -6,15 +6,16 @@ Stop japyscope-app first so nothing else holds the GPIO/SPI pins, then:
     cd /opt/japyscope/current
     sudo .venv/bin/python -m firmware.hal.display.selftest
 
-A literal port of Seeed_GFX's SSD1680 sequence (SSD1680_Init.h /
-SSD1680_Defines.h) with no rasterizer, rotation or DisplayHAL involved:
-paints the whole panel black, then white. If the panel doesn't flash here
-either, the fault is in the wiring/board, not in the firmware driver.
+The Waveshare epd2in13_V3 / ESPHome `2.13inv3` sequence (waveform loaded
+into registers, refresh with 0x22=0xC7) with no rasterizer, rotation or
+DisplayHAL involved: paints the whole panel black, then white.
 """
 from __future__ import annotations
 
 import sys
 import time
+
+from .epaper import FULL_UPDATE_VOLTAGES_2_13, FULL_UPDATE_WAVEFORM_2_13
 
 DC, RST, BUSY = 25, 17, 24
 SOURCE_BYTES, GATES = 16, 250  # 2.13" native RAM: 122 (padded to 128) x 250
@@ -95,16 +96,24 @@ def main() -> int:
         cmd(0x11, 0x03)
         cmd(0x44, 0x00, SOURCE_BYTES - 1)
         cmd(0x45, 0x00, 0x00, (GATES - 1) & 0xFF, (GATES - 1) >> 8)
+        cmd(0x21, 0x00, 0x80)
         cmd(0x18, 0x80)
         cmd(0x4E, 0x00)
         cmd(0x4F, 0x00, 0x00)
         wait("init")
 
+        eopt, vgh, source, vcom = FULL_UPDATE_VOLTAGES_2_13
+        cmd(0x32, *FULL_UPDATE_WAVEFORM_2_13)
+        cmd(0x3F, eopt)
+        cmd(0x03, vgh)
+        cmd(0x04, *source)
+        cmd(0x2C, vcom)
+
         results = []
         for name, fill in (("BLACK", 0x00), ("WHITE", 0xFF)):
             print(f"Full refresh to {name} — watch the panel")
             frame(fill)
-            cmd(0x22, 0xF7)
+            cmd(0x22, 0xC7)
             cmd(0x20)
             results.append(wait(f"refresh {name}"))
 
@@ -116,12 +125,10 @@ def main() -> int:
     if floating:
         verdict = "BUSY is not connected — fix the BUSY wire before anything else."
     elif all(t >= 0.3 for t in results):
-        verdict = ("Refresh timing looks real. If the panel flashed black then white, the panel and "
-                   "wiring are fine and the problem is in the firmware driver.")
+        verdict = "Refresh timing looks real — the panel should have flashed black, then white."
     else:
-        verdict = ("Refresh finished far too fast for a real e-paper waveform — the controller answers "
-                   "but never drives the panel. Check the 24-pin FPC ribbon seating and the driver "
-                   "board's power, not the firmware.")
+        verdict = ("Refresh finished far too fast for a real e-paper waveform even with the waveform "
+                   "loaded into registers — check the SCK/MOSI/CS/DC wires and the FPC ribbon seating.")
     print(verdict)
     return 0
 
