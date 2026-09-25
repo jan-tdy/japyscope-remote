@@ -94,6 +94,15 @@ def test_spi_write_frame_sends_bitmap_then_activates():
     assert not any(bytes(w) == bitmap for w in spi.writes)
 
 
+def test_spi_write_frame_fills_both_rams_with_the_same_frame():
+    display, _, spi = _wired_display()
+    bitmap = render(PROFILE_2_13, ["hello"])
+    display._spi_write_frame(bitmap)
+    expected = list(rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True))
+    for ram in (0x24, 0x26):
+        assert _data_after(spi, ram) == expected
+
+
 def test_spi_write_frame_passes_through_unrotated_when_native_matches_logical():
     display = EPaperDisplay(profile=PROFILE_4_26)  # native == logical, no rotation
     gpio, spi = _FakeGPIO(), _FakeSPI()
