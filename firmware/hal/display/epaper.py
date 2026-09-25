@@ -21,6 +21,7 @@ machine.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -35,6 +36,18 @@ logger = logging.getLogger(__name__)
 # that can't be confirmed without the physical panel in hand — flip this if
 # the drawn frame comes out mirrored/rotated the wrong way once wired up.
 _ROTATE_CLOCKWISE = True
+
+# Seeed's early ePaper Driver Board V2 batch (MOA250113001) only passes SPI
+# cleanly between ~20 and ~200 kHz; faster, the panel receives corrupted
+# bytes (Seeed forum, "ePaper Driver Board for Seeed Studio XIAO"). 100 kHz
+# works on every batch and still writes a full frame in well under a second.
+# Override with JAPYSCOPE_EPAPER_SPI_HZ (e.g. in /etc/japyscope/environment).
+DEFAULT_SPI_HZ = 100_000
+
+
+def spi_speed_hz() -> int:
+    value = os.environ.get("JAPYSCOPE_EPAPER_SPI_HZ", "")
+    return int(value) if value.strip() else DEFAULT_SPI_HZ
 
 # SSD1680 command bytes used here (subset — see datasheet ch. 8).
 _CMD_SW_RESET = 0x12
@@ -122,9 +135,8 @@ class EPaperDisplay(DisplayHAL):
         GPIO.setup(self.busy_pin, GPIO.IN)
         spi = spidev.SpiDev()
         spi.open(0, 0)
-        # 1 MHz: hand-soldered wires between the Pi and the driver board; a
-        # corrupted waveform byte makes the refresh end instantly.
-        spi.max_speed_hz = 1_000_000
+        spi.max_speed_hz = spi_speed_hz()
+        spi.mode = 0
         self._spi = spi
         self._bring_up()
 
