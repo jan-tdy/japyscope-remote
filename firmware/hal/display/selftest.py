@@ -3,7 +3,8 @@
 Stop japyscope-app first so nothing else holds the GPIO/SPI pins, then:
 
     sudo systemctl stop japyscope-app
-    /opt/japyscope/current/.venv/bin/python -m firmware.hal.display.selftest
+    cd /opt/japyscope/current
+    sudo .venv/bin/python -m firmware.hal.display.selftest
 
 A literal port of Seeed_GFX's SSD1680 sequence (SSD1680_Init.h /
 SSD1680_Defines.h) with no rasterizer, rotation or DisplayHAL involved:
@@ -26,11 +27,21 @@ def main() -> int:
 
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(DC, GPIO.OUT)
-    GPIO.setup(RST, GPIO.OUT)
+    GPIO.setup(DC, GPIO.OUT, initial=GPIO.HIGH)
+    # initial=HIGH: RPi.GPIO defaults outputs to LOW, which would hold the
+    # panel in hardware reset (and its BUSY pin possibly high-impedance).
+    GPIO.setup(RST, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(BUSY, GPIO.IN, pull_up_down=GPIO.PUD_OFF)
 
-    # A pin the panel actively drives reads the same regardless of the Pi's
-    # weak internal pull; a disconnected pin follows the pull.
+    print("Hardware reset (Seeed timing: 10ms low, 120ms high)")
+    GPIO.output(RST, GPIO.LOW)
+    time.sleep(0.01)
+    GPIO.output(RST, GPIO.HIGH)
+    time.sleep(0.12)
+
+    # Idle and out of reset, the panel drives BUSY low; a pin the panel
+    # drives reads the same under either internal pull, a disconnected one
+    # follows the pull.
     GPIO.setup(BUSY, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
     time.sleep(0.01)
     low_pull = GPIO.input(BUSY)
@@ -74,11 +85,6 @@ def main() -> int:
         return elapsed
 
     try:
-        print("Hardware reset (Seeed timing: 10ms low, 120ms high)")
-        GPIO.output(RST, GPIO.LOW)
-        time.sleep(0.01)
-        GPIO.output(RST, GPIO.HIGH)
-        time.sleep(0.12)
         wait("after hw reset")
 
         cmd(0x12)
