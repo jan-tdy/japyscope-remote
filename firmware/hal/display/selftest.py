@@ -56,7 +56,7 @@ def main() -> int:
 
     spi = spidev.SpiDev()
     spi.open(0, 0)
-    spi.max_speed_hz = 4_000_000
+    spi.max_speed_hz = 1_000_000
     spi.mode = 0
 
     def cmd(c: int, *data: int) -> None:
@@ -67,12 +67,13 @@ def main() -> int:
             spi.writebytes(list(data))
 
     def frame(fill: int) -> None:
-        cmd(0x4E, 0x00)
-        cmd(0x4F, 0x00, 0x00)
-        GPIO.output(DC, GPIO.LOW)
-        spi.writebytes([0x24])
-        GPIO.output(DC, GPIO.HIGH)
-        spi.writebytes([fill] * FRAME_BYTES)
+        for ram in (0x24, 0x26):
+            cmd(0x4E, 0x00)
+            cmd(0x4F, 0x00, 0x00)
+            GPIO.output(DC, GPIO.LOW)
+            spi.writebytes([ram])
+            GPIO.output(DC, GPIO.HIGH)
+            spi.writebytes([fill] * FRAME_BYTES)
 
     def wait(label: str, timeout: float = 10.0) -> float:
         start = time.monotonic()

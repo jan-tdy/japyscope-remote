@@ -48,6 +48,7 @@ _CMD_DISPLAY_UPDATE_CONTROL = 0x21
 _CMD_SET_RAM_X_COUNTER = 0x4E
 _CMD_SET_RAM_Y_COUNTER = 0x4F
 _CMD_WRITE_RAM_BW = 0x24
+_CMD_WRITE_RAM_RED = 0x26
 _CMD_DISPLAY_UPDATE_CONTROL_2 = 0x22
 _CMD_MASTER_ACTIVATION = 0x20
 _CMD_DEEP_SLEEP = 0x10
@@ -121,7 +122,9 @@ class EPaperDisplay(DisplayHAL):
         GPIO.setup(self.busy_pin, GPIO.IN)
         spi = spidev.SpiDev()
         spi.open(0, 0)
-        spi.max_speed_hz = 4_000_000
+        # 1 MHz: hand-soldered wires between the Pi and the driver board; a
+        # corrupted waveform byte makes the refresh end instantly.
+        spi.max_speed_hz = 1_000_000
         self._spi = spi
         self._bring_up()
 
@@ -275,8 +278,12 @@ class EPaperDisplay(DisplayHAL):
         )
 
     def _spi_write_frame(self, bitmap: bytes) -> None:
-        self._set_cursor(0, 0)
-        self._write_command(_CMD_WRITE_RAM_BW, self._to_native_orientation(bitmap))
+        native = self._to_native_orientation(bitmap)
+        # The controller picks each pixel's waveform from both RAMs; ESPHome's
+        # 2.13inv3 fills the second one too rather than leave power-on garbage.
+        for ram in (_CMD_WRITE_RAM_BW, _CMD_WRITE_RAM_RED):
+            self._set_cursor(0, 0)
+            self._write_command(ram, native)
         update = (
             _UPDATE_FULL_REGISTER_LUT if self.profile.name in _REGISTER_WAVEFORMS else _UPDATE_FULL_OTP_LUT
         )
