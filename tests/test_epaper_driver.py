@@ -65,7 +65,7 @@ def test_reset_pulses_rst_low_then_high():
     display, gpio, _ = _wired_display()
     display._reset()
     pin_values = [value for name, pin, value in gpio.calls if pin == display.rst_pin]
-    assert pin_values == [gpio.HIGH, gpio.LOW, gpio.HIGH]
+    assert pin_values == [gpio.LOW, gpio.HIGH]
 
 
 def test_spi_write_frame_sends_bitmap_then_activates():

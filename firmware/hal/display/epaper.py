@@ -161,17 +161,18 @@ class EPaperDisplay(DisplayHAL):
     # -- panel bring-up -------------------------------------------------
 
     def _reset(self) -> None:
-        # Typical SSD1680 hardware-reset pulse; near-identical across the
-        # Waveshare/GoodDisplay reference drivers this panel family uses.
-        self._gpio.output(self.rst_pin, self._gpio.HIGH)
-        time.sleep(0.02)
+        # Seeed_GFX's SSD1680_Init.h timing for the XIAO ePaper driver board
+        # (BOARD_SCREEN_COMBO 508): 10ms low, then 120ms high before the
+        # controller is ready. Waveshare's shorter 20ms settle isn't enough
+        # for every panel revision.
         self._gpio.output(self.rst_pin, self._gpio.LOW)
-        time.sleep(0.002)
+        time.sleep(0.01)
         self._gpio.output(self.rst_pin, self._gpio.HIGH)
-        time.sleep(0.02)
+        time.sleep(0.12)
 
     def _init_controller(self) -> None:
         profile = self.profile
+        self._wait_busy(phase="hw-reset")
         self._write_command(_CMD_SW_RESET)
         self._wait_busy(phase="sw-reset")
 
