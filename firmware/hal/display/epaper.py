@@ -121,33 +121,41 @@ class EPaperDisplay(DisplayHAL):
         for offset in range(0, len(data), _SPI_CHUNK):
             self._spi.writebytes(list(data[offset : offset + _SPI_CHUNK]))
 
-    def _wait_busy(self, timeout_s: float = 5.0) -> None:
+    def _wait_busy(self, timeout_s: float = 5.0, phase: str = "reset/init", min_expected_s: float = 0.005) -> None:
         # Logged at INFO (not DEBUG) because it's the cheapest hardware-bring-up
-        # diagnostic available without a scope: real SSD1680 panels hold BUSY
-        # high for tens of milliseconds during reset/init/refresh. A wait that
-        # clears in ~0ms on every call, with the panel showing no visible
-        # activity, means BUSY (and likely the rest of the SPI bus) isn't
-        # actually reaching the panel — a wiring problem, not a code one; the
-        # SPI/GPIO calls here "succeed" regardless of what's physically wired
-        # on the other end. See docs/WIRING.md.
+        # diagnostic available without a scope. `min_expected_s` is phase-
+        # specific: SW-reset/init BUSY is genuinely short (single-digit-to-
+        # tens of ms on real SSD1680 hardware), but a *full refresh* (the
+        # call from _spi_write_frame, after MASTER_ACTIVATION) is an
+        # electromechanical process — real hardware holds BUSY for on the
+        # order of a second or more while the panel visibly flashes, so
+        # 300ms is already a generous floor. Clearing faster than the floor,
+        # with the panel showing no visible activity, means BUSY (and likely
+        # the rest of the SPI bus) isn't actually reaching the panel — a
+        # wiring problem, not a code one; the SPI/GPIO calls here "succeed"
+        # regardless of what's physically wired on the other end. See
+        # docs/WIRING.md.
         start = time.monotonic()
         deadline = start + timeout_s
         while self._gpio.input(self.busy_pin) == self._gpio.HIGH:
             if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"{self.profile.controller} BUSY pin (BCM{self.busy_pin}) stuck high "
-                    f"past {timeout_s}s — check docs/WIRING.md wiring/pin numbers"
+                    f"past {timeout_s}s during {phase} — check docs/WIRING.md wiring/pin numbers"
                 )
             time.sleep(0.01)
         elapsed = time.monotonic() - start
-        logger.info("%s BUSY (BCM%d) cleared after %.3fs", self.profile.controller, self.busy_pin, elapsed)
-        if elapsed < 0.005:
+        logger.info(
+            "%s BUSY (BCM%d) cleared after %.3fs (%s)",
+            self.profile.controller, self.busy_pin, elapsed, phase,
+        )
+        if elapsed < min_expected_s:
             logger.warning(
-                "BUSY (BCM%d) cleared suspiciously fast (%.3fs) — a real %s panel holds it "
-                "high for tens of ms during reset/init/refresh; this near-instant clear usually "
-                "means BUSY isn't actually wired to the panel (floating pin), which often means "
-                "the rest of the SPI bus isn't either — check continuity against docs/WIRING.md",
-                self.busy_pin, elapsed, self.profile.controller,
+                "BUSY (BCM%d) cleared suspiciously fast for %s (%.3fs, expected at least %.3fs) — "
+                "this near-instant clear usually means BUSY isn't actually wired to the panel "
+                "(floating pin), which often means the rest of the SPI bus isn't either — check "
+                "continuity against docs/WIRING.md",
+                self.busy_pin, phase, elapsed, min_expected_s,
             )
 
     # -- panel bring-up -------------------------------------------------
@@ -165,7 +173,7 @@ class EPaperDisplay(DisplayHAL):
     def _init_controller(self) -> None:
         profile = self.profile
         self._write_command(_CMD_SW_RESET)
-        self._wait_busy()
+        self._wait_busy(phase="sw-reset")
 
         # Native RAM axes, not the logical width/height — see profiles.py's
         # native_width/native_height and _to_native_orientation() below.
@@ -189,7 +197,7 @@ class EPaperDisplay(DisplayHAL):
         self._write_command(_CMD_TEMP_SENSOR_CONTROL, bytes([0x80]))  # internal sensor
         self._write_command(_CMD_DISPLAY_UPDATE_CONTROL, bytes([0x00, 0x80]))
         self._set_cursor(0, 0)
-        self._wait_busy()
+        self._wait_busy(phase="init")
 
     def _set_cursor(self, x_byte: int, y: int) -> None:
         self._write_command(_CMD_SET_RAM_X_COUNTER, bytes([x_byte & 0xFF]))
@@ -225,7 +233,9 @@ class EPaperDisplay(DisplayHAL):
         # panel-specific waveform table needed (see module docstring).
         self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([0xF7]))
         self._write_command(_CMD_MASTER_ACTIVATION)
-        self._wait_busy()
+        # A real full refresh is electromechanical — on the order of a
+        # second or more, not milliseconds; see _wait_busy()'s docstring.
+        self._wait_busy(phase="full refresh", min_expected_s=0.3)
 
     def sleep(self) -> None:
         """Deep-sleep the panel (SSD1680 datasheet 0x10) — call when the
