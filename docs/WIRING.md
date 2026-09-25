@@ -116,11 +116,12 @@ same event codes as the KY-040 rotary encoder above (`ENC_UP`/`ENC_DOWN`/
 (`JOY_LEFT`/`JOY_RIGHT`, unique to it) drives manual N/S/E/W jogging — see
 `docs/CODES.md`.
 
-## Display (e-ink, SPI) — panel not finalized
+## Display (e-ink, SPI) — 2.13" confirmed, not yet soldered
 {: #display}
 
-See `docs/ARCHITECTURE.md` for the 2.13"-vs-4.26" status. SPI wiring is the
-same regardless of panel size (`firmware/hal/display/epaper.py`):
+See `docs/ARCHITECTURE.md` for the confirmed 2.13"/SSD1680 pick (4.26" kept
+as a fallback profile). SPI wiring is the same regardless of panel size
+(`firmware/hal/display/epaper.py`):
 
 | Signal | BCM pin | Notes |
 |---|---|---|
