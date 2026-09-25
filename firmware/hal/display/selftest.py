@@ -4,7 +4,7 @@ Stop japyscope-app first so nothing else holds the GPIO/SPI pins, then:
 
     sudo systemctl stop japyscope-app
     cd /opt/japyscope/current
-    sudo .venv/bin/python -m firmware.hal.display.selftest
+    sudo .venv/bin/python -m firmware.hal.display.selftest [SPI_HZ]
 
 The Waveshare epd2in13_V3 / ESPHome `2.13inv3` sequence (waveform loaded
 into registers, refresh with 0x22=0xC7) with no rasterizer, rotation or
@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 import time
 
-from .epaper import FULL_UPDATE_VOLTAGES_2_13, FULL_UPDATE_WAVEFORM_2_13
+from .epaper import FULL_UPDATE_VOLTAGES_2_13, FULL_UPDATE_WAVEFORM_2_13, spi_speed_hz
 
 DC, RST, BUSY = 25, 17, 24
 SOURCE_BYTES, GATES = 16, 250  # 2.13" native RAM: 122 (padded to 128) x 250
@@ -56,7 +56,8 @@ def main() -> int:
 
     spi = spidev.SpiDev()
     spi.open(0, 0)
-    spi.max_speed_hz = 1_000_000
+    spi.max_speed_hz = int(sys.argv[1]) if len(sys.argv) > 1 else spi_speed_hz()
+    print(f"SPI clock: {spi.max_speed_hz} Hz")
     spi.mode = 0
 
     def cmd(c: int, *data: int) -> None:

@@ -22,6 +22,7 @@ from firmware.hal.display.epaper import (
     FULL_UPDATE_VOLTAGES_2_13,
     FULL_UPDATE_WAVEFORM_2_13,
     EPaperDisplay,
+    spi_speed_hz,
 )
 from firmware.hal.display.profiles import PROFILE_2_13, PROFILE_4_26
 from firmware.hal.display.rasterizer import render, rotate_90, stride_for
@@ -127,6 +128,13 @@ def _data_after(spi: _FakeSPI, cmd: int) -> list[int]:
     commands = spi.writes
     idx = next(i for i, w in enumerate(commands) if w == [cmd])
     return commands[idx + 1]
+
+
+def test_spi_speed_defaults_below_the_seeed_v2_limit_and_can_be_overridden(monkeypatch):
+    monkeypatch.delenv("JAPYSCOPE_EPAPER_SPI_HZ", raising=False)
+    assert spi_speed_hz() == 100_000
+    monkeypatch.setenv("JAPYSCOPE_EPAPER_SPI_HZ", "2000000")
+    assert spi_speed_hz() == 2_000_000
 
 
 def test_full_update_waveform_is_a_complete_ssd1680_lut():
