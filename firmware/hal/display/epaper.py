@@ -108,14 +108,18 @@ _SPI_CHUNK = 4096
 class EPaperDisplay(DisplayHAL):
     """SPI wiring (BCM numbering) — cross-check against docs/WIRING.md,
     which is the single source of truth once pins are finalized:
-      - SPI0 MOSI/SCLK/CE0 for DIN/CLK/CS
+      - SPI0 MOSI/SCLK for DIN/CLK; CS on CE0's pin (BCM8), driven here
+        as a plain GPIO (see _transfer())
       - a free GPIO for DC (data/command)
       - a free GPIO for RST
       - a free GPIO for BUSY (input)
     """
 
-    def __init__(self, *args, dc_pin: int = 25, rst_pin: int = 17, busy_pin: int = 24, **kwargs):
+    def __init__(
+        self, *args, dc_pin: int = 25, rst_pin: int = 17, busy_pin: int = 24, cs_pin: int = 8, **kwargs
+    ):
         super().__init__(*args, **kwargs)
+        self.cs_pin = cs_pin
         self.dc_pin = dc_pin
         self.rst_pin = rst_pin
         self.busy_pin = busy_pin
@@ -130,13 +134,22 @@ class EPaperDisplay(DisplayHAL):
 
         self._gpio = GPIO
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.dc_pin, GPIO.OUT)
-        GPIO.setup(self.rst_pin, GPIO.OUT)
+        GPIO.setup(self.dc_pin, GPIO.OUT, initial=GPIO.HIGH)
+        GPIO.setup(self.rst_pin, GPIO.OUT, initial=GPIO.HIGH)
         GPIO.setup(self.busy_pin, GPIO.IN)
         spi = spidev.SpiDev()
         spi.open(0, 0)
         spi.max_speed_hz = spi_speed_hz()
         spi.mode = 0
+        # On the bring-up Pi, CE0 never went low during a spidev transfer
+        # while SCK/MOSI toggled, so the panel was never selected. Drive CS
+        # ourselves (as Waveshare's Pi driver does) instead of trusting the
+        # kernel's chip select.
+        try:
+            spi.no_cs = True
+        except OSError as exc:
+            logger.warning("spidev refused no_cs (%s); driving CS alongside the kernel", exc)
+        GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.HIGH)
         self._spi = spi
         self._bring_up()
 
@@ -160,16 +173,23 @@ class EPaperDisplay(DisplayHAL):
 
     # -- low-level SPI/GPIO helpers -----------------------------------
 
+    def _transfer(self, data: list[int]) -> None:
+        self._gpio.output(self.cs_pin, self._gpio.LOW)
+        try:
+            self._spi.writebytes(data)
+        finally:
+            self._gpio.output(self.cs_pin, self._gpio.HIGH)
+
     def _write_command(self, cmd: int, data: bytes = b"") -> None:
         self._gpio.output(self.dc_pin, self._gpio.LOW)
-        self._spi.writebytes([cmd])
+        self._transfer([cmd])
         if data:
             self._write_data(data)
 
     def _write_data(self, data: bytes) -> None:
         self._gpio.output(self.dc_pin, self._gpio.HIGH)
         for offset in range(0, len(data), _SPI_CHUNK):
-            self._spi.writebytes(list(data[offset : offset + _SPI_CHUNK]))
+            self._transfer(list(data[offset : offset + _SPI_CHUNK]))
 
     def _wait_busy(self, timeout_s: float = 5.0, phase: str = "reset/init", min_expected_s: float = 0.005) -> None:
         # Logged at INFO (not DEBUG) because it's the cheapest hardware-bring-up
