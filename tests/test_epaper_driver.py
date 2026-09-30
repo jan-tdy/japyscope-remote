@@ -63,6 +63,25 @@ def _wired_display() -> tuple[EPaperDisplay, _FakeGPIO, _FakeSPI]:
     return display, gpio, spi
 
 
+def test_every_spi_transfer_is_framed_by_cs_driven_as_gpio():
+    # The kernel's CE0 never asserted on the bring-up Pi, so the driver
+    # drives CS itself: LOW for each transfer, HIGH again after it.
+    display, gpio, spi = _wired_display()
+    levels_during_writes = []
+    original = spi.writebytes
+
+    def recording_writebytes(data):
+        cs_levels = [value for name, pin, value in gpio.calls if pin == display.cs_pin]
+        levels_during_writes.append(cs_levels[-1])
+        original(data)
+
+    spi.writebytes = recording_writebytes
+    display._write_command(0x3C, bytes([0x05]))
+    assert levels_during_writes == [gpio.LOW, gpio.LOW]
+    cs_levels = [value for name, pin, value in gpio.calls if pin == display.cs_pin]
+    assert cs_levels == [gpio.LOW, gpio.HIGH, gpio.LOW, gpio.HIGH]
+
+
 def test_init_controller_sends_sw_reset_first():
     display, _, spi = _wired_display()
     display._init_controller()
