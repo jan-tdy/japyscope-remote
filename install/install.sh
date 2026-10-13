@@ -5,19 +5,55 @@ if [[ $EUID -ne 0 ]]; then
   echo "Run this installer with sudo." >&2
   exit 1
 fi
+
+# --no-ap: skip only the automatic boot-time Wi-Fi setup hotspot
+# (japyscope-wifi-ap.service, which brings the AP up on its own when no
+# client Wi-Fi is associated) — ideal when Wi-Fi is already configured on
+# the OS itself (e.g. preseeded via Raspberry Pi Imager) and that
+# automatic fallback should never fire. Everything the AP needs to be
+# brought up manually later — hostapd/dnsmasq or the NetworkManager
+# hotspot profile, the AP password, japyscope-wifi-ap itself, and the Web
+# UI's "Restart Wi-Fi setup" action (System page) / the eventual Dev
+# Tools code 5000 (docs/CODES.md) — is still installed and left working.
+no_ap=0
+force=0
+for arg in "$@"; do
+  case $arg in
+    --no-ap) no_ap=1 ;;
+    --force) force=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir=$(cd -- "$script_dir/.." && pwd)
 if [[ ! -r /etc/os-release ]]; then echo "Cannot identify this operating system." >&2; exit 1; fi
 # shellcheck disable=SC1091
 source /etc/os-release
-if [[ ${VERSION_CODENAME:-} != bullseye ]]; then
-  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye Lite (32-bit)." >&2
+case ${VERSION_CODENAME:-} in
+  bullseye|bookworm|trixie) ;;
+  *)
+  echo "JapyScope Pi Zero W requires Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite (32-bit)." >&2
   exit 1
-fi
+  ;;
+esac
 arch=$(dpkg --print-architecture)
 if [[ $arch != armhf ]]; then echo "Expected the 32-bit armhf image, found $arch." >&2; exit 1; fi
 
 export DEBIAN_FRONTEND=noninteractive
+
+# True when running on a real, booted system (systemd is actually PID 1
+# and reachable) — false under install-factory.sh's chroot (SD card
+# mounted and provisioned from another computer via a card reader,
+# before the Pi has ever booted this filesystem). `systemctl enable`,
+# `unmask`, and `disable` are pure symlink/file operations and work fine
+# either way; `start`/`restart`/`daemon-reload` need a live service
+# manager and hang or fail under chroot, so those are skipped when this
+# is false — the units are already enabled, so they start normally on
+# the real first boot instead.
+systemd_is_live() {
+  [[ -d /run/systemd/system ]]
+}
 
 # Real Pi Zero W bring-up hit repeated apt/dpkg failures from marginal power
 # and a degrading SD card (see docs/TROUBLESHOOTING.md's "Filesystem went
@@ -83,17 +119,16 @@ apt_retry() {
 }
 
 apt_retry apt-get -o DPkg::Lock::Timeout=120 update
-apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin hostapd dnsmasq wpasupplicant sudo
+apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
-# Bullseye's apt libindi-dev (1.8.8+dfsg-1) predates the
-# INDI::PropertyView-family headers pyindi-client's SWIG interface needs
-# (indipropertyview.h, indipropertybasic.h, ...) and no apt repository ships
-# a newer one for armhf/Bullseye. Fetch a prebuilt INDI core (headers +
-# client lib only — indiserver/drivers keep using apt's indi-bin unchanged,
-# that has no dependency on libindi-dev at runtime) into /usr/local, one of
-# pyindi-client's own SWIG search paths. Built by
+# pyindi-client 2.2.0 requires INDI Core 2.x. Raspberry Pi OS Bullseye ships
+# 1.8.8 and Bookworm ships 1.9.9, both predating that API. Fetch a prebuilt
+# ARMv6-safe INDI core (headers + client lib only — indiserver/drivers keep
+# using apt's indi-bin unchanged, which has no runtime dependency on
+# libindi-dev) into /usr/local, one of pyindi-client's own SWIG search paths.
+# Built by
 # .github/workflows/build-libindi-armhf.yml; see docs/TROUBLESHOOTING.md.
 #
 # apt's libindi-dev must NOT be installed alongside this: pyindi-client's
@@ -114,9 +149,8 @@ libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
 # shellcheck disable=SC1091
 source "$source_dir/install/libindi-core.env"
 # Keyed on the SHA-256, not the tag: a broken build was once re-published
-# under the same tag with fixed content (a GitHub Release tag isn't
-# actually immutable), so a tag-only marker would wrongly think an old,
-# broken extraction was already up to date and skip re-fetching.
+# under the same tag with fixed content (a GitHub Release tag isn't actually
+# immutable), so a tag-only marker would wrongly skip re-fetching.
 if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA256" ]]; then
   tmp_tarball=$(mktemp)
   trap 'rm -f "${tmp_tarball:-}"' EXIT
@@ -127,20 +161,78 @@ if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA2
   tar -xzf "$tmp_tarball" -C /usr/local
   rm -f "$tmp_tarball"
   trap - EXIT
+  if [[ -d /usr/local/lib/arm-linux-gnueabihf ]]; then
+    find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
+  fi
   ldconfig
   install -d /usr/local/share/japyscope
   echo "$LIBINDI_CORE_SHA256" > "$libindi_core_marker"
 fi
 
+if [[ ${VERSION_CODENAME:-} == bullseye ]]; then
+  # hostapd/dnsmasq are installed regardless of --no-ap: that flag only
+  # skips the automatic boot-time fallback (japyscope-wifi-ap.service), not
+  # the AP's own setup — the Web UI's "Restart Wi-Fi setup" action (and the
+  # eventual Dev Tools code 5000, see docs/CODES.md) must still be able to
+  # bring the hotspot up manually on request.
+  apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends hostapd dnsmasq wpasupplicant
+  network_backend=wpa_supplicant
+else
+  # Bookworm/Trixie's supported network stack is NetworkManager; do not
+  # install hostapd/dnsmasq alongside it and fight for wlan0.
+  apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends network-manager
+  systemctl enable NetworkManager.service
+  if systemd_is_live; then systemctl start NetworkManager.service; fi
+  command -v nmcli >/dev/null
+  network_backend=networkmanager
+fi
+
 getent group gpio >/dev/null || groupadd --system gpio
 getent group spi >/dev/null || groupadd --system spi
+# For the optional external joystick's ADS1115 ADC (firmware/hal/input/
+# joystick.py, /dev/i2c-1) — same idea as the spi group above, needed only
+# if joystick_enabled is ever turned on. Enabling the I2C interface itself
+# (raspi-config or /boot/firmware/config.txt's dtparam=i2c_arm=on) is a
+# manual bring-up step, same as SPI today — see docs/WIRING.md.
+getent group i2c >/dev/null || groupadd --system i2c
+getent group systemd-journal >/dev/null || groupadd --system systemd-journal
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
 # The Web UI diagnostics page reads the service journal directly.
-usermod -a -G gpio,spi,dialout,netdev,systemd-journal japyscope
+usermod -a -G gpio,spi,i2c,dialout,netdev,systemd-journal,adm japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
+printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/network-backend
+chmod 644 /etc/japyscope/network-backend
 install -d -o japyscope -g japyscope -m 750 /var/lib/japyscope
 
-version=$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)
+# JAPYSCOPE_VERSION_OVERRIDE lets install-factory.sh pass through the real
+# `git describe` of the host checkout it copied from — its own copy into
+# the chroot deliberately excludes .git, so `git describe` in here would
+# otherwise always fall back to a timestamp.
+version=${JAPYSCOPE_VERSION_OVERRIDE:-$(git -C "$source_dir" describe --tags --always 2>/dev/null || date -u +%Y%m%d%H%M%S)}
+
+# Guard against silently reverting a newer release. install.sh and the OTA
+# updater (install/update.py) share the same /opt/japyscope/current symlink
+# and releases/ directory: if update.py has since advanced current to a
+# release fetched from GitHub but this checkout is stale (no `git pull`
+# since), blindly relinking current to whatever version string this
+# checkout resolves to would silently downgrade a working device back to
+# old code. Only meaningful on a live system already running some version —
+# skip it for a fresh install (no current symlink yet) and for
+# install-factory.sh's chroot runs (JAPYSCOPE_VERSION_OVERRIDE set), which
+# have no current symlink of their own to compare against.
+if [[ $force -eq 0 && -z ${JAPYSCOPE_VERSION_OVERRIDE:-} && -L /opt/japyscope/current ]]; then
+  active_version=$(basename "$(readlink -f /opt/japyscope/current)")
+  if [[ -n $active_version && $active_version != "$version" ]]; then
+    echo "Refusing to switch /opt/japyscope/current from '$active_version' to '$version'." >&2
+    echo "This checkout ($source_dir) resolves to a different version than what's currently" >&2
+    echo "active on this device — often because an OTA update (japyscope-update.timer)" >&2
+    echo "already advanced it past this checkout, or because this checkout just needs a" >&2
+    echo "'git pull'. Update this checkout first, or re-run with --force if you really mean" >&2
+    echo "to switch this device to '$version'." >&2
+    exit 1
+  fi
+fi
+
 release_dir=/opt/japyscope/releases/$version
 marker="$release_dir/.install-complete"
 if [[ -e $release_dir && ! -e $marker ]]; then
@@ -190,6 +282,7 @@ fi
 # nonempty root-only file prevents the controller from showing the password.
 chown root:japyscope "$ap_password_file"
 chmod 640 "$ap_password_file"
+if [[ $network_backend == wpa_supplicant ]]; then
 python3 - "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf "$ap_password_file" <<'PY'
 import pathlib
 import sys
@@ -204,14 +297,85 @@ chown root:root /etc/hostapd/japyscope.conf
 chmod 600 /etc/hostapd/japyscope.conf
 install -o root -g root -m 644 "$source_dir/install/dnsmasq.conf" /etc/dnsmasq.d/japyscope.conf
 sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/japyscope.conf"|' /etc/default/hostapd
-printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl reboot, /bin/systemctl poweroff' > /etc/sudoers.d/japyscope
+else
+  # The profile is deliberately non-autoconnecting: it is started only when
+  # no configured client Wi-Fi has associated, by japyscope-wifi-ap.
+  if systemd_is_live; then
+    nmcli connection delete id 'JapyScope Setup' >/dev/null 2>&1 || true
+    nmcli connection add type wifi ifname wlan0 con-name 'JapyScope Setup' autoconnect no ssid JapyScope-Setup
+    nmcli connection modify 'JapyScope Setup' wifi.mode ap wifi.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 ipv6.method disabled wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$(<"$ap_password_file")"
+  else
+    # No live NetworkManager to talk to (install-factory.sh's chroot) —
+    # nmcli needs its daemon running over D-Bus, which doesn't exist here.
+    # Write the equivalent connection profile as a keyfile directly;
+    # NetworkManager reads these unmodified on the real first boot. Must
+    # be root-only 0600, or NetworkManager silently ignores the file.
+    nm_conn_dir=/etc/NetworkManager/system-connections
+    install -d -m 700 "$nm_conn_dir"
+    nm_uuid=$(python3 -c 'import uuid; print(uuid.uuid4())')
+    nm_psk=$(<"$ap_password_file")
+    cat > "$nm_conn_dir/JapyScope Setup.nmconnection" <<NMCONN
+[connection]
+id=JapyScope Setup
+uuid=$nm_uuid
+type=wifi
+interface-name=wlan0
+autoconnect=false
+
+[wifi]
+mode=ap
+band=bg
+ssid=JapyScope-Setup
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$nm_psk
+
+[ipv4]
+method=shared
+address1=192.168.4.1/24
+
+[ipv6]
+method=disabled
+NMCONN
+    chown root:root "$nm_conn_dir/JapyScope Setup.nmconnection"
+    chmod 600 "$nm_conn_dir/JapyScope Setup.nmconnection"
+  fi
+fi
+printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /bin/systemctl restart japyscope-app.service, /bin/systemctl start japyscope-update.service, /bin/systemctl reboot, /bin/systemctl poweroff, /bin/journalctl *, /usr/bin/journalctl *' > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
-systemctl daemon-reload
-systemctl unmask hostapd.service
-systemctl enable japyscope-wifi-ap.service japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer
-systemctl restart japyscope-wifi-ap.service
-systemctl restart japyscope-app.service japyscope-webui.service
-echo "Wi-Fi setup password: sudo cat $ap_password_file"
-echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
+if systemd_is_live; then systemctl daemon-reload; fi
+if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
+# --no-ap only withholds japyscope-wifi-ap.service, the automatic
+# boot-time fallback that brings the hotspot up on its own when no client
+# Wi-Fi has associated yet. Manually invoking japyscope-wifi-ap --force
+# (the Web UI's "Restart Wi-Fi setup" action, eventually Dev Tools code
+# 5000) still works either way — everything it needs was just installed
+# above regardless of --no-ap.
+enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
+if [[ $no_ap -eq 0 ]]; then
+  enable_units=(japyscope-wifi-ap.service "${enable_units[@]}")
+else
+  # `systemctl enable` is additive only — merely leaving this unit out of
+  # enable_units above would not turn it off on a device where an earlier
+  # install.sh run (without --no-ap, or before this option existed) had
+  # already enabled it. Explicitly disable it (and stop it if it's
+  # currently up) so --no-ap's documented promise — no automatic hotspot —
+  # holds regardless of this device's install history.
+  systemctl disable japyscope-wifi-ap.service
+  if systemd_is_live; then systemctl stop japyscope-wifi-ap.service; fi
+fi
+systemctl enable "${enable_units[@]}"
+if systemd_is_live; then
+  if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi
+  systemctl restart japyscope-app.service japyscope-webui.service
+  echo "Wi-Fi setup password: sudo cat $ap_password_file"
+  echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
+else
+  # install-factory.sh's chroot: nothing is actually running yet — the
+  # enabled units above start themselves normally on the real first boot.
+  echo "Installed JapyScope $version onto this filesystem (offline/factory install)."
+  echo "Wi-Fi setup password: $(cat "$ap_password_file")"
+fi

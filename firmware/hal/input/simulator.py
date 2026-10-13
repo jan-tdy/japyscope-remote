@@ -1,6 +1,9 @@
 """Keyboard-driven input backend for --simulate, mirroring the HTML mockup's
 own keyboard shortcuts exactly: 1-9/0 = digits, Enter = encoder push,
-Up/Down = encoder rotate, Backspace = BKSP, F = FN2.
+Up/Down = encoder rotate, Backspace = BKSP, F = FN2. Left/Right = the
+external joystick's X-axis (JOY_LEFT/JOY_RIGHT) — there's no mockup
+equivalent for this one since the joystick postdates it, but it fits the
+same arrow-key cluster as Up/Down naturally.
 
 Uses a background thread reading raw (cbreak) stdin so keys are consumed the
 instant they're pressed, no Enter-to-submit line buffering — same feel as a
@@ -9,6 +12,7 @@ real keypad.
 from __future__ import annotations
 
 import io
+import logging
 import queue
 import select
 import sys
@@ -18,10 +22,14 @@ import tty
 from typing import Optional
 
 from .base import InputHAL
-from .keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, FN2
+from .keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+
+logger = logging.getLogger(__name__)
 
 _ESCAPE_UP = "\x1b[A"
 _ESCAPE_DOWN = "\x1b[B"
+_ESCAPE_RIGHT = "\x1b[C"
+_ESCAPE_LEFT = "\x1b[D"
 _POLL_TIMEOUT_S = 0.2
 _ESCAPE_FOLLOWUP_TIMEOUT_S = 0.01
 
@@ -45,6 +53,19 @@ class SimulatorInput(InputHAL):
                 tty.setcbreak(self._fd)
             except (termios.error, ValueError):
                 self._old_settings = None  # not a real TTY (e.g. piped input in tests)
+        if self._fd is None or self._old_settings is None:
+            # hw_sim_keypad/hw_sim_encoder (Settings page) pick this backend,
+            # but a systemd-managed japyscope-app.service has no interactive
+            # terminal (stdin is /dev/null) — this silently never produces a
+            # single event, with no other symptom than "nothing happens" and
+            # nothing in the logs. Log it loudly instead of staying quiet.
+            logger.warning(
+                "SIM-001 no interactive terminal on stdin — keyboard-simulated "
+                "input (hw_sim_keypad/hw_sim_encoder) will never receive a "
+                "keypress here. Run 'python3 -m firmware.main --simulate' "
+                "directly in a foreground terminal, not via systemd/journalctl, "
+                "to use keyboard-simulated input; see docs/TROUBLESHOOTING.md."
+            )
         self._thread.start()
 
     def _read_loop(self) -> None:
@@ -82,9 +103,13 @@ class SimulatorInput(InputHAL):
         if ch in ("f", "F"):
             return FN2
         if ch == _ESCAPE_UP:
-            return "ENC_UP"
+            return ENC_UP
         if ch == _ESCAPE_DOWN:
             return ENC_DOWN
+        if ch == _ESCAPE_LEFT:
+            return JOY_LEFT
+        if ch == _ESCAPE_RIGHT:
+            return JOY_RIGHT
         return None
 
     def poll(self, timeout: float = 0.1) -> Optional[str]:

@@ -1,6 +1,75 @@
-{% extends "base.html" %}{% block title %}Status · JapyScope{% endblock %}
+{% extends "base.html" %}
+{% block title %}Status · JapyScope{% endblock %}
 {% block head %}{% if live %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
-{% block content %}<h2>Status</h2>
-<table><tr><th>Item</th><th>Value</th></tr>{% for key in ['indi_connected','ra','dec','alt','az','tracking','aligned','parked'] %}<tr><td>{{ key|replace('_',' ')|title }}</td><td>{{ state.get(key, 'unknown') }}</td></tr>{% endfor %}</table>
-<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="{{ 'stop' if live else 'start' }}"><button>{{ 'Stop live view' if live else 'Start live view' }}</button></form>
-<p class="muted">{% if live %}Live view is active; this page refreshes every two seconds.{% else %}Showing last-known static values. Live position does not start until requested.{% endif %}</p>{% endblock %}
+
+{% block content %}
+<h2>Status</h2>
+
+<h3>Mount Status</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key in ['indi_connected','ra','dec','alt','az','tracking','aligned','parked'] %}
+    <tr>
+      <td><strong>{{ key|replace('_',' ')|title }}</strong></td>
+      <td>{{ state.get(key, 'unknown') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<form method="post" style="margin: 1rem 0;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="{{ 'stop' if live else 'start' }}">
+  <button class="{% if live %}danger{% else %}primary{% endif %}">
+    {{ 'Stop live view' if live else 'Start live view' }}
+  </button>
+</form>
+
+<p class="muted">
+  {% if live %}
+    Live view is active; this page refreshes every two seconds.
+  {% else %}
+    Showing last-known static values. Live position does not start until requested.
+  {% endif %}
+</p>
+
+<section>
+  <h3>System Status</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Uptime</strong></td>
+        <td>{{ telemetry.uptime }}</td>
+      </tr>
+      <tr>
+        <td><strong>CPU Temperature</strong></td>
+        <td>{{ telemetry.cpu_temp }}</td>
+      </tr>
+      <tr>
+        <td><strong>CPU Load Average</strong></td>
+        <td>{{ telemetry.cpu_load }}</td>
+      </tr>
+      <tr>
+        <td><strong>Memory (RAM)</strong></td>
+        <td>{{ telemetry.ram_usage }}</td>
+      </tr>
+      <tr>
+        <td><strong>Disk Storage</strong></td>
+        <td>{{ telemetry.disk_usage }}</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}

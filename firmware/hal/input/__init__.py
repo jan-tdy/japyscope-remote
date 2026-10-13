@@ -1,38 +1,60 @@
+from typing import Optional
+
 from .base import InputHAL
 from .composite import CompositeInput
 
 
-def make_input(keypad_simulated: bool, encoder_simulated: bool) -> InputHAL:
-    """Build the keypad and encoder sources independently, so one can be
-    real GPIO while the other is still keyboard-simulated during bring-up
-    (see shared.db's hw_sim_keypad/hw_sim_encoder). When both are the same
-    kind, a single SimulatorInput is shared for both roles instead of
-    spawning two terminal readers on the same stdin."""
-    if keypad_simulated and encoder_simulated:
+def make_input(
+    keypad_simulated: bool,
+    encoder_simulated: bool,
+    joystick_simulated: Optional[bool] = None,
+) -> InputHAL:
+    """Build the keypad, encoder, and (optionally) joystick sources
+    independently, so any of them can be real GPIO/I2C while the others are
+    still keyboard-simulated during bring-up (see shared.db's
+    hw_sim_keypad/hw_sim_encoder/hw_sim_joystick).
+
+    joystick_simulated is None when the external joystick accessory isn't
+    enabled at all (see shared.db's joystick_enabled) — no joystick source
+    is built at all in that case, exactly as if this function had never
+    heard of one. True/False behave like the other two roles: keyboard-
+    simulated vs. real hardware (firmware/hal/input/joystick.py).
+
+    Any roles that end up simulated together share a single SimulatorInput
+    instance (one raw-stdin reader), regardless of how many of the three
+    that is, instead of spawning multiple readers competing for the same
+    terminal.
+    """
+    simulated_roles = keypad_simulated, encoder_simulated, joystick_simulated is True
+    shared_simulator: Optional[InputHAL] = None
+    if any(simulated_roles):
         from .simulator import SimulatorInput
 
-        shared = SimulatorInput()
-        return CompositeInput(shared, shared)
+        shared_simulator = SimulatorInput()
 
     if keypad_simulated:
-        from .simulator import SimulatorInput
-
-        keypad_source: InputHAL = SimulatorInput()
+        keypad_source: InputHAL = shared_simulator
     else:
         from .keypad import KeypadInput
 
         keypad_source = KeypadInput()
 
     if encoder_simulated:
-        from .simulator import SimulatorInput
-
-        encoder_source: InputHAL = SimulatorInput()
+        encoder_source: InputHAL = shared_simulator
     else:
         from .encoder import EncoderInput
 
         encoder_source = EncoderInput()
 
-    return CompositeInput(keypad_source, encoder_source)
+    joystick_source: Optional[InputHAL] = None
+    if joystick_simulated is True:
+        joystick_source = shared_simulator
+    elif joystick_simulated is False:
+        from .joystick import JoystickInput
+
+        joystick_source = JoystickInput()
+
+    return CompositeInput(keypad_source, encoder_source, joystick_source)
 
 
 __all__ = ["InputHAL", "CompositeInput", "make_input"]

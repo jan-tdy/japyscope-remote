@@ -8,11 +8,34 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<header><h1>JapyScope Remote</h1></header>
-{% if session.get('authenticated') %}
-<nav><a href="{{ url_for('status') }}">Status</a> · <a href="{{ url_for('catalog') }}">Catalogs</a> · <a href="{{ url_for('settings') }}">Settings</a> · <a href="{{ url_for('diagnostics') }}">Diagnostics</a> · <a href="{{ url_for('system') }}">System</a></nav>
-{% endif %}
-{% for category, message in get_flashed_messages(with_categories=true) %}<p class="flash {{ category }}">{{ message }}</p>{% endfor %}
-<main>{% block content %}{% endblock %}</main>
+
+<header class="app-header">
+  <div class="brand">
+    <h1>JapyScope Remote</h1>
+  </div>
+</header>
+
+<div class="layout-container">
+  {% if session.get('authenticated') %}
+  <aside class="sidebar">
+    <nav class="nav-menu">
+      <a class="nav-link {% if request.endpoint == 'status' %}active{% endif %}" href="{{ url_for('status') }}">Status</a>
+      <a class="nav-link {% if request.endpoint in ['catalog', 'catalog_create', 'catalog_rename', 'catalog_delete', 'item_add', 'item_delete', 'item_edit', 'catalog_import'] %}active{% endif %}" href="{{ url_for('catalog') }}">Catalogs</a>
+      <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
+      <a class="nav-link {% if request.endpoint == 'diagnostics' %}active{% endif %}" href="{{ url_for('diagnostics') }}">Diagnostics</a>
+      <a class="nav-link {% if request.endpoint == 'system' %}active{% endif %}" href="{{ url_for('system') }}">System</a>
+    </nav>
+  </aside>
+  {% endif %}
+
+  <main class="main-content">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
 </body>
 </html>

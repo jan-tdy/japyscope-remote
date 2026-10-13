@@ -1,3 +1,9 @@
+---
+layout: default
+title: Updating JapyScope
+permalink: /update/
+---
+
 # OTA updates and rollback
 
 `install/update.py` installs GitHub Releases transactionally. The release must
@@ -23,10 +29,15 @@ The enabled `japyscope-update.timer` runs both `system-upgrade` and `apply` once
 per day with a randomized delay (`japyscope-update.service` has two `ExecStart`
 lines). `apply` is idempotent when the latest tag is already active.
 
+The Web UI's System tab has a "Check for update now" button that runs
+`sudo systemctl start japyscope-update.service` immediately, without waiting for
+the timer. Progress and results can be followed in Diagnostics under the
+`japyscope-update` service.
+
 ## System package upgrades
 
 `system-upgrade` runs `apt-get update && apt-get upgrade` — patches within the
-currently configured Bullseye repos only. It never runs `full-upgrade` or
+currently configured Raspberry Pi OS repos only. It never runs `full-upgrade` or
 `dist-upgrade`, and never touches `/etc/apt/sources.list`, so it cannot move
 the device onto Bookworm or any other release on its own. It's a separate,
 best-effort step from the JapyScope release install above (see the `-`-prefixed

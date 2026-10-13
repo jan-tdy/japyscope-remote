@@ -8,6 +8,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -15,7 +16,7 @@ import time
 from functools import wraps
 from typing import Callable, Optional
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
 
 from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
 
@@ -23,6 +24,95 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 30
+
+
+def get_system_telemetry() -> dict[str, str]:
+    telemetry = {
+        "cpu_temp": "N/A",
+        "cpu_load": "N/A",
+        "ram_usage": "N/A",
+        "disk_usage": "N/A",
+        "uptime": "N/A",
+    }
+    # CPU Temp
+    try:
+        temp_val = None
+        if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+            with open("/sys/class/thermal/thermal_zone0/temp", "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+                if raw and raw.isdigit():
+                    t = float(raw) / 1000.0
+                    if t > 0:
+                        temp_val = f"{t:.1f}°C"
+        if not temp_val:
+            try:
+                proc = subprocess.run(
+                    ["vcgencmd", "measure_temp"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                    check=False,
+                )
+                if proc.stdout and "temp=" in proc.stdout:
+                    temp_val = proc.stdout.strip().replace("temp=", "").replace("'", "°")
+            except Exception:
+                pass
+        if temp_val:
+            telemetry["cpu_temp"] = temp_val
+    except Exception:
+        pass
+
+    # CPU Load
+    try:
+        l1, l5, l15 = os.getloadavg()
+        telemetry["cpu_load"] = f"{l1:.2f}, {l5:.2f}, {l15:.2f}"
+    except Exception:
+        pass
+
+    # RAM
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        info = {}
+        for line in lines:
+            parts = line.split(":")
+            if len(parts) == 2:
+                info[parts[0].strip()] = int(parts[1].split()[0])
+        total_kb = info.get("MemTotal", 0)
+        avail_kb = info.get("MemAvailable", info.get("MemFree", 0))
+        used_kb = max(0, total_kb - avail_kb)
+        pct = int(used_kb / total_kb * 100) if total_kb else 0
+        telemetry["ram_usage"] = f"{used_kb // 1024} MB / {total_kb // 1024} MB ({pct}%)"
+    except Exception:
+        pass
+
+    # Disk
+    try:
+        usage = shutil.disk_usage("/")
+        used_gb = (usage.total - usage.free) / (1024**3)
+        total_gb = usage.total / (1024**3)
+        pct = int((usage.total - usage.free) / usage.total * 100) if usage.total else 0
+        telemetry["disk_usage"] = f"{used_gb:.1f} GB / {total_gb:.1f} GB ({pct}%)"
+    except Exception:
+        pass
+
+    # Uptime
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            secs = float(f.readline().split()[0])
+        mins, secs = divmod(int(secs), 60)
+        hours, mins = divmod(mins, 60)
+        days, hours = divmod(hours, 24)
+        if days > 0:
+            telemetry["uptime"] = f"{days}d {hours}h {mins}m"
+        elif hours > 0:
+            telemetry["uptime"] = f"{hours}h {mins}m"
+        else:
+            telemetry["uptime"] = f"{mins}m"
+    except Exception:
+        pass
+
+    return telemetry
 
 
 def _default_wifi_configurator(ssid: str, password: str) -> None:
@@ -62,7 +152,7 @@ def create_app(
 
     @app.before_request
     def verify_csrf():
-        if request.method != "POST" or request.endpoint == "login":
+        if request.method != "POST":
             return None
         supplied = request.form.get("csrf_token", "")
         expected = session.get("csrf_token", "")
@@ -73,7 +163,10 @@ def create_app(
     @app.context_processor
     def common_template_values():
         token = session.setdefault("csrf_token", secrets.token_urlsafe(24))
-        return {"csrf_token": token}
+        return {
+            "csrf_token": token,
+            "telemetry": get_system_telemetry(),
+        }
 
     @app.route("/", methods=["GET", "POST"])
     def login():
@@ -227,6 +320,20 @@ def create_app(
             repo.update_item(item_id, name, request.form.get("ra", "").strip(), request.form.get("dec", "").strip(), request.form.get("type", "").strip(), request.form.get("note", "").strip())
         return redirect(url_for("catalog"))
 
+    @app.route("/catalog/import-template")
+    @auth_required
+    def catalog_import_template():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["name", "ra", "dec", "type", "note"])
+        writer.writerow(["M31", "00:42:44", "+41:16:09", "Galaxy", "Andromeda Galaxy"])
+        writer.writerow(["M42", "05:35:17", "-05:23:28", "Nebula", "Orion Nebula"])
+        return Response(
+            buffer.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=japyscope-catalog-import-template.csv"},
+        )
+
     @app.route("/catalog/<int:catalog_id>/import", methods=["POST"])
     @auth_required
     def catalog_import(catalog_id: int):
@@ -268,6 +375,7 @@ def create_app(
                 for key in editable: repo.set(key, request.form.get(key, "").strip())
                 for name in HARDWARE_COMPONENTS:
                     repo.set(f"hw_sim_{name}", "1" if request.form.get(f"hw_sim_{name}") == "1" else "0")
+                repo.set("joystick_enabled", "1" if request.form.get("joystick_enabled") == "1" else "0")
                 flash("Settings saved. Restart the controller for hardware changes to take effect.", "ok")
                 return redirect(url_for("settings"))
             values = repo.all()
@@ -276,14 +384,115 @@ def create_app(
     @app.route("/diagnostics")
     @auth_required
     def diagnostics():
+        unit_arg = request.args.get("unit", "all").strip().lower()
+        lines_arg = request.args.get("lines", "100").strip()
         try:
-            log_text = subprocess.run(
-                ["journalctl", "-u", "japyscope-app", "-u", "japyscope-webui", "-n", "100", "--no-pager"],
-                capture_output=True, text=True, timeout=5, check=False,
-            ).stdout
+            lines = max(10, min(1000, int(lines_arg)))
+        except ValueError:
+            lines = 100
+
+        unit_mapping = {
+            "all": ["japyscope-app", "japyscope-webui", "japyscope-wifi-ap", "japyscope-splash", "japyscope-update"],
+            "app": ["japyscope-app"],
+            "webui": ["japyscope-webui"],
+            "wifi": ["japyscope-wifi-ap"],
+            "splash": ["japyscope-splash"],
+            "update": ["japyscope-update"],
+        }
+        active_units = unit_mapping.get(unit_arg, unit_mapping["all"])
+        args = []
+        for u in active_units:
+            args.extend(["-u", u])
+        # --reverse forces journalctl to seek from the tail and collect
+        # backward, guaranteeing the newest N entries. Without it, -n
+        # combined with multiple -u filters is unreliable on some systemd
+        # versions (it can return the OLDEST N matches instead) — the
+        # Lines dropdown was cutting off the newest entries, not the
+        # oldest. Output comes back newest-first; reversed below to
+        # restore the usual oldest-on-top display order.
+        args.extend(["--reverse", "-n", str(lines), "--no-pager"])
+
+        permission_hints = (
+            "Hint: You are currently not seeing messages",
+            "Permission denied",
+            "No journal files were opened due to insufficient permissions",
+        )
+
+        def run_journalctl(use_sudo: bool) -> subprocess.CompletedProcess:
+            command = (["sudo", "-n"] if use_sudo else []) + ["journalctl"] + args
+            return subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+
+        # The webui service account has no journal/adm group membership (see
+        # install/systemd/japyscope-webui.service) — the plain call below
+        # almost always needs the sudo fallback. We still try it first so a
+        # future group grant works without a sudo hop, but the real bug this
+        # replaces was swallowing every failure (bad sudoers, no tty, sudo
+        # itself missing) into a generic "no entries" message that hid a real
+        # permission problem from whoever was looking at Diagnostics.
+        raw = ""
+        failure_detail = ""
+        direct = None
+        try:
+            direct = run_journalctl(use_sudo=False)
         except (OSError, subprocess.SubprocessError) as exc:
-            log_text = f"Diagnostics unavailable: {exc}"
-        return render_template("diagnostics.html", logs=log_text)
+            failure_detail = f"journalctl failed: {exc}"
+
+        needs_sudo = True
+        if direct is not None:
+            raw = (direct.stdout or "").strip()
+            direct_err = (direct.stderr or "").strip()
+            needs_sudo = (
+                direct.returncode != 0
+                or not raw
+                or any(hint in raw or hint in direct_err for hint in permission_hints)
+            )
+
+        if needs_sudo:
+            try:
+                sudo_proc = run_journalctl(use_sudo=True)
+            except (OSError, subprocess.SubprocessError) as exc:
+                if not raw:
+                    failure_detail = f"sudo journalctl failed: {exc}"
+            else:
+                if sudo_proc.returncode == 0:
+                    raw = (sudo_proc.stdout or "").strip()
+                    failure_detail = ""
+                elif not raw:
+                    failure_detail = (
+                        (sudo_proc.stderr or "").strip()
+                        or f"sudo journalctl exited with status {sudo_proc.returncode}"
+                    )
+
+        log_text = raw
+
+        if log_text:
+            cleaned = [
+                line for line in log_text.splitlines()
+                if not line.strip().startswith("Hint: You are currently not seeing messages")
+                and not line.strip().startswith("Users in the 'adm' or 'systemd-journal' group")
+            ]
+            # --reverse above made journalctl emit newest-first; flip back
+            # to the usual oldest-on-top, newest-on-bottom reading order.
+            log_text = "\n".join(reversed(cleaned)).strip()
+
+        if not log_text:
+            header = f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --"
+            if failure_detail:
+                log_text = f"{header}\nLog retrieval failed: {failure_detail}"
+            else:
+                log_text = f"{header}\nThe selected services may not have generated journal entries yet."
+
+        return render_template(
+            "diagnostics.html",
+            logs=log_text,
+            selected_unit=unit_arg,
+            selected_lines=lines,
+        )
+
+    @app.route("/api/telemetry")
+    @auth_required
+    def api_telemetry():
+        return jsonify(get_system_telemetry())
 
     @app.route("/system", methods=["GET", "POST"])
     @auth_required
@@ -291,6 +500,7 @@ def create_app(
         commands = {
             "restart-controller": ["sudo", "systemctl", "restart", "japyscope-app.service"],
             "wifi-setup": ["sudo", "/usr/local/sbin/japyscope-wifi-ap", "--force"],
+            "update-now": ["sudo", "systemctl", "start", "japyscope-update.service"],
             "reboot": ["sudo", "systemctl", "reboot"],
             "poweroff": ["sudo", "systemctl", "poweroff"],
         }

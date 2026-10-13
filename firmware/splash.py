@@ -7,7 +7,7 @@ from firmware.hal.display import make_display
 def main() -> int:
     try:
         make_display(False).draw_lines(["JapyScope Remote", "by JapySoft", "", "Starting…"])
-    except (ImportError, NotImplementedError, OSError) as exc:
+    except (ImportError, NotImplementedError, OSError, TimeoutError) as exc:
         logging.warning("Display splash unavailable until panel setup is finalized: %s", exc)
     return 0
 

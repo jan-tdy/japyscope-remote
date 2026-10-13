@@ -327,6 +327,10 @@ rpi-gpio==0.7.1 \
     --hash=sha256:b86b66dc02faa5461b443a1e1f0c1d209d64ab5229696f32fb3b0215e0600c8c \
     --hash=sha256:cd61c4b03c37b62bba4a5acfea9862749c33c618e0295e7e90aa4713fb373b70
     # via -r requirements.txt
+smbus2==0.4.3 \
+    --hash=sha256:36f2288a8e1a363cb7a7b2244ec98d880eb5a728a2494ac9c71e9de7bf6a803a \
+    --hash=sha256:a2fc29cfda4081ead2ed61ef2c4fc041d71dd40a8d917e85216f44786fca2d1d
+    # via -r requirements.txt
 spidev==3.6 \
     --hash=sha256:14dbc37594a4aaef85403ab617985d3c3ef464d62bc9b769ef552db53701115b \
     --hash=sha256:280abc00a1ef7780ef62c3f294f52a2527b6c47d8c269fea98664970bcaf6da5

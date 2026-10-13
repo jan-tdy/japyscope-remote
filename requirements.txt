@@ -1,6 +1,10 @@
 # Firmware (Raspberry Pi Zero W, real hardware backends)
 RPi.GPIO==0.7.1
 spidev==3.6
+# I2C, for the optional external joystick's ADS1115 ADC (firmware/hal/input/
+# joystick.py) — only imported when joystick_enabled is set, same as
+# RPi.GPIO/spidev never being required for --simulate.
+smbus2==0.4.3
 # Image rasterization stays deferred with the unselected e-paper panel.
 # Pillow 12 dropped Bullseye's Python 3.9; do not add an incompatible pin.
 

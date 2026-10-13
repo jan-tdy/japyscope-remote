@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import random
+import socket
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,12 +22,13 @@ from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
-from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2
+from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
 from .search import SearchResult, SmartSearch
+from .themes import DEFAULT_THEME, THEMES, get_theme
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,30 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
-STARS = ("Polaris", "Vega", "Capella", "Deneb", "Arcturus", "Altair")
+# Bright, easy-to-recognize alignment stars with real J2000 coordinates —
+# picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
+# IndiClient.sync() with these, which is what actually teaches the mount
+# driver's own pointing/alignment model where it's really pointed. Used for
+# both the Manual (2 stars) menu flow and the boot-time "No — sync now"
+# quick single-star sync (see JOG_DIRECTIONS' screens and BOOT_PARK_CHECK).
+STARS: tuple[SearchResult, ...] = (
+    SearchResult("Polaris", "02h31m49s", "+89°15′51″", source="align"),
+    SearchResult("Vega", "18h36m56s", "+38°47′01″", source="align"),
+    SearchResult("Capella", "05h16m41s", "+45°59′53″", source="align"),
+    SearchResult("Deneb", "20h41m26s", "+45°16′49″", source="align"),
+    SearchResult("Arcturus", "14h15m40s", "+19°10′56″", source="align"),
+    SearchResult("Altair", "19h50m47s", "+08°52′06″", source="align"),
+)
+# Manual N/S/E/W jog, available on screens where the mount can move (see
+# docs/CODES.md) — from either the keypad's 2/4/6/8 or the external
+# joystick (ENC_UP/ENC_DOWN for its Y-axis, JOY_LEFT/JOY_RIGHT for its
+# X-axis; see keys.py for why the joystick reuses the encoder's codes).
+JOG_DIRECTIONS = {
+    "2": "N", ENC_UP: "N",
+    "8": "S", ENC_DOWN: "S",
+    "4": "W", JOY_LEFT: "W",
+    "6": "E", JOY_RIGHT: "E",
+}
 
 BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
     "Basic Objects": (
@@ -85,6 +111,8 @@ class UIState:
     list_items: list[SearchResult] = field(default_factory=list)
     align_points: int = 0
     jog_target: str = ""
+    align_star: Optional[SearchResult] = None
+    boot_sync: bool = False
     digits: list[int] = field(default_factory=list)
     digit_value: int = 0
     access_code: str = ""
@@ -94,6 +122,8 @@ class UIState:
     last_status_at: float = 0.0
     error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
+    dev_scripts: list[str] = field(default_factory=list)
+    dev_message: list[str] = field(default_factory=list)
 
 
 class ControllerUI:
@@ -101,10 +131,15 @@ class ControllerUI:
     HOME = ("home.menu", "home.catalog", "home.dev_tools")
     MENU = (
         "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
-        "menu.location", "menu.backlight", "menu.language", "menu.sudo_password",
-        "menu.system", "menu.about",
+        "menu.location", "menu.backlight", "menu.language", "menu.theme",
+        "menu.sudo_password", "menu.system", "menu.about",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
+    # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
+    # same "real placeholder for future hardware/config" spirit as DRIVERS/
+    # INTERFACES above.
+    REPOS = ("jan-tdy/japyscope-remote",)
+    UPDATE_CHANNELS = (("stable", "Stable only"), ("prerelease", "Stable + prereleases"))
 
     def __init__(
         self,
@@ -115,10 +150,15 @@ class ControllerUI:
         search: Optional[SmartSearch] = None,
         clock: Callable[[], float] = time.time,
         backlight: Optional[BacklightHAL] = None,
+        indi_manager=None,
     ):
         self.display = display
         self.input = input_hal
         self.indi = indi_client
+        # Owns the indiserver subprocess (firmware.indi.manager.IndiServerManager) —
+        # None in --simulate mode, where there's no real indiserver to restart.
+        # Dev Tools code 1111.
+        self.indi_manager = indi_manager
         self.backlight = backlight or SimulatorBacklight()
         self.catalogs = CatalogRepo(conn)
         self.settings = SettingsRepo(conn)
@@ -192,16 +232,28 @@ class ControllerUI:
     def _t(self, key: str, **kwargs: object) -> str:
         return translate(key, self.settings.get("language", DEFAULT_LANGUAGE), **kwargs)
 
+    def _theme(self):
+        return get_theme(self.settings.get("ui_theme", DEFAULT_THEME))
+
     def _visible(self, title: str, values: Sequence[str], footer: str = "rotate · push · 9=back") -> list[str]:
         rows = max(1, self.display.visible_rows - 2)
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
+        theme = self._theme()
         lines = [title]
-        lines.extend(("> " if i == self.state.index else "  ") + values[i] for i in range(start, min(len(values), start + rows)))
+        for i in range(start, min(len(values), start + rows)):
+            selected = i == self.state.index
+            text = values[i]
+            if selected and theme.wrap:
+                text = f"{theme.wrap[0]}{text}{theme.wrap[1]}"
+            lines.append((theme.marker if selected else theme.unmarked) + text)
+            if selected and theme.invert:
+                self._invert_row = len(lines) - 1
         return [*lines, footer]
 
     def render(self) -> None:
         s = self.state
         screen = s.screen
+        self._invert_row: Optional[int] = None
         if screen == "BOOT":
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
@@ -225,6 +277,8 @@ class ControllerUI:
             lines = self._visible(self._t("menu.title"), [self._t(k) for k in self.MENU])
         elif screen == "LANGUAGE":
             lines = self._visible(self._t("language.title"), [name for name, _ in LANGUAGES])
+        elif screen == "THEME":
+            lines = self._visible(self._t("theme.title"), [theme.label for theme in THEMES])
         elif screen == "CATALOG_MENU":
             lines = self._visible("CATALOG", self.CATALOG)
         elif screen == "CUSTOM_CATALOGS":
@@ -258,9 +312,9 @@ class ControllerUI:
         elif screen == "ALIGN_SMART_NA":
             lines = ["Smart alignment", "Plate-solve unavailable", "", "push/9=back"]
         elif screen == "ALIGN_STAR_PICK":
-            lines = self._visible(f"Point {s.align_points + 1}", STARS)
+            lines = self._visible(f"Point {s.align_points + 1}", [star.name for star in STARS])
         elif screen == "ALIGN_JOG":
-            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "7=change speed", "push=confirm · 9=back"]
+            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
         elif screen == "ALIGN_MORE":
             lines = self._visible(f"Points: {s.align_points}", ["Add another point", "Finish alignment"])
         elif screen == "ALIGN_CONFIRM":
@@ -308,6 +362,14 @@ class ControllerUI:
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
             lines = self._visible("Mount interface", ["RJ12 serial"])
+        elif screen == "DEV_REPO_SELECT":
+            lines = self._visible("Set repo", list(self.REPOS))
+        elif screen == "DEV_CHANNEL_SELECT":
+            lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
+        elif screen == "DEV_SCRIPT_SELECT":
+            lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "DEV_MESSAGE":
+            lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
             lines = ["Time synchronized", "using system NTP", "", "push/9=back"]
         elif screen == "SYSTEM_CONFIRM":
@@ -320,7 +382,7 @@ class ControllerUI:
             lines = ["Cannot slew", s.error_message, "", "push/9=back"]
         else:
             lines = [screen]
-        self.display.draw_lines(lines[: self.display.visible_rows])
+        self.display.draw_lines(lines[: self.display.visible_rows], invert_row=self._invert_row)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         if key not in (ENC_UP, ENC_DOWN) or count <= 0:
@@ -330,26 +392,75 @@ class ControllerUI:
         self.render()
         return True
 
+    def _jog(self, key: str) -> bool:
+        """Manual nudge for screens where the mount can move (see
+        JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
+        calling convention as `_move`, so callers fall through to their own
+        handling otherwise. Failure (real hardware not wired up yet — see
+        firmware/indi/client.py) just logs, same as `park()`'s failure
+        handling: a single missed nudge isn't worth leaving the jog screen."""
+        direction = JOG_DIRECTIONS.get(key)
+        if direction is None:
+            return False
+        try:
+            self.indi.jog(direction, self.state.speed)
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-004 jog failed: %s", exc)
+        return True
+
+    def _confirm_align_point(self) -> None:
+        """Called when the wheel is pushed on ALIGN_JOG: the star picked on
+        ALIGN_STAR_PICK is now centered, so tell the mount driver "you are
+        pointed at this star's real coordinates" via INDI Sync — this is
+        what actually teaches the driver's pointing/alignment model,
+        star by star. Used by both the Manual (2 stars) menu flow and the
+        boot-time single-star quick sync (`s.boot_sync`)."""
+        s = self.state
+        star = s.align_star
+        if s.boot_sync:
+            if star is not None:
+                try:
+                    self.indi.sync(star.ra, star.dec)
+                except (NotImplementedError, ConnectionError) as exc:
+                    logger.error("INDI-002 boot Sync failed: %s", exc)
+                    self._set("BOOT_SYNC_FAILED")
+                    return
+            s.boot_sync = False
+            self.runtime.set("aligned", "true")
+            self.runtime.set("parked", "false")
+            self._set("IDLE")
+            return
+        if star is not None:
+            try:
+                self.indi.sync(star.ra, star.dec)
+            except (NotImplementedError, ConnectionError) as exc:
+                logger.error("INDI-002 alignment sync failed: %s", exc)
+        s.align_points += 1
+        self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
+
     def handle(self, key: str) -> None:
         s = self.state
         if s.screen == "BOOT_PARK_CHECK":
             if self._move(key, 2): return
             if key == ENC_PUSH:
-                parked = s.index == 0
-                if not parked:
-                    try:
-                        self.indi.sync(self.runtime.get("ra", "0"), self.runtime.get("dec", "0"))
-                    except (NotImplementedError, ConnectionError) as exc:
-                        logger.error("INDI-002 boot Sync failed: %s", exc)
-                        self._set("BOOT_SYNC_FAILED")
-                        return
-                self.runtime.set("parked", "true" if parked else "false")
-                self._set("PARKED" if parked else "IDLE")
+                if s.index == 0:
+                    self.runtime.set("parked", "true")
+                    self._set("PARKED")
+                else:
+                    # "No — sync now": point at a known star, center it, and
+                    # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
+                    # below, entered here with boot_sync set so confirming
+                    # the point returns to IDLE instead of looping into the
+                    # full Manual (2 stars) menu flow.
+                    s.boot_sync = True
+                    s.align_points = 0
+                    self._set("ALIGN_STAR_PICK")
             return
         if s.screen == "BOOT_SYNC_FAILED":
             if key == ENC_PUSH:
-                self._set("BOOT_PARK_CHECK", 1)
-                self.handle(ENC_PUSH)
+                s.boot_sync = True
+                s.align_points = 0
+                self._set("ALIGN_STAR_PICK")
             elif key == "9": self._set("BOOT_PARK_CHECK", 1)
             return
         if s.screen == "IDLE":
@@ -401,6 +512,7 @@ class ControllerUI:
             elif key == "9": self._set("IDLE")
             return
         if s.screen == "TRACK":
+            if self._jog(key): return
             if key == "9": self._set("IDLE")
             elif key == "7": self._speed("TRACK")
             return
@@ -415,18 +527,29 @@ class ControllerUI:
             if key == "9": self._set("MENU", 1)
             elif key == ENC_PUSH:
                 if s.index == 0: self._set("ALIGN_SMART_NA")
-                else: s.align_points = 0; self._set("ALIGN_STAR_PICK")
+                else: s.align_points = 0; s.boot_sync = False; self._set("ALIGN_STAR_PICK")
             return
         if s.screen == "ALIGN_STAR_PICK":
             if self._move(key, len(STARS)): return
-            if key == "9": self._set("ALIGN_CHOOSE", 1)
-            elif key == ENC_PUSH: s.jog_target = STARS[s.index]; self._set("ALIGN_JOG")
+            if key == "9":
+                if s.boot_sync:
+                    s.boot_sync = False
+                    self._set("BOOT_PARK_CHECK", 1)
+                else:
+                    self._set("ALIGN_CHOOSE", 1)
+            elif key == ENC_PUSH:
+                s.align_star = STARS[s.index]
+                s.jog_target = s.align_star.name
+                self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
+            if self._jog(key): return
             if key == "7": self._speed("ALIGN_JOG")
-            elif key == "9": self._set("ALIGN_CHOOSE", 1)
+            elif key == "9":
+                if s.boot_sync: self._set("ALIGN_STAR_PICK")
+                else: self._set("ALIGN_CHOOSE", 1)
             elif key == ENC_PUSH:
-                s.align_points += 1; self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
+                self._confirm_align_point()
             return
         if s.screen == "ALIGN_MORE":
             if self._move(key, 2): return
@@ -477,9 +600,38 @@ class ControllerUI:
                 self.settings.set("language", LANGUAGES[s.index][1])
                 self._set("MENU", 6)
             return
+        if s.screen == "THEME":
+            if self._move(key, len(THEMES)): return
+            if key == "9": self._set("MENU", 7)
+            elif key == ENC_PUSH:
+                self.settings.set("ui_theme", THEMES[s.index].key)
+                self._set("MENU", 7)
+            return
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
+        if s.screen == "DEV_REPO_SELECT":
+            if self._move(key, len(self.REPOS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("update_repo", self.REPOS[s.index])
+                self._set("IDLE")
+            return
+        if s.screen == "DEV_CHANNEL_SELECT":
+            if self._move(key, len(self.UPDATE_CHANNELS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
+                self._set("IDLE")
+            return
+        if s.screen == "DEV_SCRIPT_SELECT":
+            if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
+            return
+        if s.screen == "DEV_MESSAGE":
+            if key in ("9", ENC_PUSH): self._set("IDLE")
+            return
         if s.screen == "SYSTEM_CONFIRM":
-            if key == "9": self._set("MENU", 8)
+            if key == "9": self._set("MENU", 9)
             elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
             return
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
@@ -489,7 +641,8 @@ class ControllerUI:
             self._set(s.return_screen)
             return
         if s.screen in {"WIFI_SETUP", "DRIVER_SELECT", "IFACE_SELECT"} and key in ("9", ENC_PUSH):
-            self._set("MENU" if s.screen == "WIFI_SETUP" else "IDLE")
+            # All three are only reachable via Dev Tools codes (5000/5555/9600) — back always goes to IDLE.
+            self._set("IDLE")
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
             self._set("ALIGN_CHOOSE" if s.screen == "ALIGN_SMART_NA" else "IDLE")
@@ -514,8 +667,12 @@ class ControllerUI:
             current = self.settings.get("language", DEFAULT_LANGUAGE)
             codes = [code for _, code in LANGUAGES]
             self._set("LANGUAGE", codes.index(current) if current in codes else 0)
-        elif s.index == 7: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
-        elif s.index == 8: self._set("SYSTEM_CONFIRM")
+        elif s.index == 7:
+            current = self.settings.get("ui_theme", DEFAULT_THEME)
+            keys = [theme.key for theme in THEMES]
+            self._set("THEME", keys.index(current) if current in keys else 0)
+        elif s.index == 8: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
+        elif s.index == 9: self._set("SYSTEM_CONFIRM")
         else: self._set("ABOUT")
 
     def _open_catalog(self) -> None:
@@ -576,6 +733,125 @@ class ControllerUI:
         if key == ENC_PUSH:
             s.digits.append(s.digit_value); s.digit_value = 0
             if len(s.digits) == 4:
-                if s.screen == "SUDO_SET": self.settings.set_password("sudo_password", "".join(map(str, s.digits)))
-                self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU")
+                code = "".join(map(str, s.digits))
+                if s.screen == "SUDO_SET":
+                    self.settings.set_password("sudo_password", code)
+                    self._set("MENU")
+                else:
+                    self._devtools_code(code)
             else: self.render()
+
+    def _devtools_code(self, code: str) -> None:
+        """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
+        full table, which must stay in sync with this method."""
+        if code == "0000":
+            self._set("IDLE")
+        elif code == "0022":
+            current = self.settings.get("update_repo", self.REPOS[0])
+            self._set("DEV_REPO_SELECT", self.REPOS.index(current) if current in self.REPOS else 0)
+        elif code == "0033":
+            channels = [c for c, _ in self.UPDATE_CHANNELS]
+            current = self.settings.get("update_channel", "stable")
+            self._set("DEV_CHANNEL_SELECT", channels.index(current) if current in channels else 0)
+        elif code == "0044":
+            self._devtools_ssh()
+        elif code == "1001":
+            self._devtools_message(["More INDI drivers", "(camera, focuser, etc.)", "Coming soon"])
+        elif code == "1111":
+            self._devtools_restart_indi()
+        elif code == "1234":
+            self._devtools_system_info()
+        elif code == "5000":
+            self._set("WIFI_SETUP")
+        elif code == "5555":
+            self._set("DRIVER_SELECT")
+        elif code == "9600":
+            self._set("IFACE_SELECT")
+        elif code == "9955":
+            self.state.dev_scripts = self._list_custom_scripts()
+            self._set("DEV_SCRIPT_SELECT")
+        elif code == "9999":
+            self._devtools_message(["Why did the astronomer", "break up with the Moon?", "Because it needed space."])
+        elif code == "4200":
+            self._devtools_message(["42.", "Now point it at something", "interesting."])
+        elif code == "1957":
+            self._devtools_message(["1957 — Sputnik beeped.", "This one just tracks quietly."])
+        elif code == "0905":
+            self._devtools_message(["Protocol 09:", "the code stays free.", "— JapySoft"])
+        else:
+            self._devtools_message(["Invalid code."])
+
+    def _devtools_restart_indi(self) -> None:
+        if self.indi_manager is None:
+            self._devtools_message(["INDI restart unavailable", "(no managed indiserver", "in this mode)"])
+            return
+        try:
+            self.indi_manager.restart()
+            self._devtools_message(["INDI server restarted"])
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: INDI restart failed: %s", exc)
+            self._devtools_message(["INDI restart failed", str(exc)[:32]])
+
+    def _devtools_system_info(self) -> None:
+        connected = self._truth(self.runtime.get("indi_connected", "false"))
+        self._devtools_message([
+            "System Info",
+            f"{self._local_ip()} · {socket.gethostname()}.local",
+            f"Uptime {self._uptime()} · INDI {'up' if connected else 'down'}",
+        ])
+
+    @staticmethod
+    def _uptime() -> str:
+        try:
+            with open("/proc/uptime", encoding="ascii") as source:
+                seconds = float(source.readline().split()[0])
+        except (OSError, ValueError, IndexError):
+            return "unknown"
+        minutes, _ = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h{minutes:02d}m"
+
+    def _devtools_message(self, lines: list[str]) -> None:
+        self.state.dev_message = list(lines)
+        self._set("DEV_MESSAGE")
+
+    def _devtools_ssh(self) -> None:
+        try:
+            subprocess.run(["systemctl", "enable", "--now", "ssh"], check=True, timeout=10)
+            status = "SSH enabled"
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Dev Tools: could not enable ssh: %s", exc)
+            status = "Could not enable SSH"
+        self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
+
+    @staticmethod
+    def _local_ip() -> str:
+        # UDP "connect" never sends a packet — just asks the routing table
+        # which local address would be used, which is all we need here.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        except OSError:
+            return "unknown"
+        finally:
+            sock.close()
+
+    @staticmethod
+    def _custom_scripts_dir() -> Path:
+        return Path(os.environ.get("JAPYSCOPE_CUSTOM_SCRIPTS_DIR", str(Path.home() / "custom")))
+
+    def _list_custom_scripts(self) -> list[str]:
+        try:
+            return sorted(p.name for p in self._custom_scripts_dir().glob("*.sh") if p.is_file())
+        except OSError:
+            return []
+
+    def _run_custom_script(self, name: str) -> None:
+        path = self._custom_scripts_dir() / name
+        try:
+            subprocess.Popen(["/bin/sh", str(path)], cwd=str(path.parent))
+            self._devtools_message([f"Running {name}", "", "(started in background)"])
+        except OSError as exc:
+            logger.error("Dev Tools: failed to run script %s: %s", name, exc)
+            self._devtools_message([f"Failed to run {name}", str(exc)[:32]])

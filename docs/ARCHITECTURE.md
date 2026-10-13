@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture
+permalink: /architecture/
+---
+
 # JapyScope Remote — Firmware v0 Architecture & Handoff
 
 This is the living architecture doc for JapyScope Remote: a custom
@@ -7,9 +13,9 @@ directly to the mount's **RJ12** "Hand Control" port (via a 3.3V↔5V
 logic-level shifter) and drives INDI's existing Sky-Watcher Alt-Az mount
 driver directly — no custom motor-protocol code needed.
 
-No hardware exists yet (still Fáza 0/1beta), but firmware v0 is being built
-now so installation, OTA updates, and INDI process management are implemented
-before the first prototype is wired up. The UX for both the hand
+Hardware bring-up is underway (Fáza 1beta/1), alongside firmware v0, so
+installation, OTA updates, and INDI process management are implemented
+as the build progresses. The UX for both the hand
 controller and its companion Web UI is fully defined by the interactive
 HTML/JS mockup published as part of this site (`docs/mockup.html` — open
 the [Mockup tab](index.html#mockup) via GitHub Pages) plus the decisions
@@ -19,14 +25,14 @@ below, which supersede the mockup where they conflict with it.
 
 | Area | Decision |
 |---|---|
-| Target HW | Raspberry Pi Zero W (armv6 — **this project targets Raspberry Pi OS Bullseye Lite (32-bit)**. Correction: Bookworm 32-bit (armhf) *is* officially supported on the original Zero W per Raspberry Pi's own OS compatibility list — the earlier "Bookworm dropped armv6" claim in this doc was wrong. We still require Bullseye because `install/wifi-config.sh` writes directly to `/etc/wpa_supplicant/wpa_supplicant.conf`, which Bookworm's default NetworkManager-based networking doesn't consume the same way — that script (and the AP setup flow built on it) hasn't been ported/verified for Bookworm's network stack. Revisit if there's a reason to move.) |
+| Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` disables the setup hotspot's automatic boot-time fallback on any release, for a Pi whose Wi-Fi is already configured — the hotspot itself stays installed and can still be triggered manually.) |
 | Mount connector | **RJ12** (not RJ45) |
-| Display | **Not finalized** — leaning 2.13" e-paper but nothing bought yet, 4.26" not ruled out. Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py` |
-| Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder |
-| Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, and mount can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless, for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
-| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye Lite image — not a prebuilt SD image, Docker, or desktop installer |
+| Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
+| Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder, plus an **optional** external KY-023-style dual-axis joystick (`shared.db`'s `joystick_enabled`, off by default — see `docs/WIRING.md`/`docs/CODES.md`) as a drop-in alternative to the encoder plus manual N/S/E/W jogging |
+| Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, mount, and (when enabled) joystick can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless (joystick included), for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
+| Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite image — not a prebuilt SD image, Docker, or desktop installer |
 | INDI management | The firmware app spawns/owns `indiserver` as a subprocess (Ekos-style) — implemented in `firmware/indi/manager.py` |
-| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within Bullseye's own repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
+| OTA updates | `install/update.py` polls GitHub Releases, verifies SHA-256, installs to a versioned directory, health-checks after restart, and rolls back the `current` symlink on failure. The same daily timer also runs `update.py system-upgrade` — a best-effort `apt-get update && apt-get upgrade` within the installed release's repos (never `full-upgrade`/`dist-upgrade`, never a distro upgrade) — as an independent step that can't block or roll back the app release. |
 | Firmware language | Python 3 |
 | Web UI stack | Flask + Jinja2, server-rendered plain HTML (no JS framework) |
 | Web UI port | **8080**, all interfaces (`--host 0.0.0.0 --port 8080`, set in `install/systemd/japyscope-webui.service`) — `http://<device-ip>:8080/` normally, `http://192.168.4.1:8080/setup` while the controller is broadcasting its own Wi-Fi setup hotspot. `install/update.py`'s post-update health check also polls `http://127.0.0.1:8080/healthz` on this port. |
@@ -46,6 +52,9 @@ not the mockup's**:
 - **T9 keymap fix in SmartSearch** — see `docs/CODES.md` for the exact mapping. Summary: "9" becomes a normal T9 letter key (w/x/y/z/9) *only inside SmartSearch*, and **FN2** takes over as "cancel/back out of SmartSearch" for that screen. Everywhere else, "9" keeps meaning "back, never an action."
 - **SmartSearch queries the internet** — this is SmartSearch's whole point: resolve object names against an online astronomical database (recommended: SIMBAD/Sesame name resolver — free, no API key, same one KStars/Stellarium use) in addition to local catalogs, so a newly-discovered/variable star not in any local list can still be found. Must degrade gracefully offline: fall back to local-only results with a note (see `CODES.md`'s `SEARCH-001`), not hang or fail the whole search.
 - **Language selection** — a new **Language** entry in Menu (between Backlight and Sudo Password) opens a list of UI languages (`firmware/ui/i18n.py`'s `LANGUAGES`); picking one persists to `settings.language` and takes effect immediately. v0 translates the highest-visibility screens only (Home, Menu, boot park check, park/unpark, About, shared footers) — anything not yet in `i18n.STRINGS` falls back to English. Not in the mockup at all.
+- **External joystick support (22.9)** — an optional KY-023-style dual-axis joystick (`docs/WIRING.md`, `firmware/hal/input/joystick.py`), off by default (`shared.db`'s `joystick_enabled`, toggled on the Web UI Settings page). Its Y-axis/push button reuse the encoder's `ENC_UP`/`ENC_DOWN`/`ENC_PUSH` codes (drop-in alternative for menu navigation everywhere), and its X-axis adds `JOY_LEFT`/`JOY_RIGHT` for manual N/S/E/W jogging on `ALIGN_JOG`/`TRACK` (`firmware/ui/controller.py`'s `_jog()`), alongside the matching keypad 2/4/6/8 jog keys documented but not previously wired up in `docs/CODES.md`. `IndiClient.jog()` is a `NotImplementedError` stub like `sync`/`goto`/`park` (see "Still hardware-blocked" below) but fully functional in `--simulate` via `SimulatedIndiClient.jog()`. Not in the mockup at all.
+- **Interface theme selection (23.9)** — a new **Interface Theme** entry in Menu (between Language and Sudo Password) opens a list of black/white themes (`firmware/ui/themes.py`'s `THEMES`) that only change how the *selected* row of a list/menu is marked — the panel has no other colors. `arrow` (default) prefixes it with `> `; `brackets` wraps it in `[ ]`; `invert` asks the display to swap that one row to black background/white text via `DisplayHAL.draw_lines`'s new `invert_row` parameter, honored by both `SimulatorDisplay` (ANSI reverse video) and the real e-paper rasterizer (`firmware/hal/display/rasterizer.py` inverts the whole row's pixel band, not just the glyphs — untested against real hardware, see "Still hardware-blocked" below). Picking a theme persists to `settings.ui_theme` and takes effect immediately. Not in the mockup at all.
+- **Alignment now actually syncs (24.9)** — `firmware/ui/controller.py`'s `STARS` are now `SearchResult`s carrying real J2000 coordinates (previously bare names with no position data at all). Confirming a centered star on `ALIGN_JOG` (`_confirm_align_point()`) calls `IndiClient.sync(star.ra, star.dec)` with those coordinates — this is what actually teaches the mount driver's own pointing/alignment model, once per star, matching how real multi-star INDI alignment works; it previously did nothing but increment a counter. The boot-time park question's **No — sync now** answer no longer blind-syncs on stale/placeholder `state.ra`/`state.dec` — it now sets `state.boot_sync` and reuses the same `ALIGN_STAR_PICK`/`ALIGN_JOG` screens for a real single-star pick-and-center-and-sync, then returns to `IDLE` (marking `aligned` true) instead of looping into the full Manual (2 stars) flow. Not in the mockup at all.
 
 ## Repository layout
 
@@ -53,8 +62,8 @@ not the mockup's**:
 japyscope-remote/
   firmware/
     hal/
-      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (stub pending real panel)
-      input/          # DONE — keys.py, base.py, simulator.py, keypad.py
+      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (SSD1680 full-refresh driver + font5x7.py/rasterizer.py, untested against real hardware — see "Still hardware-blocked")
+      input/          # DONE — keys.py, base.py, simulator.py, keypad.py, encoder.py, joystick.py (optional accessory), composite.py
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog
       client.py       # STUB — PyIndi property mapping awaits real hardware
@@ -64,7 +73,7 @@ japyscope-remote/
   shared/
     db.py               # DONE — SQLite models: catalogs (multi-catalog), settings, state, access_codes
   install/
-    install.sh           # DONE — Bullseye armhf bootstrap
+    install.sh           # DONE — Bullseye/Bookworm/Trixie armhf bootstrap, --no-ap option
     update.py             # DONE — verified GitHub Releases OTA + rollback
     systemd/               # DONE — app/Web UI/splash/Wi-Fi AP/update units
   docs/                     # architecture, install/update/troubleshooting, wiring, mockup
@@ -87,10 +96,12 @@ The software-side handoff items are implemented:
    `#tab-webui` (Wi-Fi AP setup, code-gated login with 5-attempt lockout,
    status with opt-in live position, multi-catalog CRUD + CSV import,
    settings, diagnostics, system), backed by `shared/db.py`.
-4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye
-   Lite image: apt installs Bullseye's `indi-bin` package, whose armhf file
+4. **`install/install.sh`** — bootstraps a clean Raspberry Pi OS Bullseye,
+   Bookworm, or Trixie Lite image: apt installs the release's `indi-bin` package, whose armhf file
    list confirms the `indi_skywatcherAltAzMount` driver binary, Python deps
-   (`requirements.txt`), venv, systemd units.
+   (`requirements.txt`), venv, systemd units. `--no-ap` disables the Wi-Fi
+   setup hotspot's automatic boot-time fallback, for a Pi whose Wi-Fi is
+   already configured — the hotspot stays installed for manual use.
 5. **`install/systemd/*.service`** — includes `japyscope-app.service`,
    `japyscope-webui.service`, and a `japyscope-splash.service` oneshot that
    draws a static boot logo via partial refresh (per project memory: no
@@ -102,13 +113,21 @@ The software-side handoff items are implemented:
 7. **`docs/INSTALL.md`, `docs/UPDATE.md`, `docs/TROUBLESHOOTING.md`** document
    the scripts and their operational/error-code behavior.
 
-**Still hardware-blocked:** fill in the selected e-paper controller protocol,
-map PyIndi properties against the live Sky-Watcher driver, confirm the physical
-RJ12 pinout, and exercise install/OTA on a real Bullseye Pi Zero W. These are
-not safely guessable without the prototype.
+**Still hardware-blocked:** verify the e-paper controller protocol against a
+real panel (`firmware/hal/display/epaper.py` implements the SSD1680
+reset/init/full-refresh sequence and a dependency-free text rasterizer
+against the datasheet, but the RAM bit polarity, reset timing, and
+partial-refresh LUT are unconfirmed without hardware — see that module's
+docstring), map PyIndi properties against the live Sky-Watcher driver (including
+`IndiClient.jog()`'s `TELESCOPE_MOTION_NS`/`TELESCOPE_MOTION_WE` switches),
+confirm the physical RJ12 pinout, and exercise install/OTA on real Bullseye,
+Bookworm, and Trixie Pi Zero W devices. These are not safely guessable
+without the prototype.
 
-**Deferred beyond v0 entirely**: a polished end-user manual as a PDF
-   (use the PDF skill once on-device flows are stable).
+**Done**: a polished end-user manual as a PDF (`docs/JapyScope_Remote_User_Manual.pdf`,
+linked from the docs site's home page) covering the hand controller, the
+companion Web UI, and the SSH/Dev Tools basics — kept end-user-facing on
+purpose, not a substitute for this file.
 
 ## Verification
 
@@ -116,12 +135,12 @@ not safely guessable without the prototype.
    controller state machine on a dev machine.
 2. `webui/app.py` run locally (Flask dev server) against a SQLite fixture.
 3. `install/install.sh` and `install/update.py` tested against a Raspberry
-   Pi OS Bullseye Lite image (QEMU or a spare Pi) before trusting them on
-   real Pi Zero W hardware.
+   Pi OS Bullseye, Bookworm, or Trixie Lite image (QEMU or a spare Pi)
+   before trusting them on real Pi Zero W hardware.
 4. `docs/mockup.html` opened via the GitHub Pages URL (or the Mockup tab in
    `docs/index.html`) to sanity-check current UX decisions (noting it does
    **not** reflect the behavior changes above — it's kept as the original
    interaction-design reference).
 5. `docs/WIRING.md` cross-checked against the physical build at each Fáza.
-6. `pytest` for covered behavior — 32 tests passing as of this pass (database,
+6. `pytest` for covered behavior — 140 tests passing as of this pass (database,
    HAL, INDI manager, UI state machine/search, Web UI, and OTA extraction).

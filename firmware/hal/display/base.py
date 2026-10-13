@@ -19,10 +19,13 @@ class DisplayHAL(ABC):
         return self.profile.visible_rows
 
     @abstractmethod
-    def draw_lines(self, lines: list[str]) -> None:
+    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None) -> None:
         """Replace the whole screen with these text lines (partial-refresh
         e-ink, so this is the only drawing primitive v0 needs — no
-        incremental diffing)."""
+        incremental diffing). `invert_row`, if given, is the index into
+        `lines` of the one row an "Invert" interface theme
+        (`firmware/ui/themes.py`) wants shown as black background / white
+        text instead of the panel's normal white background / black text."""
 
     def clear(self) -> None:
         self.draw_lines([])

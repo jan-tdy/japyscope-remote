@@ -1,3 +1,9 @@
+---
+layout: default
+title: Troubleshooting
+permalink: /troubleshooting/
+---
+
 # Troubleshooting
 
 Start with the combined journal:
@@ -5,6 +11,41 @@ Start with the combined journal:
 ```sh
 journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
 ```
+
+---
+
+<details markdown="block">
+  <summary>Problems already fixed in latest release</summary>
+   
+## Setup AP starts on every boot even though Wi-Fi is already configured and working
+
+**Fixed** — if you're still hitting this, `git pull` and re-run `install.sh`.
+Root cause: `japyscope-wifi-ap.service` runs right after wlan0's device node
+appears (`After=sys-subsystem-net-devices-wlan0.device`), which is well
+before the configured network manager has actually finished associating with
+a configured network. The script's "skip the AP if already connected" check
+ran exactly once, immediately, so it always saw "not connected yet" — even on
+a device with perfectly good Wi-Fi credentials that would have connected fine
+a couple of seconds later — and started the AP unnecessarily on every single
+boot, kicking any already-associated client off. `install/wifi-ap.sh` now
+polls for up to 20 seconds before falling back to starting the AP, using
+`wpa_cli` on Bullseye and NetworkManager's device state on Bookworm/Trixie.
+
+If Wi-Fi is preconfigured (e.g. via Raspberry Pi Imager) and you'd rather
+not rely on this poll at every boot at all, re-run
+`sudo install/install.sh --no-ap` (or use `--no-ap` on the original
+install/`install-factory.sh` run). It disables `japyscope-wifi-ap.service` —
+the automatic boot-time check — entirely, instead of just racing it. The
+hotspot itself (`hostapd`/`dnsmasq` or the NetworkManager profile, the AP
+password, `japyscope-wifi-ap`) stays installed and can still be brought up
+manually any time from the Web UI's **System** page ("Restart Wi-Fi setup")
+or `sudo japyscope-wifi-ap --force`.
+
+If you're locked out because the AP already came up and you don't know its
+password (e.g. no physical e-ink display yet): it's stored in plain text at
+`/etc/japyscope/setup-ap-password` on the SD card — pull the card and read
+it from another machine (or use physical console access) if you have no
+other way to reach the Pi's shell.
 
 ## `pip install` fails on `dbus-python`: "meson-python: error: Could not find ninja version 1.8.2 or newer"
 
@@ -52,15 +93,12 @@ Next stage after the `swig` fix above: SWIG itself now runs, but can't find
 `indimacros.h`, `indiwidgettraits.h`, `indipropertyview.h`,
 `indipropertybasic.h`, `indipropertytext.h`, `indipropertynumber.h`,
 `indipropertyswitch.h`, `indipropertylight.h`, `indipropertyblob.h`, or
-`indiproperties.h`. Confirmed root cause: Bullseye's apt `libindi-dev` is
-**1.8.8+dfsg-1**, which predates the `INDI::PropertyView`-family headers
-current `pyindi-client`'s SWIG interface (`indiclientpython.i`) requires —
-those headers simply don't exist anywhere in that package. There is no apt
-repository shipping a newer `libindi-dev` for armhf/Bullseye (the INDI forum
-has an open thread literally titled "INDI needs a new apt repository for
-Debian ARM"), and building INDI core from source *on* a Pi Zero W (single
-ARM11 core, 512 MB RAM, already SD-card-constrained — see "Filesystem went
-read-only" below) is impractical and risky.
+`indiproperties.h`. Confirmed root cause: the distribution `libindi-dev`
+packages are too old for current `pyindi-client`'s INDI 2.x SWIG interface:
+Bullseye ships **1.8.8+dfsg-1** and Bookworm ships **1.9.9+dfsg-2**. Neither
+has the required INDI 2.x `PropertyView` API. Building INDI core from source
+*on* a Pi Zero W (single ARM11 core, 512 MB RAM, already SD-card-constrained
+— see "Filesystem went read-only" below) is impractical and risky.
 
 Fixed without compiling anything on the Pi: `.github/workflows/build-libindi-armhf.yml`
 cross-builds INDI core on GitHub's infrastructure, booting the actual
@@ -73,10 +111,10 @@ packages just the new headers and the client library (not
 `indiserver` or any driver — those keep running from apt's `indi-bin`/
 `libindi-dev`, untouched) and attaches the tarball to a GitHub Release.
 `install.sh` downloads it (pinned tag + SHA-256 in `install/libindi-core.env`)
-into `/usr/local` — already one of `indiclientpython.i`'s own SWIG search
-paths, so no interface-file change was needed — before the existing
-`--no-deps --no-build-isolation` `pyindi-client` install. `git pull` if
-you're hitting this on an old checkout.
+into `/usr/local` on both supported releases — already one of
+`indiclientpython.i`'s own SWIG search paths, so no interface-file change was
+needed — before the existing `--no-deps --no-build-isolation` `pyindi-client`
+install. `git pull` if you're hitting this on an old checkout.
 
 If `install/libindi-core.env` still says `PENDING`, the prebuilt tarball
 hasn't been published yet; trigger the workflow manually (Actions → "Build
@@ -145,6 +183,59 @@ Raspberry Pi OS — only `raspios_lite:*` (and `raspios_lite_arm64:*`,
 `downloads.raspberrypi.org` images. Double-check the resolved URL in
 `download_image.sh` before trusting a shortcut's name.
 
+## `test-bookworm-armhf.yml` fails instantly with "Unknown image raspios_lite:2023-12-11"
+
+The Bookworm CI smoke test never actually booted anything — it failed in
+under a second at the "download base image" step, before `apt-get`,
+`indiserver`, or `import PyIndi` ever ran. Root cause: unlike
+`raspios_lite:2023-05-03` (Bullseye, used by `build-libindi-armhf.yml`),
+`arm-runner-action`'s `raspios_lite:*` alias whitelist has **no Bookworm
+entry at all** — it stops at Bullseye. `raspios_lite:2023-12-11` looked
+like a valid dated shortcut but was simply never registered, so the
+action rejected it outright with "Unknown image" instead of failing later
+on a real dependency/PyIndi problem. This meant the workflow had been
+reporting a misleading "failure" that had nothing to do with Bookworm
+compatibility — and, worse, had never actually verified it either.
+
+Fixed: pass the real `downloads.raspberrypi.org` image URL directly as
+`base_image` instead of relying on an alias — `download_image.sh` uses
+any `http(s):` value verbatim, bypassing the whitelist:
+`https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2023-12-11/2023-12-11-raspios-bookworm-armhf-lite.img.xz`.
+`git pull` if you're hitting this on an old checkout. Don't use
+`raspios_lite:latest` as a "just give me current Bookworm" substitute
+either — it tracks whatever Raspberry Pi OS currently ships (already
+Trixie as of this writing), not Bookworm specifically.
+
+## `test-trixie-armhf.yml` fails with "No space left on device"
+
+Fixed (`git pull` if you're hitting this on an old checkout). The real
+cause is an `e2fsprogs` version mismatch, not actually a lack of space:
+
+`arm-runner-action` grows the downloaded image by `image_additional_mb`
+(a plain `dd` append — that part always "succeeds"), then runs the
+**host** runner's `e2fsck`/`resize2fs` to actually extend the ext4
+filesystem into that new room. Trixie's base image was itself built with
+a much newer `e2fsprogs` (1.47.2) than Ubuntu 22.04 ships (1.46.5), which
+sets an ext4 feature bit ("unsupported feature(s)", `FEATURE_C12`) the
+older host tools don't recognize. `e2fsck`/`resize2fs` then fail *silently*
+from the workflow's point of view — `mount_image.sh` logs "Finished
+resizing disk image." either way — so the filesystem never actually grows,
+and `apt`/`tar` run out of the base image's small original room at the
+same exact point regardless of how high `image_additional_mb` is set (a
+first attempt raising it from 4096 to 8192 changed nothing, confirming
+this: the `dd` step correctly grew the image file both times, but the
+*filesystem* stayed the original size both times). The same version gap
+also breaks `arm-runner-action`'s own post-build image-shrink cleanup, so
+`optimize_image: 'no'` skips it — it only mattered for caching the output
+image, which this job doesn't do.
+
+Fixed by running this job on `ubuntu-24.04` instead of `ubuntu-22.04`:
+its `e2fsprogs` (1.47.0) is close enough to Trixie's own to actually
+perform the resize. This is unrelated to the arm1176-vs-cortex-a7 QEMU
+segfault in `build-libindi-armhf.yml`'s history — that was tied to the
+`arm1176` CPU model specifically, reproducing on every runner version;
+this job (like `test-bookworm-armhf.yml`) already uses `cortex-a7`.
+
 ## `install.sh` says "Release directory already exists" / re-running after a fix
 
 Fixed: `install.sh` used to hard-fail here, because re-running it after
@@ -155,12 +246,36 @@ detects an incomplete release directory (no `.install-complete` marker),
 removes it, and rebuilds automatically — you can just re-run `install.sh`
 after fixing whatever failed, no manual `rm -rf` needed.
 
+## `install.sh` says "Refusing to switch /opt/japyscope/current ..."
+
+Not a bug — a safety check. `install.sh` and the OTA updater
+(`japyscope-update.timer` / `install/update.py`) both flip the same
+`/opt/japyscope/current` symlink. If OTA has already updated the device
+past whatever commit your local checkout is on (common if you haven't
+`git pull`ed in a while), re-running `install.sh` would otherwise silently
+relink `current` back to that older version — a real downgrade, even
+though nothing looked wrong in the installer's own output (this is what
+produces the confusing "Release vX.Y.Z-N-gHASH is already fully installed
+— skipping rebuild" message right before it, for a version older than
+what's actually running). Run `git pull` in the checkout you're installing
+from and re-run `install.sh`, or pass `--force` if you deliberately want
+to force this device onto the version your checkout resolves to.
+
+</details>
+
+---
+
+## Wheel is building, and the Pi does not react, and the loading circle does not turn
+Wait at least 20 minutes (it is normal), if still nothing, wait a little more; if still nothing, hard-reboot by pulling the cable.
+
+## No route to host via SSH / screen showing nothing while LEDs on
+
+Wait a few minutes (wait at least 20 minutes); while normally it should boot under 6 minutes, first boot or filesystem-fix boot may take longer.
+If still nothing, check if your power source is really on.
+
 ## Filesystem went read-only / `dpkg`, `apt` fail with I/O or "Read-only file system" errors
 
-Seen during real Pi Zero W bring-up (Fáza 1beta), reproduced twice: once on a
-weak USB power source, and — importantly — **again after switching to a
-better power supply**, mid-`dpkg` unpack, with a genuine `Input/output error`
-on `fsync` immediately before the read-only remount. That recurrence under
+It happened to me about 5 times: That recurrence under
 improved power points at the **SD card itself** (wear, bad sectors, or a
 counterfeit/low-quality card), not only power — treat both as suspects, but
 don't assume a better PSU alone fixes it if it happens again.
@@ -171,10 +286,7 @@ unwritten extents to written extents -- potential data loss! (inode N, error
 error`, `Read-only file system` from `apt`. The Pi may become unresponsive
 over SSH.
 
-1. **Don't keep retrying blindly on the same card/session** — each failed
-   write during an already-degraded filesystem risks compounding the
-   corruption.
-2. Power-cycle (pull power, don't just reboot from a hung shell). If it comes
+1. Power-cycle (pull power, don't just reboot from a hung shell). If it comes
    back:
    ```sh
    mount | grep mmcblk0p2      # still "ro"? filesystem hasn't recovered
@@ -184,23 +296,23 @@ over SSH.
    (`sudo dpkg --configure -a`, then re-run `install.sh`/`system-upgrade`)
    once. If it fails again under write load, stop and go to step 3 — this is
    no longer a one-off.
-3. **Test the SD card from another machine** (card reader, not the Pi):
+2. **Test the SD card from another machine** (card reader, not the Pi):
    ```sh
    sudo badblocks -v /dev/sdX     # non-destructive read scan for bad sectors — replace sdX
    ```
    or run `f3` (Fight Flash Fraud) if you suspect a counterfeit/overreported-capacity
    card — extremely common with cheap unbranded cards.
-4. **Power supply**: use an official/quality 5V/2.5A supply with a short,
+3. **Power supply**: use an official/quality 5V/2.5A supply with a short,
    good-quality micro-USB cable. A phone charger or a PC's USB port is the
    single most common cause of exactly this failure on a Zero W under the
    combined CPU+I/O load of `apt`/`pip`/`venv` during install or
    `system-upgrade` (see `SYS-001` below) — this project has no battery/UPS
    to smooth over a brief sag.
-5. **If it recurs even with confirmed-good power**: treat the card as
+4. **If it recurs even with confirmed-good power**: treat the card as
    suspect. Replace it — ideally a reputable-brand "High Endurance" /
    "Application class" card, meant for continuous writes and sudden power
    loss (the exact profile of a nonstop-running INDI + Web UI device), not a
-   generic consumer card. Re-flash Bullseye Lite fresh rather than reusing a
+   generic consumer card. Re-flash the OS fresh rather than reusing a
    card that has already corrupted twice.
 
 Note: `install/install.sh` and `install/update.py system-upgrade` now
@@ -233,10 +345,36 @@ Check power, serial wiring, driver name, and port configuration.
 
 ## `WIFI-001`: setup hotspot or join failed
 
-Run `systemctl status japyscope-wifi-ap hostapd dnsmasq` and then
-`sudo /usr/local/sbin/japyscope-wifi-ap --force`. The setup page is
-`http://192.168.4.1:8080/setup`. The `hostapd` and `dnsmasq` journals contain
-radio or DHCP errors.
+Run `sudo /usr/local/sbin/japyscope-wifi-ap --force`; the setup page is
+`http://192.168.4.1:8080/setup`. On Bullseye, inspect
+`systemctl status japyscope-wifi-ap hostapd dnsmasq` and their journals. On
+Bookworm or Trixie, inspect `systemctl status japyscope-wifi-ap NetworkManager`
+and `journalctl -u NetworkManager`; the `JapyScope Setup` NetworkManager
+profile owns the radio and DHCP service. (`--no-ap` only disables the
+automatic boot-time check — all of this is still installed and `--force`
+still brings the hotspot up manually either way, see the next section.)
+
+
+## `SIM-001`: keyboard-simulated input never receives a key
+
+`hw_sim_keypad`/`hw_sim_encoder` (Settings page) switch input to a
+keyboard-driven backend that reads raw keystrokes from stdin — it needs a
+real, interactive terminal. Restarting `japyscope-app.service` (systemd,
+`Type=simple`) after enabling either of these gives it a detached process
+with no terminal (stdin is `/dev/null`): the backend starts, logs `SIM-001`,
+and then never produces a single event, because there is nothing to route an
+SSH session's keypresses into. Pressing a key or the real encoder does
+nothing, and nothing else appears in the logs either — the app is genuinely
+just waiting on input it can never receive.
+
+To actually exercise keyboard-simulated input, stop the service and run it
+in the foreground instead: `sudo systemctl stop japyscope-app.service` then
+`python3 -m firmware.main --simulate` directly in your SSH session (1-9/0 =
+digits, Enter = encoder push, Up/Down = encoder rotate, Backspace = BKSP, F
+= FN2). Leave `hw_sim_keypad`/`hw_sim_encoder` off and let
+`japyscope-app.service` run normally when testing real keypad/encoder
+hardware — only `hw_sim_display` is meaningful under systemd, since it needs
+no input and just prints frames to the journal.
 
 ## `SEARCH-001`: online SmartSearch unavailable
 
@@ -264,3 +402,17 @@ archive with a SHA-256 digest. Inspect `journalctl -u japyscope-update -n 200
 Codes expire after ten minutes. Generate a fresh one on the controller. A
 client that submits five bad codes must wait 30 seconds. Sessions are reset if
 `/etc/japyscope/environment` is deleted or its secret changes.
+
+## Still stuck?
+
+If none of the sections above resolve your problem, please
+[open a GitHub issue](https://github.com/jan-tdy/japyscope-remote/issues/new).
+Include the output of:
+
+```sh
+journalctl -u japyscope-app -u japyscope-webui -u japyscope-wifi-ap -n 200 --no-pager
+systemctl status japyscope-splash japyscope-app japyscope-webui
+```
+
+…along with your OS release (`cat /etc/os-release`), how you ran the
+installer, and a description of what you expected vs. what happened.
