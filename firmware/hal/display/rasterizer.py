@@ -23,8 +23,13 @@ _ROW_GAP = 2
 
 # Text rendered at the straight "fill the row band" size read as oversized
 # on the physical 2.13" panel — shrink every glyph by this factor so lines
-# have a bit of breathing room instead of nearly touching top/bottom.
-_SIZE_SHRINK = 1.1
+# have a bit of breathing room instead of nearly touching top/bottom. A
+# first attempt at 1.1 turned out imperceptible: at this font's coarse 5x7
+# resolution, rounding the shrunk size back to whole device pixels landed
+# on the exact same pixel count as unshrunk (confirmed against a rendered
+# screenshot) — so this needs to be a much bigger factor to actually show
+# up, not a subtle correction.
+_SIZE_SHRINK = 2.0
 
 
 def stride_for(width: int) -> int:
