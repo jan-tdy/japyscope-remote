@@ -44,6 +44,24 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+# The e-paper panel only has a full-refresh waveform (see
+# firmware/hal/display/epaper.py) — electromechanical, on the order of a
+# second and visibly flashing. Redrawing on every single encoder detent
+# while scrolling a list is why the first hardware bring-up flashed on
+# almost every step: most of those intermediate frames are never actually
+# seen, just the one the user stops on. So scrolling (`_move`, below)
+# coalesces: it skips the real refresh until either this many detents have
+# accumulated or the user stops turning the encoder for a moment (see
+# `tick()`), and always draws the screen's *current* state once it does —
+# never a stale one. Screen transitions (`_set`) always refresh right away;
+# only same-screen scrolling is throttled. Adjustable per-install via the
+# "eink_refresh_every" setting.
+_DEFAULT_REFRESH_EVERY = 6
+# How long to wait, after the last scroll, before flushing a coalesced
+# redraw even though _DEFAULT_REFRESH_EVERY detents haven't accumulated —
+# otherwise stopping mid-count would leave the panel showing a stale
+# position until something else forces a redraw.
+_COALESCE_IDLE_FLUSH_S = 0.25
 # Bright, easy-to-recognize alignment stars with real J2000 coordinates —
 # picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
 # IndiClient.sync() with these, which is what actually teaches the mount
@@ -168,6 +186,9 @@ class ControllerUI:
         self.clock = clock
         self.state = UIState()
         self.running = True
+        self._scroll_count = 0
+        self._coalesce_pending = False
+        self._last_scroll_at = 0.0
 
     def start(self) -> None:
         self.render()
@@ -183,9 +204,18 @@ class ControllerUI:
                 self.handle(key)
             self.tick()
 
+    def _refresh_every(self) -> int:
+        try:
+            every = int(self.settings.get("eink_refresh_every", str(_DEFAULT_REFRESH_EVERY)))
+        except (TypeError, ValueError):
+            every = _DEFAULT_REFRESH_EVERY
+        return max(1, every)
+
     def tick(self) -> None:
         now = self.clock()
         s = self.state
+        if self._coalesce_pending and now - self._last_scroll_at >= _COALESCE_IDLE_FLUSH_S:
+            self.render()
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
@@ -235,8 +265,15 @@ class ControllerUI:
     def _theme(self):
         return get_theme(self.settings.get("ui_theme", DEFAULT_THEME))
 
-    def _visible(self, title: str, values: Sequence[str], footer: str = "rotate · push · 9=back") -> list[str]:
-        rows = max(1, self.display.visible_rows - 2)
+    def _visible(self, title: str, values: Sequence[str], footer: Optional[str] = None) -> list[str]:
+        """`footer`, when given, is genuinely useful per-screen status (e.g.
+        IDLE's aligned/not-aligned, RESULTS' online/offline note) — never a
+        generic control hint ("rotate · push · 9=back" used to default
+        here on every list screen regardless of whether it was even
+        accurate, wasting a quarter of the 4-line panel on it). With no
+        footer, the row it would have taken goes to one more visible item
+        instead."""
+        rows = max(1, self.display.visible_rows - (2 if footer else 1))
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
         theme = self._theme()
         lines = [title]
@@ -248,9 +285,15 @@ class ControllerUI:
             lines.append((theme.marker if selected else theme.unmarked) + text)
             if selected and theme.invert:
                 self._invert_row = len(lines) - 1
-        return [*lines, footer]
+        return [*lines, footer] if footer else lines
 
-    def render(self) -> None:
+    def render(self, *, coalesce: bool = False) -> None:
+        """Redraw the current screen. `coalesce=True` (only passed by
+        `_move`, for same-screen scrolling) may skip the actual hardware
+        refresh — see _DEFAULT_REFRESH_EVERY's docstring above — but the
+        lines are always computed fresh from the current state either way,
+        so a later non-coalesced render (or `tick()`'s idle flush) never
+        draws anything stale."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -258,9 +301,7 @@ class ControllerUI:
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
             lines = self._visible(
-                self._t("boot.park_question"),
-                [self._t("boot.park_yes"), self._t("boot.park_no")],
-                self._t("footer.rotate_push"),
+                self._t("boot.park_question"), [self._t("boot.park_yes"), self._t("boot.park_no")]
             )
         elif screen == "BOOT_SYNC_FAILED":
             lines = [
@@ -331,8 +372,7 @@ class ControllerUI:
             lines = [self._t("park.parking"), "", "", ""]
         elif screen == "PARKED":
             lines = self._visible(
-                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")],
-                self._t("footer.rotate_push"),
+                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")]
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
@@ -382,14 +422,23 @@ class ControllerUI:
             lines = ["Cannot slew", s.error_message, "", "push/9=back"]
         else:
             lines = [screen]
-        self.display.draw_lines(lines[: self.display.visible_rows], invert_row=self._invert_row)
+        visible_lines = lines[: self.display.visible_rows]
+        if coalesce:
+            self._scroll_count += 1
+            self._last_scroll_at = self.clock()
+            if self._scroll_count < self._refresh_every():
+                self._coalesce_pending = True
+                return
+        self._scroll_count = 0
+        self._coalesce_pending = False
+        self.display.draw_lines(visible_lines, invert_row=self._invert_row)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         if key not in (ENC_UP, ENC_DOWN) or count <= 0:
             return False
         delta = -1 if key == ENC_UP else 1
         self.state.index = (self.state.index + delta) % count if wrap else max(0, min(count - 1, self.state.index + delta))
-        self.render()
+        self.render(coalesce=True)
         return True
 
     def _jog(self, key: str) -> bool:
@@ -519,7 +568,7 @@ class ControllerUI:
         if s.screen == "SPEED_ADJUST":
             idx = SPEEDS.index(s.speed)
             if key in (ENC_UP, ENC_DOWN):
-                s.speed = SPEEDS[max(0, min(len(SPEEDS) - 1, idx + (-1 if key == ENC_UP else 1)))]; self.render()
+                s.speed = SPEEDS[max(0, min(len(SPEEDS) - 1, idx + (-1 if key == ENC_UP else 1)))]; self.render(coalesce=True)
             elif key in (ENC_PUSH, "9"): self._set(s.return_screen)
             return
         if s.screen == "ALIGN_CHOOSE":
@@ -728,8 +777,8 @@ class ControllerUI:
     def _digits(self, key: str) -> None:
         s = self.state
         if key == "9": self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU"); return
-        if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(); return
-        if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(); return
+        if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
+        if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return
         if key == ENC_PUSH:
             s.digits.append(s.digit_value); s.digit_value = 0
             if len(s.digits) == 4:

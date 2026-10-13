@@ -10,6 +10,14 @@ Matrix scanning is a standard technique and doesn't depend on that
 confirmation, so it's implemented for real (not stubbed) even though this
 has not been tested against physical hardware yet.
 
+Each key's raw level must stay unchanged for `_DEBOUNCE_S` before it's
+trusted, and a key only emits once per press (on the stable not-pressed ->
+pressed edge), not again on every scan while held — see encoder.py's
+docstring for why a single-sample check (the previous approach here) reads
+a brief noise glitch as a genuine press, which gets worse the longer a key
+is physically held (each 20ms scan re-armed by the old time-based-only
+debounce could fire again).
+
 Note: RPi.GPIO's setmode()/cleanup() are process-global. If both this class
 and encoder.py's EncoderInput are constructed together (both real), each
 calls GPIO.setmode(GPIO.BCM) — harmless, same mode both times — but
@@ -56,25 +64,36 @@ class KeypadInput(InputHAL):
 
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._stop = threading.Event()
-        self._last_key_time: dict[str, float] = {}
+        # Per-key raw level + when it last changed, so a reading only counts
+        # once it has held steady for _DEBOUNCE_S (see module docstring).
+        now = time.monotonic()
+        self._raw_pressed: dict[str, bool] = {key: False for row in KEY_LAYOUT for key in row}
+        self._changed_at: dict[str, float] = {key: now for row in KEY_LAYOUT for key in row}
+        self._active: dict[str, bool] = {key: False for row in KEY_LAYOUT for key in row}
         self._thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._thread.start()
 
-    def _debounced_emit(self, key: str) -> None:
-        now = time.monotonic()
-        if now - self._last_key_time.get(key, 0.0) < _DEBOUNCE_S:
+    def _update_key(self, key: str, pressed: bool, now: float) -> None:
+        if pressed != self._raw_pressed[key]:
+            self._raw_pressed[key] = pressed
+            self._changed_at[key] = now
             return
-        self._last_key_time[key] = now
-        self._queue.put(key)
+        if now - self._changed_at[key] < _DEBOUNCE_S:
+            return
+        if pressed and not self._active[key]:
+            self._active[key] = True
+            self._queue.put(key)
+        elif not pressed:
+            self._active[key] = False
 
     def _scan_matrix(self) -> None:
         GPIO = self._gpio
-        for row_pin in ROW_PINS:
+        now = time.monotonic()
+        for row_idx, row_pin in enumerate(ROW_PINS):
             GPIO.output(row_pin, GPIO.LOW)
             for col_idx, col_pin in enumerate(COL_PINS):
-                if GPIO.input(col_pin) == GPIO.LOW:
-                    row_idx = ROW_PINS.index(row_pin)
-                    self._debounced_emit(KEY_LAYOUT[row_idx][col_idx])
+                key = KEY_LAYOUT[row_idx][col_idx]
+                self._update_key(key, GPIO.input(col_pin) == GPIO.LOW, now)
             GPIO.output(row_pin, GPIO.HIGH)
 
     def _scan_loop(self) -> None:

@@ -62,7 +62,7 @@ not the mockup's**:
 japyscope-remote/
   firmware/
     hal/
-      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (SSD1680 full-refresh driver + font5x7.py/rasterizer.py, untested against real hardware — see "Still hardware-blocked")
+      display/       # DONE — profiles.py, base.py, simulator.py, epaper.py (SSD1680 full-refresh driver + rasterizer.py, TTF text via Pillow/Roboto — see fonts/, untested against real hardware — see "Still hardware-blocked"), boot_logo.py
       input/          # DONE — keys.py, base.py, simulator.py, keypad.py, encoder.py, joystick.py (optional accessory), composite.py
     indi/
       manager.py      # DONE — indiserver subprocess lifecycle + watchdog

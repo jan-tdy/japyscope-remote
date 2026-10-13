@@ -38,10 +38,12 @@ class DisplayProfile:
 # is portrait — 122 source-axis x 250 gate-axis pixels (SSD1680's source axis
 # maxes out at 176, so the 250px-wide landscape canvas below cannot be
 # written directly along X) — while the firmware draws a 250x122 landscape
-# canvas so 4 lines of text read comfortably; epaper.py rotates between the
-# two at the SPI-write boundary.
+# canvas; epaper.py rotates between the two at the SPI-write boundary. 6
+# rows matches rasterizer.py's MENU_SCALE=2 text (122 // ((7 + 2) * 2) = 6)
+# — confirmed on the physical panel as comfortably smaller than 4 rows'
+# worth of oversized text, and shows more menu items per screen.
 PROFILE_2_13 = DisplayProfile(
-    name="2.13in", width=250, height=122, controller="SSD1680", visible_rows=4,
+    name="2.13in", width=250, height=122, controller="SSD1680", visible_rows=6,
     native_width=122, native_height=250,
 )
 

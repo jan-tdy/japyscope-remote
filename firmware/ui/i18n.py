@@ -52,7 +52,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "about.line1": {"en": "JapyScope Remote", "sk": "JapyScope Remote"},
     "about.line2": {"en": "by JapySoft", "sk": "od JapySoft"},
     "about.line3": {"en": "Firmware v0", "sk": "Firmvér v0"},
-    "footer.rotate_push": {"en": "rotate · push", "sk": "otočiť · stlačiť"},
     "footer.push_back": {"en": "push/9=back", "sk": "stlačiť/9=späť"},
 }
 

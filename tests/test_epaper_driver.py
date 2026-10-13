@@ -237,15 +237,28 @@ def test_draw_lines_uses_ensure_hardware_then_writes_frame(monkeypatch):
     assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
 
 
+def test_draw_bitmap_uses_ensure_hardware_then_writes_frame_as_is(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_2_13, ["x"])
+    display.draw_bitmap(bitmap)
+    assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
+    expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
+    assert any(bytes(w) == expected for w in spi.writes)
+
+
 def test_render_output_size_matches_profile():
     bitmap = render(PROFILE_2_13, ["Menu"])
     assert len(bitmap) == stride_for(PROFILE_2_13.width) * PROFILE_2_13.height
 
 
 def test_render_never_raises_on_unmapped_or_accented_text():
-    # Slovak strings from firmware/ui/i18n.py — must degrade, not crash.
+    # Slovak strings from firmware/ui/i18n.py — Roboto covers these
+    # diacritics natively now (unlike the old dot-matrix font, no folding
+    # to a base Latin letter needed), but must still degrade, not crash,
+    # on a glyph Roboto genuinely doesn't have (the emoji below).
     render(PROFILE_2_13, ["Zarovnanie", "Zaparkovať / Odparkovať", "Podsvietenie"])
-    render(PROFILE_2_13, ["\U0001f600 emoji stays a box glyph"])
+    render(PROFILE_2_13, ["\U0001f600 emoji doesn't crash the renderer"])
 
 
 def _zero_row_stride_padding(buf: bytes, width: int, height: int) -> bytes:
