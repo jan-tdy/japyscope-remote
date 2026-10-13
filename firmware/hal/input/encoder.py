@@ -9,10 +9,24 @@ Confirmed on physical hardware (Pi Zero W, after rewiring): a naive "emit
 a step on every CLK edge" decoder double-counts, since one detent/click of
 a KY-040 toggles CLK twice (high->low->high) — once per detent is wanted,
 not twice. Decoding instead walks the full 2-bit (CLK, DT) Gray-code cycle
-(00 -> 01 -> 11 -> 10 -> 00, or its reverse) and only emits a step once a
-full 4-transition cycle completes, which is also what makes this immune to
-contact bounce: a bounce just rocks back and forth between two adjacent
-Gray-code states and nets to zero instead of free-running the accumulator.
+(00 -> 01 -> 11 -> 10 -> 00, or its reverse), only counting a genuine,
+validated transition (never a bare CLK wiggle with no matching DT change).
+
+A first cut required 4 accumulated transitions per step (the textbook
+"one full Gray-code cycle = one detent" rule) and turned out to need it:
+confirmed on hardware as "turning the knob does nothing at all" — most
+inexpensive KY-040 modules (and breadboard/jumper wiring like this one)
+don't reliably produce all 4 theoretical transitions per mechanical
+click, and since the accumulator never resets except at the threshold, a
+single stray reverse-direction transition (contact bounce, a scan that's
+briefly too slow to catch an intermediate state) actively cancels real
+progress rather than just failing to add to it — on real, imperfect
+wiring the count can sit stuck near zero indefinitely. Lowered to 2 (the
+common "half-step" compromise), tunable via JAPYSCOPE_ENCODER_STEPS_PER_DETENT
+without needing a firmware change if 2 still isn't right for this
+particular encoder/wiring (try 1 for maximum sensitivity, closer to the
+old behavior but still gated on a validated transition, not a bare CLK
+edge; try 4 to go back to the strictest, least bounce-prone setting).
 Which direction (CW vs CCW) maps to ENC_UP vs ENC_DOWN is the one thing
 that can't be confirmed without the physical panel in hand — flip
 _CYCLE_FORWARD_IS_UP if a clockwise turn decreases instead of increases.
@@ -32,6 +46,7 @@ capacitor between SW and GND — see docs/WIRING.md.
 """
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -44,17 +59,28 @@ ENC_CLK_PIN = 16
 ENC_DT_PIN = 12
 ENC_SW_PIN = 7
 
-_SCAN_INTERVAL_S = 0.02
+# Fast enough that two genuine Gray-code transitions in quick succession
+# (a real detent, on a none-too-clean breadboard signal) are very unlikely
+# to both land in the same gap between scans — a slower rate here was the
+# likely other half of "turning does nothing" (see module docstring).
+_SCAN_INTERVAL_S = 0.005
 _DEBOUNCE_S = 0.05
 
 # Position of each 2-bit (CLK << 1 | DT) reading within one full Gray-code
 # rotation cycle. Walking forward through this cycle (00 -> 01 -> 11 -> 10)
 # is one direction of rotation; walking backward is the other. A reading
 # that isn't one of these four (impossible on real hardware — CLK and DT
-# can't both change between two consecutive 20ms-apart samples) can't
-# happen here since the dict covers all 4 two-bit values.
+# can't both change between two consecutive samples) can't happen here
+# since the dict covers all 4 two-bit values.
 _GRAY_CYCLE_POSITION = {0b00: 0, 0b01: 1, 0b11: 2, 0b10: 3}
-_STEPS_PER_DETENT = 4
+
+
+def _steps_per_detent() -> int:
+    value = os.environ.get("JAPYSCOPE_ENCODER_STEPS_PER_DETENT", "")
+    return int(value) if value.strip() else 2
+
+
+_STEPS_PER_DETENT = _steps_per_detent()
 _CYCLE_FORWARD_IS_UP = True
 
 
