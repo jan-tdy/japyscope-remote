@@ -1,7 +1,27 @@
 """Text -> 1bpp frame buffer, shared by the real e-paper driver
-(`epaper.py`) and its tests. Pure function, no SPI/GPIO — the split exists
-so the rasterizer is exercisable without hardware, same reason
-`SimulatorDisplay` exists.
+(`epaper.py`) and its tests. No SPI/GPIO here — the split exists so the
+rasterizer is exercisable without hardware, same reason `SimulatorDisplay`
+exists.
+
+Text is rendered with a real TTF font (Pillow + the bundled Roboto —
+`fonts/Roboto-Regular.ttf`, Apache-2.0, see `fonts/LICENSE-Roboto.txt`)
+instead of a hand-built dot-matrix bitmap font: a 5x7 grid blown up by an
+integer block scale (this module's previous approach) reads as a crude
+"calculator display" look and has no room to render Slovak diacritics
+without folding them to their base Latin letter first. Pillow rasterizes
+the real glyph outlines (anti-aliased) at whatever pixel size we ask for,
+which this module then thresholds down to the 1bpp e-ink can actually
+show — some edge pixels necessarily round one way or the other at this
+resolution, but the letterforms read far more naturally than dot-matrix
+blocks, and Roboto's glyph set covers Slovak natively (ť ľ č š ž ý á í é
+ä ô and friends), so firmware/ui/i18n.py's "sk" strings no longer need any
+accent-folding fallback.
+
+Pillow is a real dependency now (requirements.txt) — Pillow 12 dropped
+Python 3.9 (Raspberry Pi OS Bullseye's version), so a Pi still on Bullseye
+needs to either upgrade to Bookworm/Trixie or pin an older
+(3.9-compatible) Pillow itself; this project doesn't carry that pin. See
+docs/TROUBLESHOOTING.md.
 
 Buffer convention: MSB-first, row-major, `ceil(width / 8)` bytes per row —
 the addressing granularity SSD1680-family controllers use for their B/W
@@ -11,28 +31,39 @@ reconfirm once the physical panel is in hand (see `docs/WIRING.md`).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
-from .font5x7 import GLYPH_H, GLYPH_W, glyph_for
+from PIL import Image, ImageDraw, ImageFont
+
 from .profiles import DisplayProfile
 
-# Minimum on-screen gap (in raw font pixels, before scaling) between glyph
-# cells and between text rows, so characters don't touch.
-_COL_GAP = 1
-_ROW_GAP = 2
+_FONT_PATH = Path(__file__).parent / "fonts" / "Roboto-Regular.ttf"
 
-# How many device pixels each font pixel becomes for the per-row menu grid
-# (render(), below) — a fixed integer, not derived from the row height. A
-# fractional scale (two earlier attempts here, both since reverted) makes
-# draw_char()'s nearest-neighbor sampling duplicate glyph rows/columns
-# unevenly from one character to the next — e.g. at scale 1.5, dest rows
-# 0..9 sample source rows 0,0,1,2,2,3,4,4,5,6, so some strokes end up
-# duplicated and others not depending on which rows they fall on — which
-# reads as inconsistent stroke weight (confirmed against a rendered
-# screenshot: letters visibly differed in thickness from each other). An
-# integer scale makes every source row/column repeat exactly `MENU_SCALE`
-# times, with no exceptions, so every glyph comes out visually consistent.
-MENU_SCALE = 2
+# A glyph pixel at or below this gray level (0=black, 255=white) counts as
+# ink once Pillow's anti-aliased render gets thresholded to 1bpp. The
+# e-ink panel can't show gray, so this is the one knob for how "bold" text
+# reads; the e-paper driver's own screenshot-confirmed bring-up is the
+# closest thing to ground truth, not a formula.
+_INK_THRESHOLD = 140
+
+# Fixed pixel size for the per-row menu grid (render(), below) — picked
+# (and confirmed against rendered screenshots after user feedback that the
+# previous dot-matrix font's "giant" size and its 1.1x/2x shrink attempts
+# were respectively unreadable-small and imperceptible) to read clearly at
+# six rows on the 2.13" profile's 122px height.
+MENU_FONT_PX = 14
+
+_font_cache: dict[int, "ImageFont.FreeTypeFont"] = {}
+
+
+def _font(px: int) -> "ImageFont.FreeTypeFont":
+    try:
+        return _font_cache[px]
+    except KeyError:
+        font = ImageFont.truetype(str(_FONT_PATH), px)
+        _font_cache[px] = font
+        return font
 
 
 def stride_for(width: int) -> int:
@@ -83,56 +114,37 @@ def _invert_row_band(buf: bytearray, stride: int, y0: int, y1: int) -> None:
             buf[row_start + xb] ^= 0xFF
 
 
-def _text_scale(row_height: int) -> float:
-    """How many device pixels each font pixel becomes, so text fills the
-    row band instead of looking tiny on a physical panel — then backed off
-    by _SIZE_SHRINK so it doesn't look oversized either. Computing the
-    unshrunk size as an integer first (same as the pre-shrink formula) and
-    only then dividing keeps the shrink from rounding straight back to the
-    unshrunk size, which dividing the raw (fractional) row_height first
-    would do here given how few device pixels a 5x7 glyph spans."""
-    whole = max(1, min(4, row_height // (GLYPH_H + _ROW_GAP)))
-    return whole / _SIZE_SHRINK
-
-
-def char_size(scale: float) -> tuple[int, int]:
-    """The device-pixel (width, height) one glyph occupies at `scale` —
-    shared by `render()` and anything composing a layout outside its
+def text_size(text: str, font_px: int) -> tuple[int, int]:
+    """The device-pixel (width, height) `text` occupies at `font_px`, as a
+    real proportional font measures it — unlike the old dot-matrix grid,
+    this genuinely depends on which characters are in `text`, not just how
+    many. Shared by `render()` and anything composing a layout outside its
     per-row grid (e.g. `boot_logo.py`), so they size text identically."""
-    return max(1, round(GLYPH_W * scale)), max(1, round(GLYPH_H * scale))
+    if not text:
+        return 0, 0
+    left, top, right, bottom = _font(font_px).getbbox(text)
+    return max(0, right - left), max(0, bottom - top)
 
 
-def draw_char(buf: bytearray, stride: int, width: int, height: int, x: int, y: int, ch: str, scale: float) -> int:
-    """Draw one glyph with its top-left at device pixel (x, y), nearest-
-    neighbor sampling each destination pixel back to its source glyph
-    pixel rather than blowing up by an integer block size — the only way
-    to realize a fractional `scale`. Returns the glyph's device-pixel
-    width (`char_size()[0]`), so callers can advance x without
-    recomputing it."""
-    char_w, char_h = char_size(scale)
-    glyph = glyph_for(ch)
-    for dy in range(char_h):
-        row_bits = glyph[dy * GLYPH_H // char_h]
-        for dx in range(char_w):
-            gx = dx * GLYPH_W // char_w
-            if not (row_bits >> (GLYPH_W - 1 - gx)) & 1:
-                continue
-            _set_black(buf, stride, width, height, x + dx, y + dy)
-    return char_w
-
-
-def draw_text(buf: bytearray, stride: int, width: int, height: int, x: int, y: int, text: str, scale: float) -> int:
-    """Draw `text` left-to-right starting at device pixel (x, y), one
-    `draw_char()` per character separated by the same _COL_GAP the
-    per-row grid uses. Returns the x position just past the last glyph —
-    callers that need width ahead of time (e.g. to center text) should
-    compute it themselves (see `boot_logo.py`), since this only draws."""
-    char_w, _ = char_size(scale)
-    gap = max(1, round(_COL_GAP * scale))
-    for ch in text:
-        draw_char(buf, stride, width, height, x, y, ch, scale)
-        x += char_w + gap
-    return x
+def draw_text(buf: bytearray, stride: int, width: int, height: int, x: int, y: int, text: str, font_px: int) -> int:
+    """Render `text` at `font_px` (anti-aliased, via Pillow) and stamp its
+    ink into the shared 1bpp buffer with its top-left at device pixel
+    (x, y), thresholding each glyph pixel at `_INK_THRESHOLD`. Returns the
+    measured width (`text_size()[0]`), so callers can advance x without
+    re-measuring."""
+    w, h = text_size(text, font_px)
+    if w <= 0 or h <= 0:
+        return w
+    font = _font(font_px)
+    left, top, _, _ = font.getbbox(text)
+    glyph_img = Image.new("L", (w, h), 255)
+    ImageDraw.Draw(glyph_img).text((-left, -top), text, font=font, fill=0)
+    glyph_px = glyph_img.load()
+    for gy in range(h):
+        for gx in range(w):
+            if glyph_px[gx, gy] <= _INK_THRESHOLD:
+                _set_black(buf, stride, width, height, x + gx, y + gy)
+    return w
 
 
 def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] = None) -> bytes:
@@ -143,17 +155,18 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
 
     visible_rows = profile.visible_rows
     row_height = height // visible_rows if visible_rows else height
-    char_w, char_h = char_size(MENU_SCALE)
-    char_advance = char_w + _COL_GAP * MENU_SCALE
 
     for row_idx, line in enumerate(lines[:visible_rows]):
-        y0 = row_idx * row_height + max(0, (row_height - char_h) // 2)
-        x = 0
-        for ch in line:
-            if x + char_w > width:
-                break
-            draw_char(buf, stride, width, height, x, y0, ch, MENU_SCALE)
-            x += char_advance
+        # Proportional text can't be truncated by a fixed per-character
+        # cell like the old monospace grid — measure and drop characters
+        # from the end until what's left actually fits. Menu labels are a
+        # handful of words, so re-measuring per character is cheap.
+        fitted = line
+        while fitted and text_size(fitted, MENU_FONT_PX)[0] > width:
+            fitted = fitted[:-1]
+        w, h = text_size(fitted, MENU_FONT_PX)
+        y0 = row_idx * row_height + max(0, (row_height - h) // 2)
+        draw_text(buf, stride, width, height, 0, y0, fitted, MENU_FONT_PX)
 
         if row_idx == invert_row:
             band_end = min(height, (row_idx + 1) * row_height)

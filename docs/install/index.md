@@ -137,7 +137,7 @@ title: Install wizard
     // Notes are keyed by data-answer and shown inside the same wizard-step as
     // the button. Answer values are unique across the whole wizard.
     const notes = {
-      bullseye: 'Bullseye uses the legacy wpa_supplicant/hostapd Wi-Fi path.',
+      bullseye: 'Bullseye uses the legacy wpa_supplicant/hostapd Wi-Fi path. Bullseye is also no longer fully supported: requirements.lock pins a Pillow release that dropped Bullseye’s Python 3.9, so the install will fail unless you upgrade to Bookworm/Trixie or fork the lockfile with an older Pillow yourself.',
       bookworm: 'Bookworm uses NetworkManager for both the saved Wi-Fi network and the setup hotspot.',
       trixie: 'Trixie uses NetworkManager, same as Bookworm, for both the saved Wi-Fi network and the setup hotspot.',
       update: 'The command in the next step will use git pull instead of git clone.',

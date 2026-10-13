@@ -253,9 +253,12 @@ def test_render_output_size_matches_profile():
 
 
 def test_render_never_raises_on_unmapped_or_accented_text():
-    # Slovak strings from firmware/ui/i18n.py — must degrade, not crash.
+    # Slovak strings from firmware/ui/i18n.py — Roboto covers these
+    # diacritics natively now (unlike the old dot-matrix font, no folding
+    # to a base Latin letter needed), but must still degrade, not crash,
+    # on a glyph Roboto genuinely doesn't have (the emoji below).
     render(PROFILE_2_13, ["Zarovnanie", "Zaparkovať / Odparkovať", "Podsvietenie"])
-    render(PROFILE_2_13, ["\U0001f600 emoji stays a box glyph"])
+    render(PROFILE_2_13, ["\U0001f600 emoji doesn't crash the renderer"])
 
 
 def _zero_row_stride_padding(buf: bytes, width: int, height: int) -> bytes:

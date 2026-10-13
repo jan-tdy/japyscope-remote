@@ -5,8 +5,13 @@ spidev==3.6
 # joystick.py) — only imported when joystick_enabled is set, same as
 # RPi.GPIO/spidev never being required for --simulate.
 smbus2==0.4.3
-# Image rasterization stays deferred with the unselected e-paper panel.
-# Pillow 12 dropped Bullseye's Python 3.9; do not add an incompatible pin.
+# Renders the e-paper menu/boot-logo text with a real TTF font instead of a
+# hand-built dot-matrix bitmap font (firmware/hal/display/rasterizer.py).
+# Pillow 12 dropped Python 3.9 (Raspberry Pi OS Bullseye's version) — a Pi
+# still on Bullseye needs to upgrade to Bookworm/Trixie (see
+# docs/INSTALL.md) or pin an older, 3.9-compatible Pillow itself; that's on
+# the Bullseye user, not handled by this pin. See docs/TROUBLESHOOTING.md.
+Pillow==12.3.0
 
 # Firmware + shared
 requests==2.32.3

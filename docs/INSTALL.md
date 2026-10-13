@@ -13,6 +13,17 @@ release: Bullseye uses its legacy `wpa_supplicant`/hostapd setup, while
 Bookworm and Trixie both use their default NetworkManager stack for both the
 saved client network and the setup hotspot.
 
+**Bullseye is no longer fully supported.** `requirements.lock` now pins
+`Pillow` (the e-paper menu text and boot logo are rendered with a real TTF
+font — `firmware/hal/display/rasterizer.py`), and the Pillow release
+pinned there dropped Python 3.9, which is Bullseye's system Python —
+`install.sh`'s `pip install --require-hashes -r requirements.lock` step
+will fail on Bullseye as a result. If you're starting fresh, flash
+Bookworm or Trixie Lite instead (same install steps). If you're already on
+Bullseye, either upgrade the OS or fork `requirements.lock`/`.txt` with an
+older, 3.9-compatible Pillow pinned yourself — that combination isn't
+tested or maintained here.
+
 ## Power and SD card (read this first)
 
 Confirmed twice during real bring-up: a weak power source (phone
