@@ -183,9 +183,10 @@ def test_invert_theme_flags_selected_row_without_text_marker():
     try:
         SettingsRepo(conn).set("ui_theme", "invert")
         ui._set("MENU", 2)
-        # visible_rows=4 for the default profile, so only 2 menu rows are
-        # shown at a time (title + 2 rows + footer) and the window scrolls
-        # to keep the selected item (index 2) as the first visible row.
+        # MENU has no footer, so _visible() shows visible_rows - 1 item rows
+        # at a time; picking an index past that window exercises the part
+        # that scrolls to keep the selected item (index 2) as the first
+        # visible row, regardless of exactly how many rows that is.
         assert ui.display.invert_row == 1
         assert ui.display.lines[1] == ui._t("menu.park_toggle")
     finally: conn.close(); os.unlink(path)

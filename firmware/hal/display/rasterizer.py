@@ -21,15 +21,18 @@ from .profiles import DisplayProfile
 _COL_GAP = 1
 _ROW_GAP = 2
 
-# Text rendered at the straight "fill the row band" size read as oversized
-# on the physical 2.13" panel — shrink every glyph by this factor so lines
-# have a bit of breathing room instead of nearly touching top/bottom. A
-# first attempt at 1.1 turned out imperceptible: at this font's coarse 5x7
-# resolution, rounding the shrunk size back to whole device pixels landed
-# on the exact same pixel count as unshrunk (confirmed against a rendered
-# screenshot) — so this needs to be a much bigger factor to actually show
-# up, not a subtle correction.
-_SIZE_SHRINK = 2.0
+# How many device pixels each font pixel becomes for the per-row menu grid
+# (render(), below) — a fixed integer, not derived from the row height. A
+# fractional scale (two earlier attempts here, both since reverted) makes
+# draw_char()'s nearest-neighbor sampling duplicate glyph rows/columns
+# unevenly from one character to the next — e.g. at scale 1.5, dest rows
+# 0..9 sample source rows 0,0,1,2,2,3,4,4,5,6, so some strokes end up
+# duplicated and others not depending on which rows they fall on — which
+# reads as inconsistent stroke weight (confirmed against a rendered
+# screenshot: letters visibly differed in thickness from each other). An
+# integer scale makes every source row/column repeat exactly `MENU_SCALE`
+# times, with no exceptions, so every glyph comes out visually consistent.
+MENU_SCALE = 2
 
 
 def stride_for(width: int) -> int:
@@ -140,9 +143,8 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
 
     visible_rows = profile.visible_rows
     row_height = height // visible_rows if visible_rows else height
-    scale = _text_scale(row_height)
-    char_w, char_h = char_size(scale)
-    char_advance = char_w + max(1, round(_COL_GAP * scale))
+    char_w, char_h = char_size(MENU_SCALE)
+    char_advance = char_w + _COL_GAP * MENU_SCALE
 
     for row_idx, line in enumerate(lines[:visible_rows]):
         y0 = row_idx * row_height + max(0, (row_height - char_h) // 2)
@@ -150,7 +152,7 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
         for ch in line:
             if x + char_w > width:
                 break
-            draw_char(buf, stride, width, height, x, y0, ch, scale)
+            draw_char(buf, stride, width, height, x, y0, ch, MENU_SCALE)
             x += char_advance
 
         if row_idx == invert_row:
