@@ -21,6 +21,11 @@ from .profiles import DisplayProfile
 _COL_GAP = 1
 _ROW_GAP = 2
 
+# Text rendered at the straight "fill the row band" size read as oversized
+# on the physical 2.13" panel — shrink every glyph by this factor so lines
+# have a bit of breathing room instead of nearly touching top/bottom.
+_SIZE_SHRINK = 1.1
+
 
 def stride_for(width: int) -> int:
     return (width + 7) // 8
@@ -70,10 +75,56 @@ def _invert_row_band(buf: bytearray, stride: int, y0: int, y1: int) -> None:
             buf[row_start + xb] ^= 0xFF
 
 
-def _text_scale(row_height: int) -> int:
+def _text_scale(row_height: int) -> float:
     """How many device pixels each font pixel becomes, so text fills the
-    row band instead of looking tiny on a physical panel."""
-    return max(1, min(4, row_height // (GLYPH_H + _ROW_GAP)))
+    row band instead of looking tiny on a physical panel — then backed off
+    by _SIZE_SHRINK so it doesn't look oversized either. Computing the
+    unshrunk size as an integer first (same as the pre-shrink formula) and
+    only then dividing keeps the shrink from rounding straight back to the
+    unshrunk size, which dividing the raw (fractional) row_height first
+    would do here given how few device pixels a 5x7 glyph spans."""
+    whole = max(1, min(4, row_height // (GLYPH_H + _ROW_GAP)))
+    return whole / _SIZE_SHRINK
+
+
+def char_size(scale: float) -> tuple[int, int]:
+    """The device-pixel (width, height) one glyph occupies at `scale` —
+    shared by `render()` and anything composing a layout outside its
+    per-row grid (e.g. `boot_logo.py`), so they size text identically."""
+    return max(1, round(GLYPH_W * scale)), max(1, round(GLYPH_H * scale))
+
+
+def draw_char(buf: bytearray, stride: int, width: int, height: int, x: int, y: int, ch: str, scale: float) -> int:
+    """Draw one glyph with its top-left at device pixel (x, y), nearest-
+    neighbor sampling each destination pixel back to its source glyph
+    pixel rather than blowing up by an integer block size — the only way
+    to realize a fractional `scale`. Returns the glyph's device-pixel
+    width (`char_size()[0]`), so callers can advance x without
+    recomputing it."""
+    char_w, char_h = char_size(scale)
+    glyph = glyph_for(ch)
+    for dy in range(char_h):
+        row_bits = glyph[dy * GLYPH_H // char_h]
+        for dx in range(char_w):
+            gx = dx * GLYPH_W // char_w
+            if not (row_bits >> (GLYPH_W - 1 - gx)) & 1:
+                continue
+            _set_black(buf, stride, width, height, x + dx, y + dy)
+    return char_w
+
+
+def draw_text(buf: bytearray, stride: int, width: int, height: int, x: int, y: int, text: str, scale: float) -> int:
+    """Draw `text` left-to-right starting at device pixel (x, y), one
+    `draw_char()` per character separated by the same _COL_GAP the
+    per-row grid uses. Returns the x position just past the last glyph —
+    callers that need width ahead of time (e.g. to center text) should
+    compute it themselves (see `boot_logo.py`), since this only draws."""
+    char_w, _ = char_size(scale)
+    gap = max(1, round(_COL_GAP * scale))
+    for ch in text:
+        draw_char(buf, stride, width, height, x, y, ch, scale)
+        x += char_w + gap
+    return x
 
 
 def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] = None) -> bytes:
@@ -85,26 +136,16 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
     visible_rows = profile.visible_rows
     row_height = height // visible_rows if visible_rows else height
     scale = _text_scale(row_height)
-    char_h = GLYPH_H * scale
-    char_advance = (GLYPH_W + _COL_GAP) * scale
+    char_w, char_h = char_size(scale)
+    char_advance = char_w + max(1, round(_COL_GAP * scale))
 
     for row_idx, line in enumerate(lines[:visible_rows]):
         y0 = row_idx * row_height + max(0, (row_height - char_h) // 2)
         x = 0
         for ch in line:
-            if x + char_advance - _COL_GAP * scale > width:
+            if x + char_w > width:
                 break
-            glyph = glyph_for(ch)
-            for gy in range(GLYPH_H):
-                row_bits = glyph[gy]
-                for gx in range(GLYPH_W):
-                    if not (row_bits >> (GLYPH_W - 1 - gx)) & 1:
-                        continue
-                    px0 = x + gx * scale
-                    py0 = y0 + gy * scale
-                    for dy in range(scale):
-                        for dx in range(scale):
-                            _set_black(buf, stride, width, height, px0 + dx, py0 + dy)
+            draw_char(buf, stride, width, height, x, y0, ch, scale)
             x += char_advance
 
         if row_idx == invert_row:

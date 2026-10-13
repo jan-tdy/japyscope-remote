@@ -9,6 +9,7 @@ import shutil
 from typing import Optional
 
 from .base import DisplayHAL
+from .rasterizer import stride_for
 
 
 class SimulatorDisplay(DisplayHAL):
@@ -43,3 +44,25 @@ class SimulatorDisplay(DisplayHAL):
             else:
                 print(line)
         print("=" * width)
+
+    def draw_bitmap(self, bitmap: bytes) -> None:
+        # Downsampled ASCII-art preview, nearest-neighbor per terminal cell
+        # (rows get half the columns' sample density — terminal character
+        # cells are roughly twice as tall as wide) — not pixel-perfect, just
+        # enough for a developer running --simulate to confirm artwork
+        # (e.g. boot_logo.py) landed roughly where intended.
+        src_width, src_height = self.profile.width, self.profile.height
+        stride = stride_for(src_width)
+        cols = min(shutil.get_terminal_size((80, 24)).columns, src_width)
+        rows = max(1, round(src_height * (cols / src_width) / 2))
+        print("\n" + "=" * cols)
+        print(f"[{self.profile.name} {src_width}x{src_height} bitmap]")
+        for row in range(rows):
+            src_y = min(src_height - 1, row * src_height // rows)
+            chars = []
+            for col in range(cols):
+                src_x = min(src_width - 1, col * src_width // cols)
+                is_white = (bitmap[src_y * stride + src_x // 8] >> (7 - (src_x % 8))) & 1
+                chars.append(" " if is_white else "█")
+            print("".join(chars))
+        print("=" * cols)

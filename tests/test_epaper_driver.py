@@ -237,6 +237,16 @@ def test_draw_lines_uses_ensure_hardware_then_writes_frame(monkeypatch):
     assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
 
 
+def test_draw_bitmap_uses_ensure_hardware_then_writes_frame_as_is(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_2_13, ["x"])
+    display.draw_bitmap(bitmap)
+    assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
+    expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
+    assert any(bytes(w) == expected for w in spi.writes)
+
+
 def test_render_output_size_matches_profile():
     bitmap = render(PROFILE_2_13, ["Menu"])
     assert len(bitmap) == stride_for(PROFILE_2_13.width) * PROFILE_2_13.height

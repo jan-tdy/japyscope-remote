@@ -20,12 +20,24 @@ class DisplayHAL(ABC):
 
     @abstractmethod
     def draw_lines(self, lines: list[str], invert_row: Optional[int] = None) -> None:
-        """Replace the whole screen with these text lines (partial-refresh
-        e-ink, so this is the only drawing primitive v0 needs — no
-        incremental diffing). `invert_row`, if given, is the index into
-        `lines` of the one row an "Invert" interface theme
+        """Replace the whole screen with these text lines (full-refresh
+        e-ink — see firmware/hal/display/epaper.py — so this is the only
+        *text* drawing primitive the menu UI needs; firmware/ui/controller.py
+        throttles how often it actually calls this while scrolling, since a
+        real refresh is slow and visibly flashes). `invert_row`, if given,
+        is the index into `lines` of the one row an "Invert" interface theme
         (`firmware/ui/themes.py`) wants shown as black background / white
         text instead of the panel's normal white background / black text."""
+
+    def draw_bitmap(self, bitmap: bytes) -> None:
+        """Replace the whole screen with a raw 1bpp bitmap already in this
+        profile's logical width x height, row-major MSB-first layout (see
+        rasterizer.py's module docstring for the exact convention) — for
+        artwork that isn't text, e.g. firmware/splash.py's boot logo
+        (firmware/hal/display/boot_logo.py). Optional: backends that only
+        ever draw text (there are none today, but `draw_lines`-only mocks
+        in tests are expected) can leave this raising NotImplementedError."""
+        raise NotImplementedError(f"{type(self).__name__} does not support draw_bitmap()")
 
     def clear(self) -> None:
         self.draw_lines([])

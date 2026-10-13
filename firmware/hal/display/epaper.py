@@ -296,6 +296,10 @@ class EPaperDisplay(DisplayHAL):
         bitmap = self._render_text_to_bitmap(lines, invert_row)
         self._spi_write_frame(bitmap)
 
+    def draw_bitmap(self, bitmap: bytes) -> None:
+        self._ensure_hardware()
+        self._spi_write_frame(bitmap)
+
     def _to_native_orientation(self, bitmap: bytes) -> bytes:
         """Rotate the logical width x height bitmap to match the
         controller's native RAM axes, when they differ (see profiles.py)."""
