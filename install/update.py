@@ -65,7 +65,7 @@ def _select_asset(release: dict) -> tuple[dict, str]:
         raise UpdateError("release assets are not a list")
     archives = [
         asset for asset in assets
-        if isinstance(asset, dict) and asset.get("name", "").endswith(".tar.gz")
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str) and asset["name"].endswith(".tar.gz")
     ]
     if len(archives) != 1: raise UpdateError("release must contain exactly one .tar.gz asset")
     asset = archives[0]
