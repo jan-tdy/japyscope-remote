@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sqlite3
 import time
@@ -69,7 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--simulate", action="store_true", help="use terminal display/input and no real INDI process")
     parser.add_argument("--db", help=f"SQLite path (default: {DEFAULT_DB_PATH})")
     parser.add_argument("--driver", default=DEFAULT_DRIVER_BINARY, help="INDI mount driver executable")
-    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("JAPYSCOPE_LOG_LEVEL", "INFO"),
+        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+        help="Overridable via JAPYSCOPE_LOG_LEVEL (e.g. in /etc/japyscope/environment) without "
+        "editing the systemd unit — set DEBUG to see per-transition encoder diagnostics "
+        "(firmware.hal.input.encoder) or e-paper refresh phase timing (firmware.hal.display.epaper).",
+    )
     return parser
 
 

@@ -86,6 +86,7 @@ capacitor between SW and GND — see docs/WIRING.md.
 """
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
@@ -94,6 +95,8 @@ from typing import Optional
 
 from .base import InputHAL
 from .keys import ENC_DOWN, ENC_PUSH, ENC_UP
+
+logger = logging.getLogger(__name__)
 
 ENC_CLK_PIN = 16
 ENC_DT_PIN = 12
@@ -165,7 +168,8 @@ class EncoderInput(InputHAL):
         state = self._pending_state
         if state == self._last_state:
             return
-        prev_pos = _GRAY_CYCLE_POSITION[self._last_state]
+        prev_state = self._last_state
+        prev_pos = _GRAY_CYCLE_POSITION[prev_state]
         curr_pos = _GRAY_CYCLE_POSITION[state]
         self._last_state = state
         step = (curr_pos - prev_pos) % 4
@@ -176,13 +180,22 @@ class EncoderInput(InputHAL):
         # step == 0 can't happen (state changed); step == 2 would mean both
         # CLK and DT flipped between samples, which a bounce can't do —
         # ignore it as noise rather than guess a direction.
+        logger.debug(
+            "encoder transition %s->%s step=%+d accum=%d/%d",
+            f"{prev_state:02b}", f"{state:02b}", {1: 1, 3: -1}.get(step, 0),
+            self._detent_accum, _STEPS_PER_DETENT,
+        )
 
         if self._detent_accum >= _STEPS_PER_DETENT:
             self._detent_accum = 0
-            self._queue.put(ENC_UP if _CYCLE_FORWARD_IS_UP else ENC_DOWN)
+            emitted = ENC_UP if _CYCLE_FORWARD_IS_UP else ENC_DOWN
+            logger.debug("encoder emits %s", emitted)
+            self._queue.put(emitted)
         elif self._detent_accum <= -_STEPS_PER_DETENT:
             self._detent_accum = 0
-            self._queue.put(ENC_DOWN if _CYCLE_FORWARD_IS_UP else ENC_UP)
+            emitted = ENC_DOWN if _CYCLE_FORWARD_IS_UP else ENC_UP
+            logger.debug("encoder emits %s", emitted)
+            self._queue.put(emitted)
 
     def _scan_switch(self) -> None:
         GPIO = self._gpio

@@ -3,7 +3,7 @@ import sqlite3
 import tempfile
 
 from firmware import main as main_module
-from firmware.main import HARDWARE_COMPONENTS, resolve_simulation_flags
+from firmware.main import HARDWARE_COMPONENTS, build_parser, resolve_simulation_flags
 from firmware.hal.display.profiles import PROFILE_2_13
 from shared.db import SettingsRepo, connect, init_db
 
@@ -42,6 +42,16 @@ def test_per_component_overrides_are_independent():
             "mount": True, "joystick": False,
         }
     finally: conn.close(); os.unlink(path)
+
+
+def test_log_level_defaults_to_info_overridable_via_env(monkeypatch):
+    # JAPYSCOPE_LOG_LEVEL lets DEBUG (per-transition encoder diagnostics,
+    # e-paper refresh phase timing) be enabled via /etc/japyscope/environment
+    # without editing the systemd unit's ExecStart.
+    monkeypatch.delenv("JAPYSCOPE_LOG_LEVEL", raising=False)
+    assert build_parser().parse_args([]).log_level == "INFO"
+    monkeypatch.setenv("JAPYSCOPE_LOG_LEVEL", "DEBUG")
+    assert build_parser().parse_args([]).log_level == "DEBUG"
 
 
 class _RecordingDisplay:
