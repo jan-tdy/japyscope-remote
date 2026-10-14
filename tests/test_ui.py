@@ -235,7 +235,7 @@ def test_wifi_access_countdown_tick_is_a_partial_refresh():
         ui.state.access_code = "123456"
         ui.state.access_expires = now[0] + 600
         ui._set("WIFI_ACCESS")
-        assert ui.display.partial is True  # screen transitions draw partial too, for speed
+        assert ui.display.partial is False  # the screen transition itself is full
 
         now[0] += 1.0
         ui.tick()
@@ -600,7 +600,7 @@ def test_scrolling_draws_partial_except_every_nth_which_clears_ghosting():
     try:
         SettingsRepo(conn).set("eink_refresh_every", "3")
         ui._set("MENU", 0)
-        assert ui.display.partial is True  # screen transitions draw partial too, untracked
+        assert ui.display.partial is False  # screen transitions always get a full refresh
 
         ui.handle(ENC_DOWN)
         assert ui.display.partial is True
@@ -732,17 +732,16 @@ def test_keypad_5_still_types_in_smartsearch_not_select():
     finally: conn.close(); os.unlink(path)
 
 
-def test_screen_transitions_draw_partial_and_are_untracked():
-    # _set() draws partial for speed, but shouldn't count toward or be
-    # cleared by the scroll-burst bookkeeping (_scroll_count/idle-flush) —
-    # that's reserved for near-identical repeated redraws (scrolling), not
-    # a screen transition's completely different content.
+def test_screen_transitions_are_always_a_full_refresh():
+    # Confirmed on hardware: making _set() partial was wrong, especially
+    # noticeable going back with "9" — screen transitions (a completely
+    # different frame each time) should always be a full refresh.
     ui, conn, path = make_ui()
     try:
-        SettingsRepo(conn).set("eink_refresh_every", "2")
         ui._set("IDLE")
-        assert ui.display.partial is True
+        assert ui.display.partial is False
         ui._set("MENU", 0)
-        assert ui.display.partial is True  # still partial, not forced full by the counter
-        assert ui._scroll_count == 0
+        assert ui.display.partial is False
+        ui.handle("9")
+        assert ui.state.screen == "IDLE" and ui.display.partial is False
     finally: conn.close(); os.unlink(path)

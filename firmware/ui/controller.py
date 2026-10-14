@@ -47,20 +47,16 @@ T9 = {
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
-# *partial* refresh (same module) is faster at the cost of some ghosting
-# that builds up over repeated partial refreshes *of similar content*. So
-# scrolling (`_move`) draws every detent as a partial refresh; only every
-# `eink_refresh_every`-th one is a full refresh instead, to clear that
-# ghosting before it's visible, and the idle flush below (`tick()`) forces
-# one of those full "clean up" refreshes shortly after scrolling stops
-# rather than leaving a partial-refresh frame on screen indefinitely.
-# Screen transitions (`_set`) also draw partial for speed, but — being a
-# completely different frame each time, not a near-identical one — don't
-# count toward or get flushed by this same bookkeeping (render()'s
-# `track` parameter); `_set()` used to force a full refresh on every
-# screen change unconditionally, reported on hardware as every bit of
-# navigation (not just scrolling) flashing visibly, e.g. IDLE -> CATALOG.
-# Adjustable per-install via the "eink_refresh_every" setting.
+# *partial* refresh (same module) is much faster at the cost of some
+# ghosting that builds up over repeated partial refreshes. So scrolling
+# (`_move`, below) draws every single detent (never a stale, skipped
+# frame), but as a partial refresh; only every `eink_refresh_every`-th one
+# is a full refresh instead, to clear that ghosting before it's visible,
+# and the idle flush below (`tick()`) forces one of those full "clean up"
+# refreshes shortly after the user stops scrolling rather than leaving a
+# partial-refresh frame on screen indefinitely. Screen transitions (`_set`)
+# always get a full refresh. Adjustable per-install via the
+# "eink_refresh_every" setting.
 _DEFAULT_REFRESH_EVERY = 6
 # How long to wait, after the last scroll, before forcing the "clean up"
 # full refresh even though _DEFAULT_REFRESH_EVERY partial refreshes
@@ -277,7 +273,7 @@ class ControllerUI:
     def _set(self, screen: str, index: int = 0) -> None:
         self.state.screen = screen
         self.state.index = index
-        self.render(coalesce=True, track=False)
+        self.render()
 
     @staticmethod
     def _truth(value: Optional[str]) -> bool:
@@ -311,32 +307,25 @@ class ControllerUI:
                 self._invert_row = len(lines) - 1
         return [*lines, footer] if footer else lines
 
-    def render(self, *, coalesce: bool = False, track: bool = True) -> None:
-        """Redraw the current screen. `coalesce=True` draws a fast partial
-        refresh instead of a full one. `track=True` (the default, used by
-        `_move()` and every within-screen value change) additionally counts
-        this redraw toward `eink_refresh_every` and the idle-flush
-        machinery, which periodically force a full refresh to clear
-        ghosting that's accumulated from a *burst* of near-identical
-        redraws (scrolling, a countdown ticking) — see
-        _DEFAULT_REFRESH_EVERY's docstring above. The lines are always
-        computed fresh from the current state either way, so a later
-        render never draws anything stale.
-
-        `_set()` (a screen transition) passes `track=False`: it still
-        draws partial for speed, but never counts toward — or gets
-        flushed by — that same-screen-ghosting bookkeeping. A screen
-        transition's content is a completely different frame from
-        whatever came before, so the usual logic (clean up after N
-        *similar* redraws, or shortly after a burst of them stops) isn't
-        the right trigger for it; `_set()` used to force a full refresh on
-        every single screen change unconditionally instead, which was
-        reported on hardware as making ordinary navigation (e.g.
-        IDLE -> CATALOG) visibly flash every time, unlike scrolling, which
-        was already fast. A handful of calls still want a guaranteed full
-        refresh regardless (e.g. right after boot, before any partial
-        state exists to diff against) — those call `render()` with
-        `coalesce` left at its default False, same as before."""
+    def render(self, *, coalesce: bool = False) -> None:
+        """Redraw the current screen. `coalesce=True` (only passed by
+        `_move`, for same-screen scrolling, and a handful of other
+        within-screen value changes — T9 typing, the WIFI_ACCESS
+        countdown, a digit/backlight/speed adjustment) draws a fast
+        partial refresh instead of a full one, except every
+        `eink_refresh_every`-th call, which is a full refresh to clear
+        accumulated ghosting — see _DEFAULT_REFRESH_EVERY's docstring
+        above. `_set()` (any screen transition) always draws full
+        (coalesce left at its default False): its content is a
+        completely different frame from whatever came before, so there's
+        nothing to usefully diff a partial refresh against, and a full
+        refresh there also gives the user an unambiguous "this is a new
+        screen" cue — don't make this coalesce=True again without an
+        explicit request; it was tried and reverted (confirmed on
+        hardware as wrong, especially noticeable backing out with "9").
+        The lines are always computed fresh from the current state either
+        way, so a later render (or `tick()`'s idle flush, also a full
+        refresh) never draws anything stale."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -470,9 +459,6 @@ class ControllerUI:
         else:
             lines = [screen]
         visible_lines = lines[: self.display.visible_rows]
-        if coalesce and not track:
-            self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=True)
-            return
         if coalesce:
             self._scroll_count += 1
             self._last_scroll_at = self.clock()
