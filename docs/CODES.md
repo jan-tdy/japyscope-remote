@@ -42,9 +42,16 @@ everywhere except TYPE (SmartSearch), where it's still a T9 letter key.
 
 Keypad "3" (`handle()`, top of the method) redraws the current screen
 with a forced full refresh — a manual way to clear any ghosting left
-over from partial refreshes without waiting for the periodic
-`eink_refresh_every` cleanup or navigating away and back. Excluded on
-TYPE, where it's still a T9 letter key ("ghi").
+over from partial refreshes without waiting for the idle-flush cleanup
+(which only runs once scrolling actually stops) or navigating away and
+back. Excluded on TYPE, where it's still a T9 letter key ("ghi").
+
+Scrolling (`_move()`) always draws a fast partial refresh, never a
+forced full one mid-scroll, however many consecutive scrolls happen —
+only the idle flush (shortly after scrolling actually stops) or keypad
+"3" clear accumulated ghosting. A fixed "every Nth scroll is full"
+cadence used to also force one mid-burst regardless of whether
+scrolling was still ongoing; removed as an unwanted interruption.
 
 ### External joystick (optional — `docs/WIRING.md`)
 

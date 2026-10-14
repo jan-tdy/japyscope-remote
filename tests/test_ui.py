@@ -595,28 +595,26 @@ def test_jog_uses_the_current_speed():
     finally: conn.close(); os.unlink(path)
 
 
-def test_scrolling_draws_partial_except_every_nth_which_clears_ghosting():
+def test_scrolling_never_forces_a_full_refresh_mid_burst():
+    # A fixed "every Nth scroll is full" cadence used to interrupt
+    # otherwise-smooth scrolling with an unwanted full, visibly-flashing
+    # refresh mid-burst — removed. Scrolling should stay partial no
+    # matter how many consecutive detents happen; only the idle flush
+    # (once scrolling actually stops) or keypad "3" clear ghosting.
     ui, conn, path = make_ui()
     try:
-        SettingsRepo(conn).set("eink_refresh_every", "3")
         ui._set("MENU", 0)
         assert ui.display.partial is False  # screen transitions always get a full refresh
 
-        ui.handle(ENC_DOWN)
-        assert ui.display.partial is True
-        ui.handle(ENC_DOWN)
-        assert ui.display.partial is True
-        ui.handle(ENC_DOWN)  # 3rd scroll tick -> the periodic full refresh
-        assert ui.display.partial is False
-        ui.handle(ENC_DOWN)
-        assert ui.display.partial is True  # counter reset, back to partial
+        for _ in range(10):
+            ui.handle(ENC_DOWN)
+            assert ui.display.partial is True
     finally: conn.close(); os.unlink(path)
 
 
 def test_idle_after_a_burst_of_scrolling_forces_a_full_refresh():
     ui, conn, path = make_ui()
     try:
-        SettingsRepo(conn).set("eink_refresh_every", "100")  # never reached by itself
         ui._set("MENU", 0)
         now = [1000.0]
         ui.clock = lambda: now[0]
@@ -642,7 +640,6 @@ def test_idle_after_a_single_isolated_click_stays_partial():
     # the next real interaction.
     ui, conn, path = make_ui()
     try:
-        SettingsRepo(conn).set("eink_refresh_every", "100")  # never reached by itself
         ui._set("MENU", 0)
         now = [1000.0]
         ui.clock = lambda: now[0]
