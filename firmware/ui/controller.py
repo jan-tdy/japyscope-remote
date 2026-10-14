@@ -63,6 +63,21 @@ _DEFAULT_REFRESH_EVERY = 6
 # haven't accumulated yet — otherwise stopping mid-count would leave a
 # partial-refresh frame (and its ghosting) on screen indefinitely.
 _COALESCE_IDLE_FLUSH_S = 0.25
+# Confirmed on hardware (journalctl phase/elapsed logging from
+# firmware/hal/display/epaper.py's _wait_busy): a *single* isolated click
+# produced one partial refresh immediately followed, ~0.25-1s later, by
+# a full one — on every single click, not just every Nth, making every
+# move look exactly as slow as a full refresh. The idle flush above
+# doesn't check how much actually accumulated: it fires on *any* pending
+# partial, including the very first one of what might be a single
+# deliberate click rather than a burst. A lone partial refresh's ghosting
+# is the whole reason it's tolerable in the first place (the module
+# docstring: ghosting "builds up over repeated partial refreshes", not a
+# single one) — require at least this many coalesced steps to have
+# landed before the idle flush bothers cleaning up at all; a true burst
+# (several detents within the idle window) still gets its post-burst
+# full refresh exactly as before.
+_COALESCE_IDLE_FLUSH_MIN_STEPS = 2
 # Bright, easy-to-recognize alignment stars with real J2000 coordinates —
 # picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
 # IndiClient.sync() with these, which is what actually teaches the mount
@@ -215,7 +230,11 @@ class ControllerUI:
     def tick(self) -> None:
         now = self.clock()
         s = self.state
-        if self._coalesce_pending and now - self._last_scroll_at >= _COALESCE_IDLE_FLUSH_S:
+        if (
+            self._coalesce_pending
+            and self._scroll_count >= _COALESCE_IDLE_FLUSH_MIN_STEPS
+            and now - self._last_scroll_at >= _COALESCE_IDLE_FLUSH_S
+        ):
             self.render()
         if now - s.last_status_at >= 2:
             s.last_status_at = now

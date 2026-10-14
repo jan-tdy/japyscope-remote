@@ -14,19 +14,29 @@ validated transition (never a bare CLK wiggle with no matching DT change).
 
 A first cut required 4 accumulated transitions per step (the textbook
 "one full Gray-code cycle = one detent" rule) and turned out to need it:
-confirmed on hardware as "turning the knob does nothing at all" — most
-inexpensive KY-040 modules (and breadboard/jumper wiring like this one)
-don't reliably produce all 4 theoretical transitions per mechanical
-click, and since the accumulator never resets except at the threshold, a
-single stray reverse-direction transition (contact bounce, a scan that's
-briefly too slow to catch an intermediate state) actively cancels real
-progress rather than just failing to add to it — on real, imperfect
-wiring the count can sit stuck near zero indefinitely. Lowered to 2 (the
-common "half-step" compromise), tunable via JAPYSCOPE_ENCODER_STEPS_PER_DETENT
-without needing a firmware change if 2 still isn't right for this
-particular encoder/wiring (try 1 for maximum sensitivity, closer to the
-old behavior but still gated on a validated transition, not a bare CLK
-edge; try 4 to go back to the strictest, least bounce-prone setting).
+confirmed on hardware as "turning the knob does nothing at all" — at the
+time, with no stability debounce yet on rotation, a single stray reverse-
+direction transition (contact bounce, a scan that's briefly too slow to
+catch an intermediate state) actively canceled real progress rather than
+just failing to add to it, since the accumulator never reset except at
+the threshold — on real, noisy wiring the count could sit stuck near zero
+indefinitely. Lowered to 2 (the common "half-step" compromise) to work
+around that.
+
+Once rotation got its own stability debounce (below) to reject that same
+noise directly, the 2-per-detent compromise became actively wrong instead
+of just a workaround: this particular KY-040 rests at the 0b11 state
+between clicks and reliably produces the full 4-transition Gray cycle per
+physical detent once noise is filtered, so counting every 2 transitions
+as a step emits *two* menu moves per single physical click — confirmed
+on hardware as "one click does nothing, two clicks moves way too much"
+(an odd number of clicks leaves a stray half-counted transition sitting
+in the accumulator; an even number emits double). Raised back to 4 (one
+full cycle = one step) now that debounce, not this threshold, is what
+rejects noise. Tunable via JAPYSCOPE_ENCODER_STEPS_PER_DETENT without a
+firmware change if 4 isn't right for this particular encoder/wiring (try
+2 if clicks are being missed outright, which would mean this encoder
+*doesn't* reliably complete all 4 transitions after all).
 Which direction (CW vs CCW) maps to ENC_UP vs ENC_DOWN is the one thing
 that can't be confirmed without the physical panel in hand — flip
 _CYCLE_FORWARD_IS_UP if a clockwise turn decreases instead of increases.
@@ -107,7 +117,7 @@ _GRAY_CYCLE_POSITION = {0b00: 0, 0b01: 1, 0b11: 2, 0b10: 3}
 
 def _steps_per_detent() -> int:
     value = os.environ.get("JAPYSCOPE_ENCODER_STEPS_PER_DETENT", "")
-    return int(value) if value.strip() else 2
+    return int(value) if value.strip() else 4
 
 
 def _stable_samples() -> int:
