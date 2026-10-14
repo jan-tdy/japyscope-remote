@@ -31,6 +31,24 @@ Which direction (CW vs CCW) maps to ENC_UP vs ENC_DOWN is the one thing
 that can't be confirmed without the physical panel in hand — flip
 _CYCLE_FORWARD_IS_UP if a clockwise turn decreases instead of increases.
 
+Still reported after the above: wildly inconsistent behavior, sometimes
+nothing for a real turn, sometimes ~10 steps for 2 real ones. That pattern
+— not just occasional bounce, but sometimes registering far more than
+physically happened — points at genuine electrical noise on CLK/DT (the
+same class of problem as the SW line's floating-pin issue below), not just
+mechanical contact bounce: a validated Gray-code transition still fires
+immediately off a single noisy sample, and enough random toggling can by
+chance produce several valid-looking forward transitions in a row, which
+is indistinguishable from real rotation to a decoder with no concept of
+time. Rotation now gets the same stability debounce the switch already
+had: a reading must stay the same for `JAPYSCOPE_ENCODER_STABLE_SAMPLES`
+consecutive scans (default 2 — about 10ms at the 5ms scan rate) before
+it's trusted, filtering a brief noise glitch while staying well under the
+tens-of-milliseconds a real detent takes. Raise it (try 3-5) if 10-steps-
+for-2 is still happening; this is a software mitigation for what's
+ultimately a wiring/signal-quality problem, not a full fix — the SW line's
+pull-up/decoupling-capacitor note below applies equally to CLK/DT.
+
 The push switch is debounced by requiring the raw level to stay unchanged
 for `_DEBOUNCE_S` before it's trusted (instead of trusting any single
 sample), and only emits once per press (on the stable low -> stable high
@@ -80,7 +98,13 @@ def _steps_per_detent() -> int:
     return int(value) if value.strip() else 2
 
 
+def _stable_samples() -> int:
+    value = os.environ.get("JAPYSCOPE_ENCODER_STABLE_SAMPLES", "")
+    return max(1, int(value)) if value.strip() else 2
+
+
 _STEPS_PER_DETENT = _steps_per_detent()
+_STABLE_SAMPLES = _stable_samples()
 _CYCLE_FORWARD_IS_UP = True
 
 
@@ -97,6 +121,8 @@ class EncoderInput(InputHAL):
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._stop = threading.Event()
         self._last_state = (GPIO.input(ENC_CLK_PIN) << 1) | GPIO.input(ENC_DT_PIN)
+        self._pending_state = self._last_state
+        self._pending_count = _STABLE_SAMPLES
         self._detent_accum = 0
         self._sw_raw = GPIO.input(ENC_SW_PIN)
         self._sw_changed_at = time.monotonic()
@@ -106,7 +132,15 @@ class EncoderInput(InputHAL):
 
     def _scan_rotation(self) -> None:
         GPIO = self._gpio
-        state = (GPIO.input(ENC_CLK_PIN) << 1) | GPIO.input(ENC_DT_PIN)
+        raw = (GPIO.input(ENC_CLK_PIN) << 1) | GPIO.input(ENC_DT_PIN)
+        if raw != self._pending_state:
+            self._pending_state = raw
+            self._pending_count = 1
+        elif self._pending_count < _STABLE_SAMPLES:
+            self._pending_count += 1
+        if self._pending_count < _STABLE_SAMPLES:
+            return
+        state = self._pending_state
         if state == self._last_state:
             return
         prev_pos = _GRAY_CYCLE_POSITION[self._last_state]

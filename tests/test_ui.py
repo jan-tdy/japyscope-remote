@@ -14,8 +14,9 @@ from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 class Display(DisplayHAL):
     def __init__(self):
-        super().__init__(); self.lines = []; self.invert_row = None
-    def draw_lines(self, lines, invert_row=None): self.lines = lines; self.invert_row = invert_row
+        super().__init__(); self.lines = []; self.invert_row = None; self.partial = None
+    def draw_lines(self, lines, invert_row=None, partial=False):
+        self.lines = lines; self.invert_row = invert_row; self.partial = partial
 
 
 class Backlight(BacklightHAL):
@@ -561,4 +562,57 @@ def test_jog_uses_the_current_speed():
         ui.state.screen = "TRACK"; ui.state.speed = 8
         ui.handle("6")
         assert ui.indi.jogs[-1] == ("E", 8)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scrolling_draws_partial_except_every_nth_which_clears_ghosting():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("eink_refresh_every", "3")
+        ui._set("MENU", 0)
+        assert ui.display.partial is False  # screen transitions always get a full refresh
+
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True
+        ui.handle(ENC_DOWN)  # 3rd scroll tick -> the periodic full refresh
+        assert ui.display.partial is False
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True  # counter reset, back to partial
+    finally: conn.close(); os.unlink(path)
+
+
+def test_idle_after_scrolling_forces_a_full_refresh():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("eink_refresh_every", "100")  # never reached by itself
+        ui._set("MENU", 0)
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True
+
+        now[0] += 1.0  # past _COALESCE_IDLE_FLUSH_S
+        ui.tick()
+        assert ui.display.partial is False
+    finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_shows_the_actual_running_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: "v1.2.3")
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware v1.2.3"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_falls_back_to_dev_outside_an_installed_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: None)
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware dev"
     finally: conn.close(); os.unlink(path)

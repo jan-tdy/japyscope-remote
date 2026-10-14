@@ -51,7 +51,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "park.power_off": {"en": "Power off", "sk": "Vypnúť"},
     "about.line1": {"en": "JapyScope Remote", "sk": "JapyScope Remote"},
     "about.line2": {"en": "by JapySoft", "sk": "od JapySoft"},
-    "about.line3": {"en": "Firmware v0", "sk": "Firmvér v0"},
+    "about.line3": {"en": "Firmware {version}", "sk": "Firmvér {version}"},
     "footer.push_back": {"en": "push/9=back", "sk": "stlačiť/9=späť"},
 }
 

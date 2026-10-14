@@ -7,8 +7,10 @@ from __future__ import annotations
 import pytest
 
 from firmware.hal.display.epaper import (
+    _CMD_DISPLAY_OPTION,
     _CMD_DISPLAY_UPDATE_CONTROL_2,
     _CMD_DRIVER_OUTPUT_CONTROL,
+    _CMD_BORDER_WAVEFORM,
     _CMD_MASTER_ACTIVATION,
     _CMD_SET_RAM_X_ADDRESS,
     _CMD_SET_RAM_Y_ADDRESS,
@@ -19,8 +21,11 @@ from firmware.hal.display.epaper import (
     _CMD_WRITE_LUT,
     _CMD_WRITE_RAM_BW,
     _CMD_WRITE_VCOM,
+    _PARTIAL_BORDER_WAVEFORM,
+    _PARTIAL_DISPLAY_OPTION,
     FULL_UPDATE_VOLTAGES_2_13,
     FULL_UPDATE_WAVEFORM_2_13,
+    PARTIAL_UPDATE_WAVEFORM_2_13,
     EPaperDisplay,
     spi_speed_hz,
 )
@@ -245,6 +250,66 @@ def test_draw_bitmap_uses_ensure_hardware_then_writes_frame_as_is(monkeypatch):
     assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
     expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
     assert any(bytes(w) == expected for w in spi.writes)
+
+
+def test_partial_refresh_sends_partial_lut_then_quick_activate_then_final_write(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_2_13, ["x"])
+
+    display.draw_bitmap(bitmap, partial=True)
+
+    commands = [call[0] for call in spi.writes]
+    assert commands.count(_CMD_WRITE_LUT) == 1
+    assert bytes(spi.writes[commands.index(_CMD_WRITE_LUT) + 1]) == PARTIAL_UPDATE_WAVEFORM_2_13
+    assert commands.count(_CMD_DISPLAY_OPTION) == 1
+    assert bytes(spi.writes[commands.index(_CMD_DISPLAY_OPTION) + 1]) == _PARTIAL_DISPLAY_OPTION
+    # Two 0x22/0x20 activations: a priming one (no new RAM write between the
+    # LUT load and it) and the real one, after WRITE_RAM — never only one.
+    activate_indices = [i for i, c in enumerate(commands) if c == _CMD_MASTER_ACTIVATION]
+    assert len(activate_indices) == 2
+    write_ram_index = commands.index(_CMD_WRITE_RAM_BW)
+    assert activate_indices[0] < write_ram_index < activate_indices[1]
+    expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
+    assert bytes(spi.writes[write_ram_index + 1]) == expected
+    # Border waveform set twice: 0x05 at init (_wired_display()), 0x80 here.
+    border_indices = [i for i, c in enumerate(commands) if c == _CMD_BORDER_WAVEFORM]
+    assert bytes(spi.writes[border_indices[-1] + 1]) == bytes([_PARTIAL_BORDER_WAVEFORM])
+
+
+def test_partial_refresh_pulses_reset_before_the_partial_lut(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    gpio.calls.clear()
+
+    display.draw_bitmap(render(PROFILE_2_13, ["x"]), partial=True)
+
+    rst_values = [value for name, pin, value in gpio.calls if pin == display.rst_pin]
+    assert rst_values[:2] == [gpio.LOW, gpio.HIGH]
+
+
+def test_partial_refresh_unsupported_profile_falls_back_to_full(monkeypatch):
+    display = EPaperDisplay(profile=PROFILE_4_26)
+    gpio, spi = _FakeGPIO(), _FakeSPI()
+    display._gpio, display._spi = gpio, spi
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_4_26, ["x"])
+
+    display.draw_bitmap(bitmap, partial=True)
+
+    commands = [call[0] for call in spi.writes]
+    assert _CMD_DISPLAY_OPTION not in commands
+    assert bytes(spi.writes[commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2) + 1]) == bytes([0xF7])  # OTP full update
+
+
+def test_spi_write_frame_partial_reports_whether_it_ran(monkeypatch):
+    display, gpio, spi = _wired_display()
+    assert display._spi_write_frame_partial(render(PROFILE_2_13, ["x"])) is True
+
+    other = EPaperDisplay(profile=PROFILE_4_26)
+    other._gpio, other._spi = _FakeGPIO(), _FakeSPI()
+    assert other._spi_write_frame_partial(render(PROFILE_4_26, ["x"])) is False
+    assert other._spi.writes == []  # genuinely did nothing, not a silent full refresh
 
 
 def test_render_output_size_matches_profile():

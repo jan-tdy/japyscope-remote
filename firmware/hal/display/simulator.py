@@ -31,7 +31,10 @@ class SimulatorDisplay(DisplayHAL):
     _REVERSE_VIDEO = "\x1b[7m"
     _RESET_VIDEO = "\x1b[0m"
 
-    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None) -> None:
+    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None, partial: bool = False) -> None:
+        # No visual difference here — partial vs. full is purely a
+        # real-hardware refresh characteristic (speed/ghosting tradeoff);
+        # the terminal just prints whatever the current state is either way.
         width = min(shutil.get_terminal_size((80, 24)).columns, self.profile.width // 6 or 40)
         sanitized_lines = [self._sanitize_line(line) for line in lines[: self.visible_rows]]
         print("\n" + "=" * width)
@@ -45,7 +48,7 @@ class SimulatorDisplay(DisplayHAL):
                 print(line)
         print("=" * width)
 
-    def draw_bitmap(self, bitmap: bytes) -> None:
+    def draw_bitmap(self, bitmap: bytes, partial: bool = False) -> None:
         # Downsampled ASCII-art preview, nearest-neighbor per terminal cell
         # (rows get half the columns' sample density — terminal character
         # cells are roughly twice as tall as wide) — not pixel-perfect, just
