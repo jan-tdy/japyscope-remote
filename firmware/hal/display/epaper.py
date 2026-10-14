@@ -423,8 +423,17 @@ class EPaperDisplay(DisplayHAL):
         accumulates over repeated partial refreshes since this never
         rewrites the "red" RAM full refreshes use as the diff reference
         (see firmware/ui/controller.py for the periodic full refresh that
-        clears it). Unconfirmed against the physical panel — reconfirm the
-        min_expected_s floor below once it is."""
+        clears it).
+
+        A previous revision of this method re-sent DRIVER_OUTPUT_CONTROL
+        and DATA_ENTRY_MODE right after _quick_reset(), on the theory that
+        the hardware RST pulse clears those registers to power-on defaults.
+        Reported on hardware as making every partial refresh behave like a
+        full one (slow, visibly flashing) — removed again, since the
+        reference displayPartial() this is ported from doesn't re-send
+        them either and is the confirmed-working source for every other
+        byte in this sequence; whatever made the original garbling report
+        happen, it wasn't this."""
         waveform = _PARTIAL_REGISTER_WAVEFORMS.get(self.profile.name)
         if waveform is None:
             return False
@@ -432,22 +441,6 @@ class EPaperDisplay(DisplayHAL):
         lut, (eopt, vgh, source, vcom) = waveform
 
         self._quick_reset()
-        # A hardware RST pulse resets the SSD1680's command registers to
-        # their power-on defaults (RAM content survives, registers don't,
-        # per the datasheet) — Waveshare's reference displayPartial()
-        # doesn't re-send these, which may just mean its POR defaults
-        # happen to already match (0x01/0x11 are confirmed set once at
-        # init and never touched again otherwise). Re-asserting them here
-        # is cheap and safe either way (a no-op if they were never lost),
-        # and reported-garbled partial-refresh output on real hardware is
-        # exactly what wrong addressing/scan-direction register state
-        # after this reset would look like.
-        gate_minus_1 = self.profile.native_height - 1
-        self._write_command(
-            _CMD_DRIVER_OUTPUT_CONTROL,
-            bytes([gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF, 0x00]),
-        )
-        self._write_command(_CMD_DATA_ENTRY_MODE, bytes([0x03]))
         self._load_waveform(lut, eopt, vgh, source, vcom)
         self._wait_busy(phase="partial LUT load")
         self._write_command(_CMD_DISPLAY_OPTION, _PARTIAL_DISPLAY_OPTION)
