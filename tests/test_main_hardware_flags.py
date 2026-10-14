@@ -1,7 +1,10 @@
 import os
+import sqlite3
 import tempfile
 
+from firmware import main as main_module
 from firmware.main import HARDWARE_COMPONENTS, resolve_simulation_flags
+from firmware.hal.display.profiles import PROFILE_2_13
 from shared.db import SettingsRepo, connect, init_db
 
 
@@ -39,3 +42,53 @@ def test_per_component_overrides_are_independent():
             "mount": True, "joystick": False,
         }
     finally: conn.close(); os.unlink(path)
+
+
+class _RecordingDisplay:
+    profile = PROFILE_2_13
+    visible_rows = PROFILE_2_13.visible_rows
+
+    def __init__(self):
+        self.lines = None
+
+    def draw_lines(self, lines, invert_row=None, partial=False):
+        self.lines = lines
+
+
+class _ControllerUIThatRaises:
+    """Stands in for ControllerUI: __init__ accepts whatever main() passes,
+    run() immediately raises the failure under test — a fatal OS/storage
+    error (SYS-980) is the one this test exercises, mirroring what was
+    actually seen during bring-up: a write to the SQLite settings/state DB
+    failing because the SD card had gone read-only mid-run."""
+
+    def __init__(self, *args, **kwargs):
+        self.running = True
+
+    def run(self):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+
+def test_sys_980_painted_to_display_on_filesystem_failure(monkeypatch, tmp_path):
+    recorder = _RecordingDisplay()
+    monkeypatch.setattr(main_module, "make_display", lambda simulate: recorder)
+    monkeypatch.setattr(main_module, "ControllerUI", _ControllerUIThatRaises)
+
+    rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
+
+    assert rc == 1
+    assert recorder.lines[0] == "SYS-980"
+
+
+def test_sys_980_handler_swallows_a_broken_display_instead_of_masking_the_real_error(monkeypatch, tmp_path):
+    class _BrokenDisplay(_RecordingDisplay):
+        def draw_lines(self, lines, invert_row=None, partial=False):
+            raise TimeoutError("BUSY pin stuck high")
+
+    monkeypatch.setattr(main_module, "make_display", lambda simulate: _BrokenDisplay())
+    monkeypatch.setattr(main_module, "ControllerUI", _ControllerUIThatRaises)
+
+    # The SYS-980 paint attempt itself failing must not crash main() with a
+    # *new* traceback on top of the original DB/filesystem failure.
+    rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
+    assert rc == 1

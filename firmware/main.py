@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import sqlite3
 import time
 from pathlib import Path
 from typing import Optional
@@ -15,6 +16,25 @@ from firmware.indi.client import IndiClient, MountStatus
 from firmware.indi.manager import DEFAULT_DRIVER_BINARY, IndiServerManager
 from firmware.ui import ControllerUI
 from shared.db import DEFAULT_DB_PATH, HARDWARE_COMPONENTS, SettingsRepo, db_session
+
+
+def _show_fatal_error(display, code: str, detail: str) -> None:
+    """Best-effort: paint a maintainer code (docs/CODES.md) straight to the
+    e-ink panel on a fatal failure, bypassing the DB-backed ControllerUI
+    entirely. Deliberately still attempted when the failure IS the SD card
+    going read-only: the panel's SPI writes are hardware I/O, independent
+    of the filesystem, so this keeps working exactly when the DB doesn't —
+    and e-ink holds the image with no power, so the code stays legible on
+    an unattended device (Piconcillo) even through a crash-restart loop,
+    until someone can reach it. Swallows its own failures: this only ever
+    runs while already handling a worse one, and must never raise a new
+    traceback over it."""
+    if display is None:
+        return
+    try:
+        display.draw_lines([code, detail[:24], "Check journalctl", "docs/TROUBLESHOOTING.md"])
+    except Exception:
+        logging.getLogger(__name__).exception("Could not paint %s to the display", code)
 
 
 def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict[str, bool]:
@@ -72,6 +92,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db_path = args.db or (str(Path.cwd() / "japyscope-sim.db") if args.simulate else DEFAULT_DB_PATH)
     ui = None
+    display = None
     input_hal = indi = manager = None
 
     def stop(_signum=None, _frame=None) -> None:
@@ -99,6 +120,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     except (FileNotFoundError, ConnectionError) as exc:
         logging.getLogger(__name__).error("INDI-001/INDI-002 startup failed: %s", exc)
+        return 1
+    except (sqlite3.OperationalError, sqlite3.DatabaseError, OSError) as exc:
+        # SYS-980 (docs/CODES.md): an OS/storage-level failure (confirmed
+        # during real bring-up: a weak power supply or bad SD card can send
+        # the filesystem read-only mid-run — see docs/TROUBLESHOOTING.md)
+        # crashed the whole app. Broad on purpose — this is a last-resort
+        # catch-all, not a specific diagnosis — so the real detail goes to
+        # the journal and only a short, honest "something at the OS level
+        # broke, go look" goes on the panel.
+        logging.getLogger(__name__).error("SYS-980 OS/storage-level failure: %s", exc)
+        _show_fatal_error(display, "SYS-980", str(exc))
         return 1
     finally:
         if input_hal is not None:
