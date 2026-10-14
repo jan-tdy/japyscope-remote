@@ -44,23 +44,23 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
-# The e-paper panel only has a full-refresh waveform (see
-# firmware/hal/display/epaper.py) — electromechanical, on the order of a
-# second and visibly flashing. Redrawing on every single encoder detent
-# while scrolling a list is why the first hardware bring-up flashed on
-# almost every step: most of those intermediate frames are never actually
-# seen, just the one the user stops on. So scrolling (`_move`, below)
-# coalesces: it skips the real refresh until either this many detents have
-# accumulated or the user stops turning the encoder for a moment (see
-# `tick()`), and always draws the screen's *current* state once it does —
-# never a stale one. Screen transitions (`_set`) always refresh right away;
-# only same-screen scrolling is throttled. Adjustable per-install via the
+# A full e-paper refresh (see firmware/hal/display/epaper.py) is
+# electromechanical — on the order of a second, visibly flashing — but a
+# *partial* refresh (same module) is much faster at the cost of some
+# ghosting that builds up over repeated partial refreshes. So scrolling
+# (`_move`, below) draws every single detent (never a stale, skipped
+# frame), but as a partial refresh; only every `eink_refresh_every`-th one
+# is a full refresh instead, to clear that ghosting before it's visible,
+# and the idle flush below (`tick()`) forces one of those full "clean up"
+# refreshes shortly after the user stops scrolling rather than leaving a
+# partial-refresh frame on screen indefinitely. Screen transitions (`_set`)
+# always get a full refresh. Adjustable per-install via the
 # "eink_refresh_every" setting.
 _DEFAULT_REFRESH_EVERY = 6
-# How long to wait, after the last scroll, before flushing a coalesced
-# redraw even though _DEFAULT_REFRESH_EVERY detents haven't accumulated —
-# otherwise stopping mid-count would leave the panel showing a stale
-# position until something else forces a redraw.
+# How long to wait, after the last scroll, before forcing the "clean up"
+# full refresh even though _DEFAULT_REFRESH_EVERY partial refreshes
+# haven't accumulated yet — otherwise stopping mid-count would leave a
+# partial-refresh frame (and its ghosting) on screen indefinitely.
 _COALESCE_IDLE_FLUSH_S = 0.25
 # Bright, easy-to-recognize alignment stars with real J2000 coordinates —
 # picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
@@ -289,11 +289,13 @@ class ControllerUI:
 
     def render(self, *, coalesce: bool = False) -> None:
         """Redraw the current screen. `coalesce=True` (only passed by
-        `_move`, for same-screen scrolling) may skip the actual hardware
-        refresh — see _DEFAULT_REFRESH_EVERY's docstring above — but the
-        lines are always computed fresh from the current state either way,
-        so a later non-coalesced render (or `tick()`'s idle flush) never
-        draws anything stale."""
+        `_move`, for same-screen scrolling) draws a fast partial refresh
+        instead of a full one, except every `eink_refresh_every`-th call,
+        which is a full refresh to clear accumulated ghosting — see
+        _DEFAULT_REFRESH_EVERY's docstring above. The lines are always
+        computed fresh from the current state either way, so a later
+        render (or `tick()`'s idle flush, also a full refresh) never draws
+        anything stale."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -426,9 +428,14 @@ class ControllerUI:
         if coalesce:
             self._scroll_count += 1
             self._last_scroll_at = self.clock()
-            if self._scroll_count < self._refresh_every():
+            full = self._scroll_count >= self._refresh_every()
+            if full:
+                self._scroll_count = 0
+                self._coalesce_pending = False
+            else:
                 self._coalesce_pending = True
-                return
+            self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=not full)
+            return
         self._scroll_count = 0
         self._coalesce_pending = False
         self.display.draw_lines(visible_lines, invert_row=self._invert_row)
