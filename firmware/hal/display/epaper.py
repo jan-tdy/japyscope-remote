@@ -85,6 +85,23 @@ _UPDATE_FULL_REGISTER_LUT = 0xC7
 _UPDATE_PARTIAL_PRIME = 0xC0
 _UPDATE_PARTIAL_QUALITY = 0x0F  # Waveshare also lists 0x0C ("fast", more ghosting) and 0xCF
 
+
+def partial_update_mode() -> int:
+    """The 0x22 byte for the real (non-prime) partial-refresh activation —
+    0x0F by default, but reported as needing "a bit of tuning" on real
+    hardware once partial refresh was actually visible. Override with
+    JAPYSCOPE_EPAPER_PARTIAL_MODE (hex or decimal, e.g. "0x0C" or "12") to
+    try Waveshare's other two documented partial modes without a firmware
+    change: 0x0C ("fast", more ghosting, possibly also fixes whatever was
+    wrong) or 0xCF."""
+    value = os.environ.get("JAPYSCOPE_EPAPER_PARTIAL_MODE", "").strip()
+    if not value:
+        return _UPDATE_PARTIAL_QUALITY
+    try:
+        return int(value, 0)
+    except ValueError:
+        return _UPDATE_PARTIAL_QUALITY
+
 # Waveshare epd2in13_V3.py `lut_full_update` (same bytes ESPHome's 2.13inv3
 # loads): 153 bytes for 0x32 — 5x12 voltage selects, 12x7 phase timings,
 # 6 frame-rate bytes, 3 XON bytes.
@@ -415,6 +432,22 @@ class EPaperDisplay(DisplayHAL):
         lut, (eopt, vgh, source, vcom) = waveform
 
         self._quick_reset()
+        # A hardware RST pulse resets the SSD1680's command registers to
+        # their power-on defaults (RAM content survives, registers don't,
+        # per the datasheet) — Waveshare's reference displayPartial()
+        # doesn't re-send these, which may just mean its POR defaults
+        # happen to already match (0x01/0x11 are confirmed set once at
+        # init and never touched again otherwise). Re-asserting them here
+        # is cheap and safe either way (a no-op if they were never lost),
+        # and reported-garbled partial-refresh output on real hardware is
+        # exactly what wrong addressing/scan-direction register state
+        # after this reset would look like.
+        gate_minus_1 = self.profile.native_height - 1
+        self._write_command(
+            _CMD_DRIVER_OUTPUT_CONTROL,
+            bytes([gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF, 0x00]),
+        )
+        self._write_command(_CMD_DATA_ENTRY_MODE, bytes([0x03]))
         self._load_waveform(lut, eopt, vgh, source, vcom)
         self._wait_busy(phase="partial LUT load")
         self._write_command(_CMD_DISPLAY_OPTION, _PARTIAL_DISPLAY_OPTION)
@@ -426,7 +459,7 @@ class EPaperDisplay(DisplayHAL):
         self._set_window()
         self._set_cursor(0, 0)
         self._write_command(_CMD_WRITE_RAM_BW, native)
-        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([_UPDATE_PARTIAL_QUALITY]))
+        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([partial_update_mode()]))
         self._write_command(_CMD_MASTER_ACTIVATION)
         self._wait_busy(phase="partial refresh", min_expected_s=0.05)
         return True

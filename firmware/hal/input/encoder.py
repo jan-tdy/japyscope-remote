@@ -42,12 +42,24 @@ chance produce several valid-looking forward transitions in a row, which
 is indistinguishable from real rotation to a decoder with no concept of
 time. Rotation now gets the same stability debounce the switch already
 had: a reading must stay the same for `JAPYSCOPE_ENCODER_STABLE_SAMPLES`
-consecutive scans (default 2 — about 10ms at the 5ms scan rate) before
-it's trusted, filtering a brief noise glitch while staying well under the
-tens-of-milliseconds a real detent takes. Raise it (try 3-5) if 10-steps-
-for-2 is still happening; this is a software mitigation for what's
-ultimately a wiring/signal-quality problem, not a full fix — the SW line's
-pull-up/decoupling-capacitor note below applies equally to CLK/DT.
+consecutive scans (about 10ms per step at the 5ms scan rate) before it's
+trusted, filtering a brief noise glitch while staying well under the
+tens-of-milliseconds a real detent takes.
+
+Still over-counting at the first default (2, ~10ms) — confirmed by menu
+selection skipping 2 items for what should be 1 step — so the default is
+now 4 (~20ms). Raise it further (try 6-8) if this is still happening;
+lower it back toward 2 if menu navigation now feels sluggish/unresponsive
+instead. Both directions are one `JAPYSCOPE_ENCODER_STABLE_SAMPLES` change
+in /etc/japyscope/environment and a service restart, no firmware rebuild.
+This is a software mitigation for what's ultimately a wiring/signal-
+quality problem, not a full fix — the SW line's pull-up/decoupling-
+capacitor note below applies equally to CLK/DT.
+
+Separately, not a bug: rotating "up" from the first menu item (or "down"
+from the last) wraps around to the other end — e.g. Time Sync (item 1) up
+one notch lands on About (the last item), same as any circular menu.
+That's `firmware/ui/controller.py`'s `_move()`, unrelated to this file.
 
 The push switch is debounced by requiring the raw level to stay unchanged
 for `_DEBOUNCE_S` before it's trusted (instead of trusting any single
@@ -100,7 +112,7 @@ def _steps_per_detent() -> int:
 
 def _stable_samples() -> int:
     value = os.environ.get("JAPYSCOPE_ENCODER_STABLE_SAMPLES", "")
-    return max(1, int(value)) if value.strip() else 2
+    return max(1, int(value)) if value.strip() else 4
 
 
 _STEPS_PER_DETENT = _steps_per_detent()
