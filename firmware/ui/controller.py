@@ -548,6 +548,14 @@ class ControllerUI:
 
     def handle(self, key: str) -> None:
         s = self.state
+        # Keypad "3" — manual "force a full refresh" on the current
+        # screen, no state change. Handy to clear any lingering ghosting
+        # on demand, independent of the periodic eink_refresh_every
+        # cleanup; excluded on TYPE, where it's still a T9 letter key
+        # ("ghi").
+        if key == "3" and s.screen != "TYPE":
+            self.render()
+            return
         # Keypad "5" — the center key below the 2/4/6/8 jog directions,
         # phone-keypad "OK" position — stands in for ENC_PUSH everywhere
         # except TYPE, where it's still a T9 letter key ("mno"). Same

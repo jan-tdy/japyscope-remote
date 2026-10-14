@@ -15,7 +15,7 @@ error/status code list for support and troubleshooting.
 | Key | Meaning |
 |---|---|
 | 1 | **Encoder-up stand-in** (`ENC_UP`) wherever `_move()` is used — see below; also T9 letter entry ("abc") in SmartSearch, where `_move()` isn't in play |
-| 3 | unused (reserved) |
+| 3 | **Force a full refresh** of the current screen (no state change) — see below; also T9 letter entry ("ghi") in SmartSearch, where it's excluded |
 | 2 | Jog Up — only handled on `ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
 | 4 | Jog Left — same screens |
 | 6 | Jog Right — same screens |
@@ -39,6 +39,12 @@ usable for full menu/list navigation whenever the real encoder
 misbehaves. "7" only falls back to `ENC_DOWN` outside IDLE, where it's
 already bound to opening speed adjust; "5" falls back to `ENC_PUSH`
 everywhere except TYPE (SmartSearch), where it's still a T9 letter key.
+
+Keypad "3" (`handle()`, top of the method) redraws the current screen
+with a forced full refresh — a manual way to clear any ghosting left
+over from partial refreshes without waiting for the periodic
+`eink_refresh_every` cleanup or navigating away and back. Excluded on
+TYPE, where it's still a T9 letter key ("ghi").
 
 ### External joystick (optional — `docs/WIRING.md`)
 

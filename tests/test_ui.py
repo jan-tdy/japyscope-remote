@@ -732,6 +732,26 @@ def test_keypad_5_still_types_in_smartsearch_not_select():
     finally: conn.close(); os.unlink(path)
 
 
+def test_keypad_3_forces_a_full_refresh_without_changing_state():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 2)
+        ui.display.partial = True  # pretend the last draw was partial
+        ui.handle("3")
+        assert ui.state.screen == "MENU" and ui.state.index == 2  # unchanged
+        assert ui.display.partial is False  # forced full refresh
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_3_still_types_in_smartsearch_not_force_refresh():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("TYPE")
+        ui.handle("3")
+        assert ui.state.text == "g"  # T9 letter entry, not a forced refresh
+    finally: conn.close(); os.unlink(path)
+
+
 def test_screen_transitions_are_always_a_full_refresh():
     # Confirmed on hardware: making _set() partial was wrong, especially
     # noticeable going back with "9" — screen transitions (a completely
