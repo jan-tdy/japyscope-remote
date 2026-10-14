@@ -14,18 +14,27 @@ error/status code list for support and troubleshooting.
 
 | Key | Meaning |
 |---|---|
-| 1, 3 | unused (reserved) |
+| 1 | **Encoder-up stand-in** (`ENC_UP`) wherever `_move()` is used — see below; also T9 letter entry ("abc") in SmartSearch, where `_move()` isn't in play |
+| 3 | unused (reserved) |
 | 2 | Jog Up — only handled on `ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
 | 4 | Jog Left — same screens |
 | 6 | Jog Right — same screens |
 | 8 | Jog Down — same screens |
-| 7 | Jog speed (opens speed adjust) |
+| 7 | Jog speed (opens speed adjust) on IDLE/TRACK/ALIGN_JOG; **encoder-down stand-in** (`ENC_DOWN`) everywhere else `_move()` is used |
 | 9 | **Back, one level — everywhere except inside SmartSearch text entry** (see below) |
 | 0 | digit "0" / T9 letter entry |
 | FN2 | reserved outside SmartSearch (home-screen easter egg); **inside SmartSearch: cancel/back out** |
 | BKSP | delete last character (text entry) |
 | Encoder rotate | scroll (menus, lists) |
 | Encoder push | open / select / confirm |
+
+Keypad "1"/"7" as encoder stand-ins (`ControllerUI._move()`) are a
+temporary stopgap for the KY-040 rotary encoder's unreliable rotation
+decode (see `firmware/hal/input/encoder.py`'s module docstring) — a
+vertical pair on the keypad's left column, usable for menu/list
+navigation whenever the real encoder misbehaves. "7" only falls back to
+`ENC_DOWN` outside IDLE, where it's already bound to opening speed
+adjust.
 
 ### External joystick (optional — `docs/WIRING.md`)
 

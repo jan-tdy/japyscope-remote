@@ -672,3 +672,40 @@ def test_about_screen_falls_back_to_dev_outside_an_installed_release(monkeypatch
         ui._set("ABOUT")
         assert ui.display.lines[2] == "Firmware dev"
     finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_1_and_7_are_encoder_up_down_stand_ins_on_menu():
+    # Temporary stopgap while the physical rotary encoder is unreliable —
+    # "1"/"7" on the matrix keypad should move the selection exactly like
+    # ENC_UP/ENC_DOWN wherever _move() is used.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        ui.handle("7")
+        assert ui.state.index == 1
+        ui.handle("1")
+        assert ui.state.index == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_7_on_idle_still_opens_speed_adjust_not_navigation():
+    # IDLE is the one screen where literal "7" already means something
+    # (open SPEED_ADJUST) — that binding must keep winning over the
+    # ENC_DOWN stand-in, so "7" there should NOT move the IDLE menu.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE", 0)
+        ui.handle("7")
+        assert ui.state.screen == "SPEED_ADJUST"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_1_still_works_as_encoder_up_stand_in_on_idle():
+    # "1" has no conflicting binding on IDLE, so it should still navigate
+    # the home menu there even though "7" is reserved for speed.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE", 1)
+        ui.handle("1")
+        assert ui.state.screen == "IDLE" and ui.state.index == 0
+    finally: conn.close(); os.unlink(path)
