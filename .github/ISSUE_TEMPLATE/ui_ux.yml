@@ -1,0 +1,59 @@
+name: On-device UI/UX
+description: The e-ink display, keypad, rotary encoder, or joystick experience — readability, layout, navigation feel, refresh behavior
+labels: ["ui/ux", "firmware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For things that are *broken* (crashes, wrong data, wrong behavior), use **Bug report** instead. This template is for the on-device experience itself — layout, readability, navigation feel, menu structure, refresh speed/flicker, screen content.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Display layout / readability (fonts, spacing, screen content)
+        - Navigation (encoder, keypad, joystick, menu structure)
+        - E-ink refresh behavior (partial/full refresh, ghosting, speed)
+        - Boot splash
+        - Something else on-device
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: ABOUT screen's firmware version
+      placeholder: v0.26.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: whats_wrong
+    attributes:
+      label: What feels wrong, and why
+      description: Describe the actual experience of using it, not just a one-line symptom
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you'd expect instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: screen
+    attributes:
+      label: Which screen(s)
+      description: e.g. IDLE, MENU, CATALOG_MENU, LIST — see docs/mockup.html or docs/CODES.md for screen names
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (optional)
+      description: |
+        For refresh/encoder feel issues, `JAPYSCOPE_LOG_LEVEL=DEBUG` in `/etc/japyscope/environment` plus `journalctl -u japyscope-app -n 100 --no-pager | grep -E "epaper|encoder"` is usually the fastest way to pin this down — see docs/CODES.md.
+      render: shell

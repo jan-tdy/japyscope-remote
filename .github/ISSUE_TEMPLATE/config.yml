@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/jan-tdy/japyscope-remote/blob/main/docs/TROUBLESHOOTING.md
+    about: Check here first — common hardware/software issues and fixes.
+  - name: Codes reference
+    url: https://github.com/jan-tdy/japyscope-remote/blob/main/docs/CODES.md
+    about: On-device key map, Dev Tools codes, and maintainer-facing status/error codes.

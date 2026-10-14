@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest something new or an improvement to existing behavior
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Firmware / on-device UI (e-ink display, keypad, encoder, joystick)
+        - Web UI (webui/)
+        - INDI / mount driver integration
+        - OTA update / installer (install/)
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What's missing or annoying today — a real scenario, not just "it would be nice if"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you'd want it to work. A rough sketch is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways to solve it, including just living with it, and why they're worse

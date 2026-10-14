@@ -1,0 +1,66 @@
+name: Web UI
+description: The browser-based web UI (webui/) — access code, pages, layout, API behavior
+labels: ["webui"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: ABOUT screen's firmware version (the web UI ships together with firmware)
+      placeholder: v0.26.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Access / login (device access code)
+        - Catalogs / catalog items
+        - Settings
+        - OTA update page
+        - Layout / styling
+        - API / unexpected response
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: e.g. Chrome 130 on Android, Safari on iOS
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`journalctl -u japyscope-webui -n 100 --no-pager`, plus anything in the browser console (F12) if it's a frontend issue"
+      render: shell
