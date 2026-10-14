@@ -183,6 +183,10 @@ class EPaperDisplay(DisplayHAL):
         self.busy_pin = busy_pin
         self._spi = None
         self._gpio = None
+        # Which waveform is currently resident in the SSD1680's LUT
+        # register ("full"/"partial"/None) — see _spi_write_frame()'s
+        # docstring for why this needs tracking at all.
+        self._loaded_lut: Optional[str] = None
 
     def _ensure_hardware(self) -> None:
         if self._spi is not None:
@@ -340,6 +344,7 @@ class EPaperDisplay(DisplayHAL):
             return
         lut, (eopt, vgh, source, vcom) = waveform
         self._load_waveform(lut, eopt, vgh, source, vcom)
+        self._loaded_lut = "full"
 
     def _load_waveform(self, lut: bytes, eopt: int, vgh: int, source: bytes, vcom: int) -> None:
         self._write_command(_CMD_WRITE_LUT, lut)
@@ -398,6 +403,23 @@ class EPaperDisplay(DisplayHAL):
         )
 
     def _spi_write_frame(self, bitmap: bytes) -> None:
+        """Full refresh. For a profile with a register waveform, this
+        activates with whatever LUT is currently resident in the
+        SSD1680's own LUT register — loaded once at init, but silently
+        overwritten with the *partial* waveform (and the border waveform
+        changed to the partial-specific 0x80) by every
+        _spi_write_frame_partial() call since, with neither ever restored
+        there. Confirmed on hardware: after at least one partial refresh,
+        a later call here still logged "full refresh" (and took the
+        expected ~0.7s), while visibly behaving like a partial one — the
+        panel was running the full-refresh activation sequence against
+        the partial waveform's voltage curve and border setting. Restore
+        both to their init-time values whenever the register doesn't
+        already hold the full waveform."""
+        if self.profile.name in _REGISTER_WAVEFORMS and self._loaded_lut != "full":
+            self._write_command(_CMD_BORDER_WAVEFORM, bytes([0x05]))
+            self._load_register_waveform()
+            self._wait_busy(phase="full LUT reload")
         native = self._to_native_orientation(bitmap)
         # The controller picks each pixel's waveform from both RAMs; ESPHome's
         # 2.13inv3 fills the second one too rather than leave power-on garbage.
@@ -442,6 +464,7 @@ class EPaperDisplay(DisplayHAL):
 
         self._quick_reset()
         self._load_waveform(lut, eopt, vgh, source, vcom)
+        self._loaded_lut = "partial"
         self._wait_busy(phase="partial LUT load")
         self._write_command(_CMD_DISPLAY_OPTION, _PARTIAL_DISPLAY_OPTION)
         self._write_command(_CMD_BORDER_WAVEFORM, bytes([_PARTIAL_BORDER_WAVEFORM]))

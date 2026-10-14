@@ -308,23 +308,24 @@ class ControllerUI:
         return [*lines, footer] if footer else lines
 
     def render(self, *, coalesce: bool = False) -> None:
-        """Redraw the current screen. `coalesce=True` draws a fast partial
-        refresh instead of a full one, except every `eink_refresh_every`-th
-        call, which is a full refresh to clear accumulated ghosting — see
-        _DEFAULT_REFRESH_EVERY's docstring above. The lines are always
-        computed fresh from the current state either way, so a later
-        render (or `tick()`'s idle flush, also a full refresh) never draws
-        anything stale.
-
-        The policy callers follow: `_set()` (a brand new screen) always
-        passes coalesce=False — a full refresh, since there's nothing on
-        the old screen worth diffing against anyway. Anything that changes
-        a value while staying on the *same* screen — `_move()`'s scrolling,
-        T9 typing, the WIFI_ACCESS countdown, a digit/backlight/speed
-        adjustment — passes coalesce=True instead. Missing this on a
-        value that updates often (e.g. a per-second countdown) means a
-        full, visibly-flashing refresh on every tick instead of a fast
-        partial one."""
+        """Redraw the current screen. `coalesce=True` (only passed by
+        `_move`, for same-screen scrolling, and a handful of other
+        within-screen value changes — T9 typing, the WIFI_ACCESS
+        countdown, a digit/backlight/speed adjustment) draws a fast
+        partial refresh instead of a full one, except every
+        `eink_refresh_every`-th call, which is a full refresh to clear
+        accumulated ghosting — see _DEFAULT_REFRESH_EVERY's docstring
+        above. `_set()` (any screen transition) always draws full
+        (coalesce left at its default False): its content is a
+        completely different frame from whatever came before, so there's
+        nothing to usefully diff a partial refresh against, and a full
+        refresh there also gives the user an unambiguous "this is a new
+        screen" cue — don't make this coalesce=True again without an
+        explicit request; it was tried and reverted (confirmed on
+        hardware as wrong, especially noticeable backing out with "9").
+        The lines are always computed fresh from the current state either
+        way, so a later render (or `tick()`'s idle flush, also a full
+        refresh) never draws anything stale."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -547,6 +548,13 @@ class ControllerUI:
 
     def handle(self, key: str) -> None:
         s = self.state
+        # Keypad "5" — the center key below the 2/4/6/8 jog directions,
+        # phone-keypad "OK" position — stands in for ENC_PUSH everywhere
+        # except TYPE, where it's still a T9 letter key ("mno"). Same
+        # stopgap spirit as "1"/"7" standing in for ENC_UP/ENC_DOWN in
+        # _move() while the KY-040 rotary encoder is unreliable.
+        if key == "5" and s.screen != "TYPE":
+            key = ENC_PUSH
         if s.screen == "BOOT_PARK_CHECK":
             if self._move(key, 2): return
             if key == ENC_PUSH:

@@ -109,8 +109,12 @@ def test_spi_write_frame_sends_bitmap_then_activates():
 
     commands = [call[0] for call in spi.writes]
     assert _CMD_WRITE_RAM_BW in commands
-    assert commands.index(_CMD_WRITE_RAM_BW) < commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2)
-    assert commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2) < commands.index(_CMD_MASTER_ACTIVATION)
+    # _CMD_DISPLAY_UPDATE_CONTROL_2's own byte value (0x22) coincides with
+    # EOPT's data byte in FULL_UPDATE_VOLTAGES_2_13, now also written here
+    # (the full-LUT-reload path) — take the *last* occurrence, the real
+    # activation, not EOPT's incidental match earlier in the sequence.
+    activate_index = len(commands) - 1 - commands[::-1].index(_CMD_DISPLAY_UPDATE_CONTROL_2)
+    assert commands.index(_CMD_WRITE_RAM_BW) < activate_index < commands.index(_CMD_MASTER_ACTIVATION)
 
     # PROFILE_2_13's native RAM is portrait (122x250), transposed from its
     # 250x122 logical canvas — the write must carry the *rotated* bitmap,
@@ -151,8 +155,12 @@ def test_spi_write_frame_passes_through_unrotated_when_native_matches_logical():
 
 
 def _data_after(spi: _FakeSPI, cmd: int) -> list[int]:
+    # Last match, not first: a single-byte data value elsewhere in the
+    # sequence (e.g. EOPT's byte happening to equal another command's own
+    # code) can coincidentally equal [cmd] too. Every call site here wants
+    # the real command's own data, which is always the latest such write.
     commands = spi.writes
-    idx = next(i for i, w in enumerate(commands) if w == [cmd])
+    idx = len(commands) - 1 - next(i for i, w in enumerate(commands[::-1]) if w == [cmd])
     return commands[idx + 1]
 
 
@@ -195,6 +203,49 @@ def test_refresh_uses_register_waveform_on_2_13_and_otp_elsewhere():
     assert [_CMD_WRITE_LUT] not in other._spi.writes
     other._spi_write_frame(render(PROFILE_4_26, ["x"]))
     assert _data_after(other._spi, _CMD_DISPLAY_UPDATE_CONTROL_2) == [0xF7]
+
+
+def test_full_refresh_reloads_full_lut_and_border_after_a_partial_one(monkeypatch):
+    # Confirmed on hardware: a full refresh issued after at least one
+    # partial refresh still logged "full refresh" (the normal ~0.7s busy
+    # wait), but visibly behaved like a partial one. Root cause:
+    # _spi_write_frame() never reloads its own waveform — it just
+    # activates with whatever LUT is currently resident in the SSD1680's
+    # register, and every partial refresh overwrites that register (and
+    # the border waveform) with its own values, never restoring them.
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    display._init_controller()
+    spi.writes.clear()
+
+    display.draw_bitmap(render(PROFILE_2_13, ["x"]), partial=True)
+    assert display._loaded_lut == "partial"
+
+    spi.writes.clear()
+    display._spi_write_frame(render(PROFILE_2_13, ["y"]))
+
+    commands = [call[0] for call in spi.writes]
+    assert commands.count(_CMD_WRITE_LUT) == 1
+    assert bytes(spi.writes[commands.index(_CMD_WRITE_LUT) + 1]) == FULL_UPDATE_WAVEFORM_2_13
+    border_index = commands.index(_CMD_BORDER_WAVEFORM)
+    assert bytes(spi.writes[border_index + 1]) == bytes([0x05])
+    assert display._loaded_lut == "full"
+    # The reload must happen before the frame is activated, not after.
+    assert border_index < commands.index(_CMD_WRITE_RAM_BW)
+
+
+def test_full_refresh_does_not_reload_lut_when_already_full():
+    # The common case (no partial refresh happened since init, or since
+    # the last full refresh) shouldn't pay the reload cost every time.
+    display, _, spi = _wired_display()
+    display._init_controller()
+    assert display._loaded_lut == "full"
+    spi.writes.clear()
+
+    display._spi_write_frame(render(PROFILE_2_13, ["x"]))
+
+    commands = [call[0] for call in spi.writes]
+    assert _CMD_WRITE_LUT not in commands
 
 
 def test_init_controller_uses_native_ram_axes_not_logical():

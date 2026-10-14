@@ -709,3 +709,39 @@ def test_keypad_1_still_works_as_encoder_up_stand_in_on_idle():
         ui.handle("1")
         assert ui.state.screen == "IDLE" and ui.state.index == 0
     finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_is_an_encoder_push_stand_in():
+    # Same stopgap spirit as "1"/"7": "5" (the keypad's center "OK" key,
+    # below the 2/4/6/8 jog directions) should act as ENC_PUSH everywhere
+    # except TYPE, where it's still a T9 letter key.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        ui.handle("5")
+        assert ui.state.screen == "TIME_SYNC"  # MENU item 0 selected, same as ENC_PUSH
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_still_types_in_smartsearch_not_select():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("TYPE")
+        ui.handle("5")
+        assert ui.state.text == "m"  # T9 letter entry, not ENC_PUSH's "search"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_screen_transitions_are_always_a_full_refresh():
+    # Confirmed on hardware: making _set() partial was wrong, especially
+    # noticeable going back with "9" — screen transitions (a completely
+    # different frame each time) should always be a full refresh.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE")
+        assert ui.display.partial is False
+        ui._set("MENU", 0)
+        assert ui.display.partial is False
+        ui.handle("9")
+        assert ui.state.screen == "IDLE" and ui.display.partial is False
+    finally: conn.close(); os.unlink(path)
