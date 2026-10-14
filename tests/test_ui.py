@@ -235,7 +235,7 @@ def test_wifi_access_countdown_tick_is_a_partial_refresh():
         ui.state.access_code = "123456"
         ui.state.access_expires = now[0] + 600
         ui._set("WIFI_ACCESS")
-        assert ui.display.partial is False  # the screen transition itself is full
+        assert ui.display.partial is True  # screen transitions draw partial too, for speed
 
         now[0] += 1.0
         ui.tick()
@@ -600,7 +600,7 @@ def test_scrolling_draws_partial_except_every_nth_which_clears_ghosting():
     try:
         SettingsRepo(conn).set("eink_refresh_every", "3")
         ui._set("MENU", 0)
-        assert ui.display.partial is False  # screen transitions always get a full refresh
+        assert ui.display.partial is True  # screen transitions draw partial too, untracked
 
         ui.handle(ENC_DOWN)
         assert ui.display.partial is True
@@ -708,4 +708,41 @@ def test_keypad_1_still_works_as_encoder_up_stand_in_on_idle():
         ui._set("IDLE", 1)
         ui.handle("1")
         assert ui.state.screen == "IDLE" and ui.state.index == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_is_an_encoder_push_stand_in():
+    # Same stopgap spirit as "1"/"7": "5" (the keypad's center "OK" key,
+    # below the 2/4/6/8 jog directions) should act as ENC_PUSH everywhere
+    # except TYPE, where it's still a T9 letter key.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        ui.handle("5")
+        assert ui.state.screen == "TIME_SYNC"  # MENU item 0 selected, same as ENC_PUSH
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_still_types_in_smartsearch_not_select():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("TYPE")
+        ui.handle("5")
+        assert ui.state.text == "m"  # T9 letter entry, not ENC_PUSH's "search"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_screen_transitions_draw_partial_and_are_untracked():
+    # _set() draws partial for speed, but shouldn't count toward or be
+    # cleared by the scroll-burst bookkeeping (_scroll_count/idle-flush) —
+    # that's reserved for near-identical repeated redraws (scrolling), not
+    # a screen transition's completely different content.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("eink_refresh_every", "2")
+        ui._set("IDLE")
+        assert ui.display.partial is True
+        ui._set("MENU", 0)
+        assert ui.display.partial is True  # still partial, not forced full by the counter
+        assert ui._scroll_count == 0
     finally: conn.close(); os.unlink(path)
