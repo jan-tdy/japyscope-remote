@@ -14,13 +14,25 @@ Sized and positioned against the confirmed 2.13" 250x122 canvas
 (`profiles.PROFILE_2_13`); re-check proportions if drawn against a very
 different profile (e.g. 4.26"), since the constants below are absolute
 pixels, not scaled from `profile.width`/`height`.
+
+This exact bitmap never changes between boots, so `firmware/splash.py`
+doesn't call `render()` at boot at all — it reads the precomputed copy in
+`boot_logo_cache/<profile>.bin` instead, which (unlike calling this module)
+never needs Pillow's own, noticeably slow-on-the-Pi-Zero-W import. Run this
+module directly (`python -m firmware.hal.display.boot_logo`) to regenerate
+that cache after changing anything above — splash.py falls back to calling
+`render()` live if the cached file is missing or the wrong size for the
+active profile, so a stale cache is a slow boot, never a wrong one.
 """
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
-from .profiles import DisplayProfile
+from .profiles import PROFILE_2_13, DisplayProfile
 from .rasterizer import _set_black, draw_text, stride_for, text_size
+
+CACHE_DIR = Path(__file__).parent / "boot_logo_cache"
 
 _PLANET_RADIUS = 15
 _ORBIT_RX = 36
@@ -90,3 +102,15 @@ def render(profile: DisplayProfile) -> bytes:
     _draw_centered_text(buf, stride, width, height, caption_y, _CAPTION, _CAPTION_FONT_PX)
 
     return bytes(buf)
+
+
+def _regenerate_cache() -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for profile in (PROFILE_2_13,):
+        path = CACHE_DIR / f"{profile.name}.bin"
+        path.write_bytes(render(profile))
+        print(f"wrote {path} ({path.stat().st_size} bytes)")
+
+
+if __name__ == "__main__":
+    _regenerate_cache()

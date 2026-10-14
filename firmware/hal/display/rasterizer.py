@@ -23,6 +23,14 @@ needs to either upgrade to Bookworm/Trixie or pin an older
 (3.9-compatible) Pillow itself; this project doesn't carry that pin. See
 docs/TROUBLESHOOTING.md.
 
+Pillow's own import is noticeably slow on the Pi Zero W's single ARMv6
+core, so it's imported lazily (inside `_font()`/`draw_text()`, not at
+module level) rather than paid by everyone who imports this module just
+for its Pillow-free primitives (`stride_for`/`rotate_90`) — notably
+`firmware/splash.py`'s boot logo, which wants pixels on the panel as fast
+as possible after boot and normally never calls into Pillow at all (see
+`boot_logo_cache/`).
+
 Buffer convention: MSB-first, row-major, `ceil(width / 8)` bytes per row —
 the addressing granularity SSD1680-family controllers use for their B/W
 RAM (`epaper.py`'s `_spi_write_frame`). Bit=1 is white (no ink), bit=0 is
@@ -32,11 +40,12 @@ reconfirm once the physical panel is in hand (see `docs/WIRING.md`).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
-
-from PIL import Image, ImageDraw, ImageFont
+from typing import TYPE_CHECKING, Optional
 
 from .profiles import DisplayProfile
+
+if TYPE_CHECKING:
+    from PIL import ImageFont
 
 _FONT_PATH = Path(__file__).parent / "fonts" / "Roboto-Regular.ttf"
 
@@ -61,6 +70,13 @@ def _font(px: int) -> "ImageFont.FreeTypeFont":
     try:
         return _font_cache[px]
     except KeyError:
+        # Imported here, not at module level, so merely importing this
+        # module (e.g. for stride_for()/rotate_90(), needed even just to
+        # draw a precomputed bitmap — see boot_logo_cache/ and splash.py)
+        # never pays Pillow's noticeably slow import cost on the Pi Zero
+        # W's single ARMv6 core; only actually rendering text does.
+        from PIL import ImageFont
+
         font = ImageFont.truetype(str(_FONT_PATH), px)
         _font_cache[px] = font
         return font
@@ -135,6 +151,8 @@ def draw_text(buf: bytearray, stride: int, width: int, height: int, x: int, y: i
     w, h = text_size(text, font_px)
     if w <= 0 or h <= 0:
         return w
+    from PIL import Image, ImageDraw  # see _font()'s comment on why this is lazy
+
     font = _font(font_px)
     left, top, _, _ = font.getbbox(text)
     glyph_img = Image.new("L", (w, h), 255)
