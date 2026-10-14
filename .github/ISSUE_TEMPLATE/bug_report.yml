@@ -1,0 +1,71 @@
+name: Bug report
+description: Something on the real device or in --simulate doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. The more concrete detail (logs, exact steps, exact version) the faster this gets fixed — see `docs/TROUBLESHOOTING.md` first in case it's already covered there.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Where does this show up?
+      options:
+        - Firmware / on-device UI (e-ink display, keypad, encoder, joystick)
+        - Web UI (webui/)
+        - INDI / mount driver integration
+        - OTA update / installer (install/)
+        - Hardware / wiring
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: ABOUT screen's firmware version (or `git rev-parse HEAD` if running from source)
+      placeholder: v0.26.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        `journalctl -u japyscope-app -n 100 --no-pager` (or `japyscope-webui`/`japyscope-splash` as relevant). Set `JAPYSCOPE_LOG_LEVEL=DEBUG` in `/etc/japyscope/environment` first for more detail on encoder/e-paper issues — see `docs/CODES.md`.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Hardware revision, wiring changes, recent config changes, etc.
