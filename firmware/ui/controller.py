@@ -474,6 +474,24 @@ class ControllerUI:
         self.display.draw_lines(visible_lines, invert_row=self._invert_row)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
+        """Scroll the current list/menu by one item on ENC_UP/ENC_DOWN.
+
+        Temporary stopgap while the physical KY-040 rotary encoder is
+        unreliable (see firmware/hal/input/encoder.py's debounce-tuning
+        saga): the matrix keypad's "1" and "7" — a vertical pair on its
+        left column — also act as ENC_UP/ENC_DOWN here, so menus stay
+        navigable by hand regardless of how the encoder is behaving.
+        Remove this once the encoder is replaced/fixed (an Adafruit
+        STEMMA QT I2C encoder is the planned hardware fix) or keep it as
+        a permanent secondary input if it proves useful either way.
+        "7" is excluded on IDLE, where it already opens SPEED_ADJUST (see
+        handle()'s IDLE case) — that binding wins there instead; "1" has
+        no such conflict anywhere and always works.
+        """
+        if key == "1":
+            key = ENC_UP
+        elif key == "7" and self.state.screen != "IDLE":
+            key = ENC_DOWN
         if key not in (ENC_UP, ENC_DOWN) or count <= 0:
             return False
         delta = -1 if key == ENC_UP else 1

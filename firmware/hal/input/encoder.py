@@ -56,15 +56,33 @@ consecutive scans (about 10ms per step at the 5ms scan rate) before it's
 trusted, filtering a brief noise glitch while staying well under the
 tens-of-milliseconds a real detent takes.
 
-Still over-counting at the first default (2, ~10ms) — confirmed by menu
-selection skipping 2 items for what should be 1 step — so the default is
-now 4 (~20ms). Raise it further (try 6-8) if this is still happening;
-lower it back toward 2 if menu navigation now feels sluggish/unresponsive
-instead. Both directions are one `JAPYSCOPE_ENCODER_STABLE_SAMPLES` change
-in /etc/japyscope/environment and a service restart, no firmware rebuild.
-This is a software mitigation for what's ultimately a wiring/signal-
-quality problem, not a full fix — the SW line's pull-up/decoupling-
-capacitor note below applies equally to CLK/DT.
+Was briefly raised to 4 (~20ms) over "menu selection skipping 2 items for
+1 step" — but that was reported while JAPYSCOPE_ENCODER_STEPS_PER_DETENT
+was still stuck at 2, which (see above) was *itself* emitting two menu
+moves per click at the time; the debounce value was never the problem
+that symptom pointed at. With steps-per-detent fixed, DEBUG logging
+(JAPYSCOPE_LOG_LEVEL=DEBUG) on real hardware caught 4 is actively too
+high: of 5 consecutive physical clicks, 4 logged a direct 0b11<->0b00
+jump (`step=+0`, discarded as an impossible same-scan double-bit flip)
+and only 1 walked the full real 0b11->0b10->0b00->0b01->0b11 cycle and
+registered. A ~20ms debounce requirement is *bridging over* the brief
+real intermediate states on most clicks — by the time 4 consecutive
+identical samples confirm a reading, the actual quadrature state has
+already moved on, so only the before/after rest states ever get seen, 2
+bits apart, which looks exactly like forbidden noise and gets thrown
+away entirely. Lowered back to 2 (~10ms) to catch those states again;
+raise it only if `step=+0` log lines keep appearing at 2 as well (push
+toward 3-4 cautiously, expecting clicks to start getting dropped again
+past the point this hardware's real transitions fit the window), lower
+it to 1 if clicks are still being swallowed at 2. Both directions are one
+`JAPYSCOPE_ENCODER_STABLE_SAMPLES` change in /etc/japyscope/environment
+and a service restart, no firmware rebuild. This is a software mitigation
+for what's ultimately a wiring/signal-quality and/or scan-rate problem,
+not a full fix — the SW line's pull-up/decoupling-capacitor note below
+applies equally to CLK/DT, and `_SCAN_INTERVAL_S` below is the other knob
+if lowering this one isn't enough on its own (a narrower scan interval
+raises the odds of ever sampling a brief intermediate state at all,
+independent of how many consecutive samples are then required).
 
 Separately, not a bug: rotating "up" from the first menu item (or "down"
 from the last) wraps around to the other end — e.g. Time Sync (item 1) up
@@ -125,7 +143,7 @@ def _steps_per_detent() -> int:
 
 def _stable_samples() -> int:
     value = os.environ.get("JAPYSCOPE_ENCODER_STABLE_SAMPLES", "")
-    return max(1, int(value)) if value.strip() else 4
+    return max(1, int(value)) if value.strip() else 2
 
 
 _STEPS_PER_DETENT = _steps_per_detent()
