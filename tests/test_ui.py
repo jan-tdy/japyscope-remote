@@ -583,7 +583,33 @@ def test_scrolling_draws_partial_except_every_nth_which_clears_ghosting():
     finally: conn.close(); os.unlink(path)
 
 
-def test_idle_after_scrolling_forces_a_full_refresh():
+def test_idle_after_a_burst_of_scrolling_forces_a_full_refresh():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("eink_refresh_every", "100")  # never reached by itself
+        ui._set("MENU", 0)
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True
+        ui.handle(ENC_DOWN)  # 2nd step of the same burst
+        assert ui.display.partial is True
+
+        now[0] += 1.0  # past _COALESCE_IDLE_FLUSH_S
+        ui.tick()
+        assert ui.display.partial is False
+    finally: conn.close(); os.unlink(path)
+
+
+def test_idle_after_a_single_isolated_click_stays_partial():
+    # Confirmed on hardware: a lone click was getting a full refresh forced
+    # right behind it via the idle flush, making every deliberate single
+    # move look just as slow as a full refresh — not just a burst's worth
+    # of accumulated ghosting. A single partial refresh's ghosting is
+    # negligible (see _COALESCE_IDLE_FLUSH_MIN_STEPS' docstring), so the
+    # idle flush should leave it alone until there's an actual burst, or
+    # the next real interaction.
     ui, conn, path = make_ui()
     try:
         SettingsRepo(conn).set("eink_refresh_every", "100")  # never reached by itself
@@ -596,7 +622,7 @@ def test_idle_after_scrolling_forces_a_full_refresh():
 
         now[0] += 1.0  # past _COALESCE_IDLE_FLUSH_S
         ui.tick()
-        assert ui.display.partial is False
+        assert ui.display.partial is True  # still the lone partial frame, not forced to full
     finally: conn.close(); os.unlink(path)
 
 
