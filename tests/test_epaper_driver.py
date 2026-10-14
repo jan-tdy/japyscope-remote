@@ -279,12 +279,15 @@ def test_partial_refresh_sends_partial_lut_then_quick_activate_then_final_write(
     assert bytes(spi.writes[border_indices[-1] + 1]) == bytes([_PARTIAL_BORDER_WAVEFORM])
 
 
-def test_partial_refresh_reasserts_driver_output_control_and_entry_mode_after_quick_reset(monkeypatch):
-    # The quick reset pulse is a real hardware reset, which resets the
-    # SSD1680's command registers to power-on defaults — re-assert the two
-    # that control addressing/scan direction (set once at init, never
-    # touched again by _spi_write_frame()) so partial writes can't land in
-    # the wrong RAM orientation if those defaults don't already match.
+def test_partial_refresh_does_not_resend_driver_output_control_or_entry_mode(monkeypatch):
+    # A prior revision re-sent DRIVER_OUTPUT_CONTROL/DATA_ENTRY_MODE right
+    # after the quick reset, on the theory that the hardware RST pulse
+    # clears those registers. Reported on hardware as making every partial
+    # refresh behave like a slow, flashing full refresh — removed again, to
+    # match the reference displayPartial() this sequence is ported from,
+    # which never re-sends either command between the reset and the LUT
+    # load. Only the LUT write (once at init, immediately re-loaded here)
+    # should appear before the first activation.
     display, gpio, spi = _wired_display()
     monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
 
@@ -292,15 +295,9 @@ def test_partial_refresh_reasserts_driver_output_control_and_entry_mode_after_qu
 
     commands = [call[0] for call in spi.writes]
     reset_index = commands.index(_CMD_WRITE_LUT)  # the partial LUT load, right after the quick reset
-    # Both commands must reappear between the quick reset and the LUT load.
     pre_lut_commands = commands[:reset_index]
-    assert _CMD_DRIVER_OUTPUT_CONTROL in pre_lut_commands
-    assert _CMD_DATA_ENTRY_MODE in pre_lut_commands
-    doc_index = len(pre_lut_commands) - 1 - pre_lut_commands[::-1].index(_CMD_DRIVER_OUTPUT_CONTROL)
-    gate_minus_1 = PROFILE_2_13.native_height - 1
-    assert bytes(spi.writes[doc_index + 1]) == bytes([gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF, 0x00])
-    entry_index = len(pre_lut_commands) - 1 - pre_lut_commands[::-1].index(_CMD_DATA_ENTRY_MODE)
-    assert bytes(spi.writes[entry_index + 1]) == bytes([0x03])
+    assert _CMD_DRIVER_OUTPUT_CONTROL not in pre_lut_commands
+    assert _CMD_DATA_ENTRY_MODE not in pre_lut_commands
 
 
 def test_partial_update_mode_defaults_to_quality_and_is_overridable(monkeypatch):
