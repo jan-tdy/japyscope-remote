@@ -249,7 +249,7 @@ class ControllerUI:
             if now >= s.access_expires: self._set("MENU", 3)
             elif remaining != s.access_last_remaining:
                 s.access_last_remaining = remaining
-                self.render()
+                self.render(coalesce=True)
 
     def _refresh_status(self) -> None:
         get_status = getattr(self.indi, "get_status", None)
@@ -308,14 +308,23 @@ class ControllerUI:
         return [*lines, footer] if footer else lines
 
     def render(self, *, coalesce: bool = False) -> None:
-        """Redraw the current screen. `coalesce=True` (only passed by
-        `_move`, for same-screen scrolling) draws a fast partial refresh
-        instead of a full one, except every `eink_refresh_every`-th call,
-        which is a full refresh to clear accumulated ghosting — see
+        """Redraw the current screen. `coalesce=True` draws a fast partial
+        refresh instead of a full one, except every `eink_refresh_every`-th
+        call, which is a full refresh to clear accumulated ghosting — see
         _DEFAULT_REFRESH_EVERY's docstring above. The lines are always
         computed fresh from the current state either way, so a later
         render (or `tick()`'s idle flush, also a full refresh) never draws
-        anything stale."""
+        anything stale.
+
+        The policy callers follow: `_set()` (a brand new screen) always
+        passes coalesce=False — a full refresh, since there's nothing on
+        the old screen worth diffing against anyway. Anything that changes
+        a value while staying on the *same* screen — `_move()`'s scrolling,
+        T9 typing, the WIFI_ACCESS countdown, a digit/backlight/speed
+        adjustment — passes coalesce=True instead. Missing this on a
+        value that updates often (e.g. a per-second countdown) means a
+        full, visibly-flashing refresh on every tick instead of a fast
+        partial one."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -670,7 +679,7 @@ class ControllerUI:
             if self._move(key, 3): return
             if key == ENC_PUSH:
                 s.backlight[s.index] = (s.backlight[s.index] + 1) % 3
-                self.backlight.set(*s.backlight); self.render()
+                self.backlight.set(*s.backlight); self.render(coalesce=True)
             elif key == "9": self._set("MENU", 5)
             return
         if s.screen == "LANGUAGE":
@@ -774,15 +783,15 @@ class ControllerUI:
         if key == FN2: self._set("CATALOG_MENU"); return
         if key == ENC_PUSH and s.text:
             s.results, s.online_available = self.search.search(s.text, self._local_objects()); self._set("RESULTS"); return
-        if key == BKSP: s.text = s.text[:-1]; s.t9_key = None; self.render(); return
-        if key == "0": s.text += "0"; s.t9_key = None; self.render(); return
+        if key == BKSP: s.text = s.text[:-1]; s.t9_key = None; self.render(coalesce=True); return
+        if key == "0": s.text += "0"; s.t9_key = None; self.render(coalesce=True); return
         if key not in T9: return
         now = self.clock(); letters = T9[key]
         if s.t9_key == key and now - s.t9_at <= 0.65 and s.text:
             s.t9_pos = (s.t9_pos + 1) % len(letters); s.text = s.text[:-1] + letters[s.t9_pos]
         else:
             s.t9_key = key; s.t9_pos = 0; s.text += letters[0]
-        s.t9_at = now; self.render()
+        s.t9_at = now; self.render(coalesce=True)
 
     def _confirm_slew(self, obj: SearchResult, return_screen: str) -> None:
         self.state.selected = obj; self.state.return_screen = return_screen
@@ -819,7 +828,7 @@ class ControllerUI:
                     self._set("MENU")
                 else:
                     self._devtools_code(code)
-            else: self.render()
+            else: self.render(coalesce=True)
 
     def _devtools_code(self, code: str) -> None:
         """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the

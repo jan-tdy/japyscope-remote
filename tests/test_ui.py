@@ -213,6 +213,36 @@ def test_smartsearch_nine_types_and_fn2_cancels():
     finally: conn.close(); os.unlink(path)
 
 
+def test_smartsearch_typing_is_a_partial_refresh():
+    # Typing changes a value (the search text) while staying on the same
+    # TYPE screen — same category as scrolling, so it should coalesce to a
+    # fast partial refresh rather than a full one on every keypress.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TYPE"; ui.handle("9")
+        assert ui.display.partial is True
+    finally: conn.close(); os.unlink(path)
+
+
+def test_wifi_access_countdown_tick_is_a_partial_refresh():
+    # The per-second countdown changes a value (remaining time) while
+    # staying on the same WIFI_ACCESS screen — should coalesce to a
+    # partial refresh, not force a full one every second.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.access_code = "123456"
+        ui.state.access_expires = now[0] + 600
+        ui._set("WIFI_ACCESS")
+        assert ui.display.partial is False  # the screen transition itself is full
+
+        now[0] += 1.0
+        ui.tick()
+        assert ui.display.partial is True
+    finally: conn.close(); os.unlink(path)
+
+
 def test_custom_catalog_navigation_has_two_levels():
     ui, conn, path = make_ui()
     try:
