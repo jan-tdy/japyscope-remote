@@ -598,3 +598,21 @@ def test_idle_after_scrolling_forces_a_full_refresh():
         ui.tick()
         assert ui.display.partial is False
     finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_shows_the_actual_running_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: "v1.2.3")
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware v1.2.3"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_falls_back_to_dev_outside_an_installed_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: None)
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware dev"
+    finally: conn.close(); os.unlink(path)

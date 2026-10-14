@@ -24,6 +24,7 @@ from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
+from shared.version import current_version
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
@@ -399,7 +400,11 @@ class ControllerUI:
         elif screen == "LOCATION":
             lines = ["Location", f"Lat {self.settings.get('latitude')}", f"Lon {self.settings.get('longitude')}", "push/9=back"]
         elif screen == "ABOUT":
-            lines = [self._t("about.line1"), self._t("about.line2"), self._t("about.line3"), self._t("footer.push_back")]
+            version = current_version() or "dev"
+            lines = [
+                self._t("about.line1"), self._t("about.line2"),
+                self._t("about.line3", version=version), self._t("footer.push_back"),
+            ]
         elif screen == "DRIVER_SELECT":
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
