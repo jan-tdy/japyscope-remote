@@ -6,6 +6,29 @@
 <p class="muted">No mount controls are available here. Telescope slewing and alignment remain controller-only.</p>
 
 <section>
+  <h3>Wi-Fi Networks</h3>
+  <p>
+    <strong>Primary</strong> ({{ 'active' if active_slot == 'primary' else 'standby' }}): {{ primary_ssid or '(not configured — use "Restart Wi-Fi setup" below)' }}<br>
+    <strong>Secondary</strong> ({{ 'active' if active_slot == 'secondary' else 'standby' }}): {{ secondary_ssid or '(not configured)' }}
+  </p>
+  <p class="muted">Saving the secondary network connects to it immediately. Once both are configured, switching back and forth between them is done on the controller itself (Dev Tools code 5001), not here.</p>
+  <form method="post" style="max-width: 22rem; margin: 1.25rem 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="configure-wifi-secondary">
+
+    <label for="wifi2-ssid">Secondary SSID</label>
+    <input id="wifi2-ssid" name="ssid" maxlength="32" required placeholder="Network name" value="{{ secondary_ssid }}">
+
+    <label for="wifi2-password">Secondary password</label>
+    <input id="wifi2-password" name="password" type="password" minlength="8" required placeholder="Network password">
+
+    <div style="margin-top: 1rem;">
+      <button type="submit" class="primary" style="width: 100%;">Save &amp; connect</button>
+    </div>
+  </form>
+</section>
+
+<section>
   <h3>Service Control</h3>
   <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
     <form method="post" class="inline">
