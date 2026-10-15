@@ -130,6 +130,60 @@ def _invert_row_band(buf: bytearray, stride: int, y0: int, y1: int) -> None:
             buf[row_start + xb] ^= 0xFF
 
 
+# Reserved at the right edge of the canvas for a vertical scrollbar
+# (`_draw_scrollbar`, below) — only when `render()` is given `scroll`, i.e.
+# a menu/list whose items don't all fit within `visible_rows` at a glance.
+# `_SCROLLBAR_GAP_PX` is blank space separating it from the text column
+# (so a fully-widened line's own last character never touches it);
+# `_SCROLLBAR_WIDTH_PX` is the thumb's (and track's) width.
+_SCROLLBAR_GAP_PX = 3
+_SCROLLBAR_WIDTH_PX = 4
+_SCROLLBAR_RESERVED_PX = _SCROLLBAR_GAP_PX + _SCROLLBAR_WIDTH_PX
+# A thumb this thin or thinner (very many items, very few visible) would
+# otherwise round away to nothing and stop reading as a thumb at all.
+_SCROLLBAR_MIN_THUMB_PX = 3
+
+
+def _draw_scrollbar(
+    buf: bytearray,
+    stride: int,
+    width: int,
+    height: int,
+    row_height: int,
+    row_start: int,
+    row_count: int,
+    item_start: int,
+    item_total: int,
+) -> None:
+    """Draw a vertical scrollbar in the reserved right-edge column, over
+    the pixel band for the item rows (`row_start`/`row_count`, in the same
+    line-row units as `lines` — see `render()`'s `scroll` parameter and
+    `ControllerUI._visible()`, which computes them). A dashed guide line
+    marks that whole band, so its extent (standing in for the full list)
+    reads even past wherever the thumb itself reaches; the thumb — a
+    solid block — is sized and positioned proportionally to how many of
+    `item_total` items are visible (`row_count`) and where (`item_start`),
+    the same numbers `_visible()` already computed for scrolling, not
+    re-derived here."""
+    band_top = row_start * row_height
+    band_height = row_count * row_height
+    if band_height <= 0 or item_total <= 0:
+        return
+
+    track_x = width - _SCROLLBAR_WIDTH_PX + _SCROLLBAR_WIDTH_PX // 2
+    for y in range(band_top, band_top + band_height, 2):
+        _set_black(buf, stride, width, height, track_x, y)
+
+    thumb_height = max(_SCROLLBAR_MIN_THUMB_PX, round(band_height * row_count / item_total))
+    thumb_height = min(thumb_height, band_height)
+    thumb_top = band_top + round(band_height * item_start / item_total)
+    thumb_top = min(thumb_top, band_top + band_height - thumb_height)
+    thumb_x0 = width - _SCROLLBAR_WIDTH_PX
+    for y in range(thumb_top, thumb_top + thumb_height):
+        for x in range(thumb_x0, width):
+            _set_black(buf, stride, width, height, x, y)
+
+
 def text_size(text: str, font_px: int) -> tuple[int, int]:
     """The device-pixel (width, height) `text` occupies at `font_px`, as a
     real proportional font measures it — unlike the old dot-matrix grid,
@@ -165,7 +219,24 @@ def draw_text(buf: bytearray, stride: int, width: int, height: int, x: int, y: i
     return w
 
 
-def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] = None) -> bytes:
+def render(
+    profile: DisplayProfile,
+    lines: list[str],
+    invert_row: Optional[int] = None,
+    scroll: Optional[tuple[int, int, int, int]] = None,
+) -> bytes:
+    """Render `lines` (already the current page/screen's visible rows —
+    see `firmware/ui/controller.py`'s `render()`) to a 1bpp frame buffer.
+
+    `scroll`, when given, is `(row_start, row_count, item_start,
+    item_total)`: `row_start`/`row_count` is the item rows' band within
+    `lines` itself (line-row indices, not pixels), and `item_start`/
+    `item_total` is how that visible slice maps into the full list —
+    `ControllerUI._visible()` computes all four, only when the list
+    doesn't fit within `profile.visible_rows` at a glance. Drawn as a
+    vertical scrollbar in the reserved right-edge column (see
+    `_draw_scrollbar`), and reserves that same column's width out of
+    every row's text, so a long line never grows into it."""
     width, height = profile.width, profile.height
     stride = stride_for(width)
     # 0xFF = all-white background; glyph pixels below clear bits to black.
@@ -173,6 +244,7 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
 
     visible_rows = profile.visible_rows
     row_height = height // visible_rows if visible_rows else height
+    text_width = width - _SCROLLBAR_RESERVED_PX if scroll is not None else width
 
     for row_idx, line in enumerate(lines[:visible_rows]):
         # Proportional text can't be truncated by a fixed per-character
@@ -180,7 +252,7 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
         # from the end until what's left actually fits. Menu labels are a
         # handful of words, so re-measuring per character is cheap.
         fitted = line
-        while fitted and text_size(fitted, MENU_FONT_PX)[0] > width:
+        while fitted and text_size(fitted, MENU_FONT_PX)[0] > text_width:
             fitted = fitted[:-1]
         w, h = text_size(fitted, MENU_FONT_PX)
         y0 = row_idx * row_height + max(0, (row_height - h) // 2)
@@ -189,5 +261,9 @@ def render(profile: DisplayProfile, lines: list[str], invert_row: Optional[int] 
         if row_idx == invert_row:
             band_end = min(height, (row_idx + 1) * row_height)
             _invert_row_band(buf, stride, row_idx * row_height, band_end)
+
+    if scroll is not None:
+        row_start, row_count, item_start, item_total = scroll
+        _draw_scrollbar(buf, stride, width, height, row_height, row_start, row_count, item_start, item_total)
 
     return bytes(buf)

@@ -373,12 +373,23 @@ class EPaperDisplay(DisplayHAL):
 
     # -- DisplayHAL interface --------------------------------------------
 
-    def _render_text_to_bitmap(self, lines: list[str], invert_row: Optional[int] = None) -> bytes:
-        return render_text_to_bitmap(self.profile, lines, invert_row)
+    def _render_text_to_bitmap(
+        self,
+        lines: list[str],
+        invert_row: Optional[int] = None,
+        scroll: Optional[tuple[int, int, int, int]] = None,
+    ) -> bytes:
+        return render_text_to_bitmap(self.profile, lines, invert_row, scroll)
 
-    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None, partial: bool = False) -> None:
+    def draw_lines(
+        self,
+        lines: list[str],
+        invert_row: Optional[int] = None,
+        partial: bool = False,
+        scroll: Optional[tuple[int, int, int, int]] = None,
+    ) -> None:
         self._ensure_hardware()
-        bitmap = self._render_text_to_bitmap(lines, invert_row)
+        bitmap = self._render_text_to_bitmap(lines, invert_row, scroll)
         if partial and self._spi_write_frame_partial(bitmap):
             return
         self._spi_write_frame(bitmap)

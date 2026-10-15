@@ -32,7 +32,13 @@ from firmware.hal.display.epaper import (
     spi_speed_hz,
 )
 from firmware.hal.display.profiles import PROFILE_2_13, PROFILE_4_26
-from firmware.hal.display.rasterizer import render, rotate_90, stride_for
+from firmware.hal.display.rasterizer import (
+    _SCROLLBAR_RESERVED_PX,
+    _SCROLLBAR_WIDTH_PX,
+    render,
+    rotate_90,
+    stride_for,
+)
 
 
 class _FakeGPIO:
@@ -449,3 +455,58 @@ def test_render_invert_row_flips_the_whole_row_band_not_just_glyphs():
 
     assert bytes(b ^ 0xFF for b in plain[row0]) == bytes(inverted[row0])
     assert plain[row1] == inverted[row1]  # untouched rows stay identical
+
+
+def _pixel(buf: bytes, stride: int, x: int, y: int) -> int:
+    """1 = white (no ink), 0 = black — same convention as the module
+    under test (rasterizer.py's module docstring)."""
+    return (buf[y * stride + x // 8] >> (7 - (x % 8))) & 1
+
+
+def test_no_scrollbar_drawn_without_scroll_info():
+    # Short labels that never reach anywhere near the right edge at
+    # MENU_FONT_PX, so the rightmost column staying all-white confirms no
+    # scrollbar — not just that the labels happened not to collide with one.
+    plain = render(PROFILE_2_13, ["Menu", "Item 1", "Item 2"])
+    stride = stride_for(PROFILE_2_13.width)
+    assert all(_pixel(plain, stride, PROFILE_2_13.width - 1, y) == 1 for y in range(PROFILE_2_13.height))
+
+
+def test_scrollbar_thumb_is_smaller_and_lower_for_a_later_page():
+    stride = stride_for(PROFILE_2_13.width)
+    row_height = PROFILE_2_13.height // PROFILE_2_13.visible_rows
+    x = PROFILE_2_13.width - 1
+
+    # A single visible row out of a long (20-item) list: near the top...
+    near_top = render(PROFILE_2_13, ["Menu", "Item"], scroll=(1, 1, 0, 20))
+    # ...and near the bottom of that same list.
+    near_bottom = render(PROFILE_2_13, ["Menu", "Item"], scroll=(1, 1, 19, 20))
+
+    band_top, band_bottom = row_height, 2 * row_height
+    top_ink = [y for y in range(band_top, band_bottom) if _pixel(near_top, stride, x, y) == 0]
+    bottom_ink = [y for y in range(band_top, band_bottom) if _pixel(near_bottom, stride, x, y) == 0]
+
+    assert top_ink and bottom_ink
+    assert min(top_ink) < min(bottom_ink)  # thumb moved down with the page
+
+
+def test_scrollbar_reserves_room_so_text_never_overlaps_it():
+    long_line = "This line is intentionally long enough to reach the panel's right edge easily"
+    stride = stride_for(PROFILE_2_13.width)
+    reserved_x0 = PROFILE_2_13.width - _SCROLLBAR_RESERVED_PX
+    row_height = PROFILE_2_13.height // PROFILE_2_13.visible_rows
+
+    def ink_in_columns(buf: bytes, x0: int, x1: int) -> bool:
+        # Text is vertically centered within its row band, not pinned to
+        # y=0 — scan the whole first row's band rather than a single row
+        # of pixels.
+        return any(_pixel(buf, stride, x, y) == 0 for y in range(row_height) for x in range(x0, x1))
+
+    plain = render(PROFILE_2_13, [long_line])
+    assert ink_in_columns(plain, reserved_x0, PROFILE_2_13.width)
+
+    scrolled = render(PROFILE_2_13, [long_line], scroll=(0, 1, 0, 1))
+    # The gap between text and the scrollbar's own track/thumb column
+    # should have no ink from the (now narrower) text.
+    gap_end = PROFILE_2_13.width - _SCROLLBAR_WIDTH_PX
+    assert not ink_in_columns(scrolled, reserved_x0, gap_end)

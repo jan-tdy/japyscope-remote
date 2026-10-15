@@ -19,7 +19,13 @@ class DisplayHAL(ABC):
         return self.profile.visible_rows
 
     @abstractmethod
-    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None, partial: bool = False) -> None:
+    def draw_lines(
+        self,
+        lines: list[str],
+        invert_row: Optional[int] = None,
+        partial: bool = False,
+        scroll: Optional[tuple[int, int, int, int]] = None,
+    ) -> None:
         """Replace the whole screen with these text lines. `invert_row`, if
         given, is the index into `lines` of the one row an "Invert"
         interface theme (`firmware/ui/themes.py`) wants shown as black
@@ -30,7 +36,17 @@ class DisplayHAL(ABC):
         backends without one just ignore the flag) instead of the default
         full refresh — firmware/ui/controller.py decides which to ask for
         and how often a full one still runs to clear any accumulated
-        ghosting."""
+        ghosting. `scroll`, if given, is `(row_start, row_count,
+        item_start, item_total)` — `row_start`/`row_count` is the item
+        rows' band within `lines` itself (line-row indices), and
+        `item_start`/`item_total` is how that visible slice maps into the
+        full list (`firmware/ui/controller.py`'s `_visible()` computes all
+        four, only when the list doesn't fit within `visible_rows` at a
+        glance) — so a menu/list too long to show at a glance still shows
+        where the current page sits in the whole thing, typically as a
+        small scrollbar (see `rasterizer.py`'s `_draw_scrollbar` for the
+        real e-ink backend). Backends that can't or don't render one may
+        ignore it."""
 
     def draw_bitmap(self, bitmap: bytes, partial: bool = False) -> None:
         """Replace the whole screen with a raw 1bpp bitmap already in this

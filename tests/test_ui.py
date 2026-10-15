@@ -14,9 +14,9 @@ from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 class Display(DisplayHAL):
     def __init__(self):
-        super().__init__(); self.lines = []; self.invert_row = None; self.partial = None
-    def draw_lines(self, lines, invert_row=None, partial=False):
-        self.lines = lines; self.invert_row = invert_row; self.partial = partial
+        super().__init__(); self.lines = []; self.invert_row = None; self.partial = None; self.scroll = None
+    def draw_lines(self, lines, invert_row=None, partial=False, scroll=None):
+        self.lines = lines; self.invert_row = invert_row; self.partial = partial; self.scroll = scroll
 
 
 class Backlight(BacklightHAL):
@@ -831,4 +831,41 @@ def test_screen_transitions_are_always_a_full_refresh():
         assert ui.display.partial is False
         ui.handle("9")
         assert ui.state.screen == "IDLE" and ui.display.partial is False
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_set_when_a_menu_does_not_fit_at_a_glance():
+    # MENU has 11 entries but only 5 rows are available for them (6
+    # visible_rows minus 1 for the title, no footer) — it doesn't fit at
+    # a glance, so render() should hand the display a scrollbar (see
+    # ControllerUI._visible()'s docstring): (row_start=1, rows, start,
+    # total).
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.scroll == (1, 5, 0, 11)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_absent_when_a_menu_fits_on_screen():
+    # IDLE's HOME menu is only 3 entries with a footer (aligned/not
+    # aligned) — 4 rows are available, so everything fits already; no
+    # scrollbar should be drawn for it.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE")
+        assert ui.display.scroll is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_tracks_the_current_position_while_scrolling():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.scroll == (1, 5, 0, 11)
+
+        for _ in range(6):
+            ui.handle(ENC_DOWN)
+        assert ui.state.index == 6
+        assert ui.display.scroll == (1, 5, 6, 11)  # window scrolled to keep index 6 visible
     finally: conn.close(); os.unlink(path)
