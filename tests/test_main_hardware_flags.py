@@ -1,9 +1,12 @@
 import os
 import sqlite3
+import subprocess
 import tempfile
 
+import pytest
+
 from firmware import main as main_module
-from firmware.main import HARDWARE_COMPONENTS, build_parser, resolve_simulation_flags
+from firmware.main import HARDWARE_COMPONENTS, _poweroff, build_parser, resolve_simulation_flags
 from firmware.hal.display.profiles import PROFILE_2_13
 from shared.db import SettingsRepo, connect, init_db
 
@@ -126,3 +129,33 @@ def test_sys_970_painted_to_display_on_an_otherwise_unhandled_crash(monkeypatch,
 
     assert rc == 1
     assert recorder.lines[0] == "SYS-970"
+
+
+def test_poweroff_runs_sudo_systemctl_poweroff_with_a_bounded_wait(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: calls.append((a, kw)) or subprocess.CompletedProcess(a[0], 0)
+    )
+
+    _poweroff()
+
+    (args,), kwargs = calls[0][0], calls[0][1]
+    assert args == ["/usr/bin/sudo", "systemctl", "poweroff"]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 10
+
+
+def test_poweroff_propagates_a_failed_sudo_as_a_subprocess_error(monkeypatch):
+    # Confirmed gap: a Popen-based fire-and-forget call never surfaces a
+    # missing/stale sudoers grant (sudo exits nonzero, but nothing checks
+    # it) — the device would sit on the SHUTDOWN screen forever with
+    # nothing actually powered off. subprocess.run(check=True) turns that
+    # into a SubprocessError, which ControllerUI._shutdown() already
+    # catches and logs as SYS-990.
+    def _raise(*a, **kw):
+        raise subprocess.CalledProcessError(1, a[0])
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    with pytest.raises(subprocess.SubprocessError):
+        _poweroff()

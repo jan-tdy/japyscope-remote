@@ -41,10 +41,17 @@ def _show_fatal_error(display, code: str, detail: str) -> None:
 
 def _poweroff() -> None:
     """Real power-off (install.sh grants the `japyscope` user passwordless
-    sudo for exactly this). Fire-and-forget like webui/app.py's own system
-    actions — `systemctl poweroff` tears down every service, this process
-    included, so there's nothing useful to wait for."""
-    subprocess.Popen(["sudo", "systemctl", "poweroff"], start_new_session=True)
+    sudo for exactly this). `systemctl poweroff` only *queues* the shutdown
+    and returns almost immediately (the actual teardown, including this
+    process, happens moments later) — so unlike a true fire-and-forget
+    action, there IS something worth confirming here: that `sudo` actually
+    accepted and queued it. A bounded wait (not a real poweroff's full
+    duration) catches e.g. a missing/stale sudoers grant immediately,
+    instead of silently leaving the device sitting on the SHUTDOWN screen
+    forever. Raises subprocess.SubprocessError (caught by
+    ControllerUI._shutdown()'s existing handler, logged as SYS-990) on a
+    nonzero exit or if it doesn't even start within the timeout."""
+    subprocess.run(["/usr/bin/sudo", "systemctl", "poweroff"], check=True, timeout=10)
 
 
 def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict[str, bool]:
