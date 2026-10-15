@@ -49,37 +49,15 @@ SPEEDS = (1, 2, 4, 8, 16, 32, 64)
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
 # ghosting that builds up over repeated partial refreshes. So scrolling
-# (`_move`, below) draws every single detent as a partial refresh, never
-# forcing a full one mid-scroll — the idle flush below (`tick()`) is the
-# only thing that forces a full "clean up" refresh, shortly after the
-# user actually stops scrolling, rather than leaving a partial-refresh
-# frame on screen indefinitely. A fixed "every Nth scroll is full instead"
-# cadence used to also force a full refresh mid-burst regardless of
-# whether the user was still actively scrolling — reported on hardware as
-# an unnecessary interruption (a full, visibly-flashing refresh in the
-# middle of otherwise-smooth scrolling) — removed in favor of relying
-# solely on the idle flush; keypad "3" (see `handle()`) remains as a
-# manual way to force a full refresh on demand instead. Screen
-# transitions (`_set`) always get a full refresh regardless.
-# How long to wait, after the last scroll, before forcing the "clean up"
-# full refresh — otherwise stopping mid-scroll would leave a
-# partial-refresh frame (and its ghosting) on screen indefinitely.
-_COALESCE_IDLE_FLUSH_S = 0.25
-# Confirmed on hardware (journalctl phase/elapsed logging from
-# firmware/hal/display/epaper.py's _wait_busy): a *single* isolated click
-# produced one partial refresh immediately followed, ~0.25-1s later, by
-# a full one — on every single click, not just every Nth, making every
-# move look exactly as slow as a full refresh. The idle flush above
-# doesn't check how much actually accumulated: it fires on *any* pending
-# partial, including the very first one of what might be a single
-# deliberate click rather than a burst. A lone partial refresh's ghosting
-# is the whole reason it's tolerable in the first place (the module
-# docstring: ghosting "builds up over repeated partial refreshes", not a
-# single one) — require at least this many coalesced steps to have
-# landed before the idle flush bothers cleaning up at all; a true burst
-# (several detents within the idle window) still gets its post-burst
-# full refresh exactly as before.
-_COALESCE_IDLE_FLUSH_MIN_STEPS = 2
+# (`_move`, below) draws every single detent as a partial refresh and
+# never auto-promotes to a full one, however many consecutive scrolls
+# happen — confirmed on hardware that any automatic "clean up" full
+# refresh during/after scrolling (whether a fixed "every Nth scroll"
+# cadence, or an idle flush shortly after scrolling stopped) was still
+# visibly interrupting otherwise-smooth scrolling, so neither exists
+# anymore. Keypad "3" (see `handle()`) is the only way to force a full
+# refresh on demand, to clear ghosting when it's actually noticeable.
+# Screen transitions (`_set`) always get a full refresh regardless.
 # Bright, easy-to-recognize alignment stars with real J2000 coordinates —
 # picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
 # IndiClient.sync() with these, which is what actually teaches the mount
@@ -213,9 +191,6 @@ class ControllerUI:
         self.clock = clock
         self.state = UIState()
         self.running = True
-        self._scroll_count = 0
-        self._coalesce_pending = False
-        self._last_scroll_at = 0.0
 
     def start(self) -> None:
         self.render()
@@ -234,12 +209,6 @@ class ControllerUI:
     def tick(self) -> None:
         now = self.clock()
         s = self.state
-        if (
-            self._coalesce_pending
-            and self._scroll_count >= _COALESCE_IDLE_FLUSH_MIN_STEPS
-            and now - self._last_scroll_at >= _COALESCE_IDLE_FLUSH_S
-        ):
-            self.render()
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
@@ -341,24 +310,23 @@ class ControllerUI:
         `_move`, for same-screen scrolling, and a handful of other
         within-screen value changes — T9 typing, the WIFI_ACCESS
         countdown, a digit/backlight/speed adjustment) always draws a
-        fast partial refresh — never forced to full mid-scroll, even
-        after many consecutive scrolls; only `tick()`'s idle flush, once
-        scrolling actually stops, forces a full "clean up" refresh to
-        clear ghosting. A fixed "every Nth is full" cadence used to also
-        force one mid-burst, reported on hardware as an unwanted
-        interruption to otherwise-smooth scrolling — removed. Keypad "3"
-        (see `handle()`) forces a full refresh on demand if needed sooner.
-        `_set()` (any screen transition) always draws full (coalesce left
-        at its default False): its content is a completely different
-        frame from whatever came before, so there's nothing to usefully
-        diff a partial refresh against, and a full refresh there also
-        gives the user an unambiguous "this is a new screen" cue — don't
-        make this coalesce=True again without an explicit request; it was
-        tried and reverted (confirmed on hardware as wrong, especially
-        noticeable backing out with "9"). The lines are always computed
-        fresh from the current state either way, so a later render (or
-        `tick()`'s idle flush, also a full refresh) never draws anything
-        stale."""
+        fast partial refresh, with no automatic promotion to a full one —
+        confirmed on hardware that any auto "clean up" full refresh during
+        or after scrolling (a fixed "every Nth" cadence, or an idle flush
+        once scrolling stopped) was still visibly interrupting otherwise-
+        smooth scrolling, so neither exists anymore; keypad "3" (see
+        `handle()`) is the only way to force a full refresh, on demand,
+        when ghosting actually needs clearing. `_set()` (any screen
+        transition) always draws full (coalesce left at its default
+        False): its content is a completely different frame from whatever
+        came before, so there's nothing to usefully diff a partial refresh
+        against, and a full refresh there also gives the user an
+        unambiguous "this is a new screen" cue — don't make this
+        coalesce=True again without an explicit request; it was tried and
+        reverted (confirmed on hardware as wrong, especially noticeable
+        backing out with "9"). The lines are always computed fresh from
+        the current state either way, so a later render never draws
+        anything stale."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
@@ -493,13 +461,8 @@ class ControllerUI:
             lines = [screen]
         visible_lines = lines[: self.display.visible_rows]
         if coalesce:
-            self._scroll_count += 1
-            self._last_scroll_at = self.clock()
-            self._coalesce_pending = True
             self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=True)
             return
-        self._scroll_count = 0
-        self._coalesce_pending = False
         self.display.draw_lines(visible_lines, invert_row=self._invert_row)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
@@ -577,10 +540,10 @@ class ControllerUI:
     def handle(self, key: str) -> None:
         s = self.state
         # Keypad "3" — manual "force a full refresh" on the current
-        # screen, no state change. Handy to clear any lingering ghosting
-        # on demand, independent of the idle-flush cleanup that otherwise
-        # only runs once scrolling actually stops; excluded on TYPE, where
-        # it's still a T9 letter key ("ghi").
+        # screen, no state change. The only way to clear ghosting left
+        # over from scrolling's partial refreshes, since nothing does
+        # that automatically; excluded on TYPE, where it's still a T9
+        # letter key ("ghi").
         if key == "3" and s.screen != "TYPE":
             self.render()
             return

@@ -41,17 +41,16 @@ already bound to opening speed adjust; "5" falls back to `ENC_PUSH`
 everywhere except TYPE (SmartSearch), where it's still a T9 letter key.
 
 Keypad "3" (`handle()`, top of the method) redraws the current screen
-with a forced full refresh — a manual way to clear any ghosting left
-over from partial refreshes without waiting for the idle-flush cleanup
-(which only runs once scrolling actually stops) or navigating away and
-back. Excluded on TYPE, where it's still a T9 letter key ("ghi").
+with a forced full refresh — the only way to clear any ghosting left
+over from partial refreshes, since nothing clears it automatically.
+Excluded on TYPE, where it's still a T9 letter key ("ghi").
 
 Scrolling (`_move()`) always draws a fast partial refresh, never a
-forced full one mid-scroll, however many consecutive scrolls happen —
-only the idle flush (shortly after scrolling actually stops) or keypad
-"3" clear accumulated ghosting. A fixed "every Nth scroll is full"
-cadence used to also force one mid-burst regardless of whether
-scrolling was still ongoing; removed as an unwanted interruption.
+forced full one, however many consecutive scrolls happen — only keypad
+"3" clears accumulated ghosting. A fixed "every Nth scroll is full"
+cadence, and later an idle flush shortly after scrolling stopped, both
+used to force one automatically; both were reported on hardware as an
+unwanted interruption to otherwise-smooth scrolling and were removed.
 
 ### External joystick (optional — `docs/WIRING.md`)
 
