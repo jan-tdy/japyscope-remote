@@ -47,6 +47,45 @@ harmless — if the mount doesn't respond, swap pins 2/5 at the Pi end.
 Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
 do not connect pin 6 (+12V) to the level shifter or Pi.
 
+### Optional: Bluetooth instead of the RJ12 cable
+{: #mount-bluetooth}
+
+Ján's 16" Sky-Watcher Flextube Dobson (an older, now-discontinued series)
+has a built-in Bluetooth module. If — and only if — that module is a
+transparent SPP (Serial Port Profile) link carrying the same SynScan serial
+protocol the RJ12 port carries (confirm this before relying on it; some
+factory BT dongles only talk to the SynScan Pro phone app's own framing,
+not a plain serial pass-through), it can replace the RJ12/level-shifter
+wiring above entirely — which also removes the one metal path tying the
+controller's ground to the mount's, a candidate fix for the ground-loop
+issue seen on this setup.
+
+One-time pairing/bind, over SSH (Dev Tools code `0044`), not from the
+device UI — entering a MAC address on the 3x4 keypad isn't practical:
+
+```
+sudo japyscope-bluetooth-mount pair AA:BB:CC:DD:EE:FF
+```
+
+This pairs and trusts the module, then binds it to a persistent
+`/dev/rfcomm0` via `japyscope-rfcomm-mount.service` (`install/
+bluetooth-mount.sh`), so it survives reboots. `sudo japyscope-bluetooth-mount
+unpair` reverses it. Afterwards, select it on the device: Dev Tools code
+`9600` → "Bluetooth (SynScan)" (persists `settings.mount_interface`, see
+`docs/CODES.md`).
+
+**Not yet wired end-to-end**: picking Bluetooth there only records the
+intent — actually pointing the `indi_skywatcherAltAzMount` driver at
+`/dev/rfcomm0` instead of `/dev/serial0` still needs `firmware/indi/
+client.py`'s property wiring (currently stubbed, same v0 gap as
+`get_status`/`sync`/`goto`/`park`). Until that lands, switch the driver's
+`DEVICE_PORT` manually on this port after pairing.
+
+Trade-offs vs. the wired RJ12 link: higher latency, occasional dropped
+connections (BT SPP), and the module draws its own power from the mount —
+worth confirming before committing to it as the primary link rather than a
+ground-loop workaround.
+
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
 {: #keypad}
 

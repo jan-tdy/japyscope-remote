@@ -541,6 +541,23 @@ def test_devtools_9600_opens_iface_select_and_back_returns_idle():
         assert ui.state.screen == "IFACE_SELECT"
         ui.handle(ENC_PUSH)
         assert ui.state.screen == "IDLE"
+        # Default (no prior selection) persists "rj12", the first option.
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_selects_bluetooth_and_reopens_on_it():
+    ui, conn, path = make_ui()
+    try:
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert SettingsRepo(conn).get("mount_interface") == "bluetooth"
+        # Reopening the picker starts on the previously persisted choice.
+        enter_devtools_code(ui, "9600")
+        assert ui.state.screen == "IFACE_SELECT"
+        assert ui.state.index == 1
     finally: conn.close(); os.unlink(path)
 
 

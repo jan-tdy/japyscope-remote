@@ -154,6 +154,10 @@ class ControllerUI:
     # INTERFACES above.
     REPOS = ("jan-tdy/japyscope-remote",)
     UPDATE_CHANNELS = (("stable", "Stable only"), ("prerelease", "Stable + prereleases"))
+    # Dev Tools code 9600 — see docs/CODES.md. "bluetooth" pairing/binding
+    # itself is done once via install/bluetooth-mount.sh (SSH), not from
+    # this screen; selecting it here only records the intended interface.
+    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
 
     def __init__(
         self,
@@ -454,7 +458,7 @@ class ControllerUI:
         elif screen == "DRIVER_SELECT":
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
-            lines = self._visible("Mount interface", ["RJ12 serial"])
+            lines = self._visible("Mount interface", [label for _, label in self.MOUNT_INTERFACES])
         elif screen == "DEV_REPO_SELECT":
             lines = self._visible("Set repo", list(self.REPOS))
         elif screen == "DEV_CHANNEL_SELECT":
@@ -752,6 +756,13 @@ class ControllerUI:
                 self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
                 self._set("IDLE")
             return
+        if s.screen == "IFACE_SELECT":
+            if self._move(key, len(self.MOUNT_INTERFACES)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("mount_interface", self.MOUNT_INTERFACES[s.index][0])
+                self._set("IDLE")
+            return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
             if key == "9": self._set("IDLE"); return
@@ -770,8 +781,8 @@ class ControllerUI:
         if s.screen == "ERROR" and key in ("9", ENC_PUSH):
             self._set(s.return_screen)
             return
-        if s.screen in {"WIFI_SETUP", "DRIVER_SELECT", "IFACE_SELECT"} and key in ("9", ENC_PUSH):
-            # All three are only reachable via Dev Tools codes (5000/5555/9600) — back always goes to IDLE.
+        if s.screen in {"WIFI_SETUP", "DRIVER_SELECT"} and key in ("9", ENC_PUSH):
+            # Both are only reachable via Dev Tools codes (5000/5555) — back always goes to IDLE.
             self._set("IDLE")
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
@@ -903,7 +914,9 @@ class ControllerUI:
         elif code == "5555":
             self._set("DRIVER_SELECT")
         elif code == "9600":
-            self._set("IFACE_SELECT")
+            ifaces = [k for k, _ in self.MOUNT_INTERFACES]
+            current = self.settings.get("mount_interface", ifaces[0])
+            self._set("IFACE_SELECT", ifaces.index(current) if current in ifaces else 0)
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")

@@ -1,0 +1,16 @@
+[Unit]
+Description=JapyScope Bluetooth serial bind for the mount (SynScan BT -> /dev/rfcomm0)
+After=bluetooth.target
+Requires=bluetooth.target
+Before=japyscope-app.service
+ConditionPathExists=/etc/japyscope/bluetooth-mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/japyscope/bluetooth-mount
+ExecStart=/usr/bin/rfcomm bind rfcomm0 ${JAPYSCOPE_MOUNT_BT_MAC} 1
+ExecStop=/usr/bin/rfcomm release rfcomm0
+
+[Install]
+WantedBy=multi-user.target
