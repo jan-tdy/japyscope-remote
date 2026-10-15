@@ -147,6 +147,55 @@ def test_system_menu_still_reachable_after_language_entry_added():
     finally: conn.close(); os.unlink(path)
 
 
+def test_shutdown_actually_calls_power_control():
+    # Confirmed on hardware as a real gap: confirming shutdown only
+    # stopped the app loop and never powered anything off, even though
+    # install.sh already grants passwordless sudo for exactly this.
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    conn = connect(path); init_db(conn)
+    calls = []
+    ui = ControllerUI(
+        Display(), Input(), Indi(), conn, backlight=Backlight(),
+        power_control=lambda: calls.append(True),
+    )
+    try:
+        ui.state.screen = "SYSTEM_CONFIRM"
+        ui.handle(ENC_PUSH)
+        assert calls == [True]
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_shutdown_without_power_control_still_stops_cleanly():
+    # --simulate / tests: power_control defaults to None, so this must
+    # not raise — just stop the loop as before.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SYSTEM_CONFIRM"
+        ui.handle(ENC_PUSH)
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_shutdown_from_parked_screen_also_calls_power_control():
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    conn = connect(path); init_db(conn)
+    calls = []
+    ui = ControllerUI(
+        Display(), Input(), Indi(), conn, backlight=Backlight(),
+        power_control=lambda: calls.append(True),
+    )
+    try:
+        ui.state.screen = "PARKED"; ui.state.index = 1  # "Power off"
+        ui.handle(ENC_PUSH)
+        assert calls == [True]
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_theme_selection_persists_and_defaults_to_arrow():
     ui, conn, path = make_ui()
     try:
@@ -282,6 +331,24 @@ def test_slew_without_coordinates_shows_error():
         assert ui.state.screen == "ERROR"
         assert ui.state.transition_at == 0
         assert ui.indi.goto_target is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_code_enterable_via_keypad_1_7_5_stand_ins():
+    # "1"/"7" (ENC_UP/ENC_DOWN) and "5" (ENC_PUSH) should work for entering
+    # a Dev Tools code too, not just the real encoder — DEVTOOLS/SUDO_SET
+    # read ENC_UP/ENC_DOWN directly (not via _move()), so they need their
+    # own translation in _digits(), separate from _move()'s.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"; ui.state.index = 2  # Home -> Dev Tools
+        ui.handle("5")  # ENC_PUSH stand-in
+        assert ui.state.screen == "DEVTOOLS"
+        for digit in "0022":
+            for _ in range(int(digit)):
+                ui.handle("1")  # ENC_UP stand-in
+            ui.handle("5")  # ENC_PUSH stand-in
+        assert ui.state.screen == "DEV_REPO_SELECT"
     finally: conn.close(); os.unlink(path)
 
 
@@ -569,6 +636,26 @@ def test_manual_two_star_alignment_syncs_each_real_star():
         assert ui.state.screen == "ALIGN_CONFIRM"
         ui.handle(ENC_PUSH)  # "Yes, done"
         assert StateRepo(conn).get("aligned") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_align_save_lands_on_idle_not_back_on_align_confirm():
+    # Confirmed on hardware as an infinite loop: ALIGN_SAVE's timer used to
+    # send the screen back to ALIGN_CONFIRM — the very screen whose "Yes,
+    # done" enters ALIGN_SAVE in the first place — so any further input
+    # (a queued push, encoder noise) re-entered ALIGN_SAVE and the cycle
+    # repeated until the app crashed.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.screen = "ALIGN_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)  # "Yes, done" -> ALIGN_SAVE
+        assert ui.state.screen == "ALIGN_SAVE"
+
+        now[0] += 2.0  # past the 1.5s transition_at
+        ui.tick()
+        assert ui.state.screen == "IDLE"
     finally: conn.close(); os.unlink(path)
 
 

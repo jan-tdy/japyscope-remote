@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional
@@ -36,6 +37,21 @@ def _show_fatal_error(display, code: str, detail: str) -> None:
         display.draw_lines([code, detail[:24], "Check journalctl", "docs/TROUBLESHOOTING.md"])
     except Exception:
         logging.getLogger(__name__).exception("Could not paint %s to the display", code)
+
+
+def _poweroff() -> None:
+    """Real power-off (install.sh grants the `japyscope` user passwordless
+    sudo for exactly this). `systemctl poweroff` only *queues* the shutdown
+    and returns almost immediately (the actual teardown, including this
+    process, happens moments later) — so unlike a true fire-and-forget
+    action, there IS something worth confirming here: that `sudo` actually
+    accepted and queued it. A bounded wait (not a real poweroff's full
+    duration) catches e.g. a missing/stale sudoers grant immediately,
+    instead of silently leaving the device sitting on the SHUTDOWN screen
+    forever. Raises subprocess.SubprocessError (caught by
+    ControllerUI._shutdown()'s existing handler, logged as SYS-990) on a
+    nonzero exit or if it doesn't even start within the timeout."""
+    subprocess.run(["/usr/bin/sudo", "systemctl", "poweroff"], check=True, timeout=10)
 
 
 def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict[str, bool]:
@@ -123,7 +139,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             if manager is not None:
                 manager.start()
                 connect_indi(indi)
-            ui = ControllerUI(display, input_hal, indi, conn, backlight=backlight, indi_manager=manager)
+            ui = ControllerUI(
+                display, input_hal, indi, conn, backlight=backlight, indi_manager=manager,
+                power_control=None if args.simulate else _poweroff,
+            )
             ui.run()
         return 0
     except (FileNotFoundError, ConnectionError) as exc:
@@ -139,6 +158,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         # broke, go look" goes on the panel.
         logging.getLogger(__name__).error("SYS-980 OS/storage-level failure: %s", exc)
         _show_fatal_error(display, "SYS-980", str(exc))
+        return 1
+    except Exception as exc:
+        # Catch-all for anything the two specific branches above don't name
+        # (a bug in the UI/INDI code itself, not a startup or OS/storage
+        # failure) — confirmed on hardware as a silent crash with nothing on
+        # the panel to show for it. Deliberately the widest possible except:
+        # this is the last line of defense, and an unattended device
+        # (Piconcillo) left on a blank/stale screen after a crash is worse
+        # than a wrong-but-honest code telling the owner to go check the
+        # journal.
+        logging.getLogger(__name__).exception("SYS-970 unhandled crash: %s", exc)
+        _show_fatal_error(display, "SYS-970", str(exc))
         return 1
     finally:
         if input_hal is not None:

@@ -160,8 +160,8 @@ having a shell on the device, not a remote-execution surface.
 These don't exist in the HTML mockup — added here for `docs/TROUBLESHOOTING.md`
 and systemd journal greps once the firmware app has real logging. Extend as
 new failure modes are found during bring-up. All of these are journal-only
-except `SYS-980`, the one code that also gets painted straight to the
-e-ink panel (see its row below for why).
+except `SYS-980` and `SYS-970`, which also get painted straight to the
+e-ink panel (see their rows below for why).
 
 | Code | Meaning | Where logged |
 |---|---|---|
@@ -175,4 +175,6 @@ e-ink panel (see its row below for why).
 | `WIFI-001` | AP-mode setup hotspot failed to start | `hostapd`/`dnsmasq` journal |
 | `SEARCH-001` | SmartSearch online lookup timed out / no internet — fell back to local catalogs only | `japyscope-app` journal |
 | `SYS-001` | Daily `apt-get update`/`upgrade` step failed (best-effort — never blocks the JapyScope release step) | `japyscope-update` journal |
-| `SYS-980` | A fatal OS/storage-level error (e.g. the SD card going read-only mid-run, confirmed during bring-up — see "Filesystem went read-only" in `docs/TROUBLESHOOTING.md`) crashed `japyscope-app` entirely | `japyscope-app` journal **and painted directly to the e-ink panel** (`firmware/main.py`'s `_show_fatal_error`) — this is the one code that bypasses the normal DB-backed UI, since it can fire exactly when the DB itself is unwritable, and the panel keeps showing it with no power if the Pi then crash-loops |
+| `SYS-980` | A fatal OS/storage-level error (e.g. the SD card going read-only mid-run, confirmed during bring-up — see "Filesystem went read-only" in `docs/TROUBLESHOOTING.md`) crashed `japyscope-app` entirely | `japyscope-app` journal **and painted directly to the e-ink panel** (`firmware/main.py`'s `_show_fatal_error`) — this is one of the two codes that bypass the normal DB-backed UI, since it can fire exactly when the DB itself is unwritable, and the panel keeps showing it with no power if the Pi then crash-loops |
+| `SYS-970` | Any other unhandled exception crashed `japyscope-app` (a bug, not a startup or OS/storage failure — those get their own codes above) — confirmed on hardware as a silent crash with nothing on the panel | `japyscope-app` journal (with full traceback) **and painted directly to the e-ink panel** — same `_show_fatal_error` mechanism as `SYS-980`, as a last resort so an unattended device never just goes blank |
+| `SYS-990` | `systemctl poweroff` itself (requested via Menu → System → Power off, or the PARKED screen's "Power off") failed to run | `japyscope-app` journal only — not painted; the panel is left on the SHUTDOWN screen regardless, since the user already asked to power off |

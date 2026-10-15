@@ -1,9 +1,12 @@
 import os
 import sqlite3
+import subprocess
 import tempfile
 
+import pytest
+
 from firmware import main as main_module
-from firmware.main import HARDWARE_COMPONENTS, build_parser, resolve_simulation_flags
+from firmware.main import HARDWARE_COMPONENTS, _poweroff, build_parser, resolve_simulation_flags
 from firmware.hal.display.profiles import PROFILE_2_13
 from shared.db import SettingsRepo, connect, init_db
 
@@ -102,3 +105,57 @@ def test_sys_980_handler_swallows_a_broken_display_instead_of_masking_the_real_e
     # *new* traceback on top of the original DB/filesystem failure.
     rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
     assert rc == 1
+
+
+class _ControllerUIThatRaisesSomethingUnforeseen:
+    """Stands in for a bug in the UI/INDI code itself — anything that isn't
+    a startup failure (INDI-001/002) or an OS/storage failure (SYS-980).
+    Confirmed on hardware as a silent crash with nothing painted to the
+    panel; SYS-970 is the generic catch-all added to fix that."""
+
+    def __init__(self, *args, **kwargs):
+        self.running = True
+
+    def run(self):
+        raise ValueError("boom")
+
+
+def test_sys_970_painted_to_display_on_an_otherwise_unhandled_crash(monkeypatch, tmp_path):
+    recorder = _RecordingDisplay()
+    monkeypatch.setattr(main_module, "make_display", lambda simulate: recorder)
+    monkeypatch.setattr(main_module, "ControllerUI", _ControllerUIThatRaisesSomethingUnforeseen)
+
+    rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
+
+    assert rc == 1
+    assert recorder.lines[0] == "SYS-970"
+
+
+def test_poweroff_runs_sudo_systemctl_poweroff_with_a_bounded_wait(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: calls.append((a, kw)) or subprocess.CompletedProcess(a[0], 0)
+    )
+
+    _poweroff()
+
+    (args,), kwargs = calls[0][0], calls[0][1]
+    assert args == ["/usr/bin/sudo", "systemctl", "poweroff"]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 10
+
+
+def test_poweroff_propagates_a_failed_sudo_as_a_subprocess_error(monkeypatch):
+    # Confirmed gap: a Popen-based fire-and-forget call never surfaces a
+    # missing/stale sudoers grant (sudo exits nonzero, but nothing checks
+    # it) — the device would sit on the SHUTDOWN screen forever with
+    # nothing actually powered off. subprocess.run(check=True) turns that
+    # into a SubprocessError, which ControllerUI._shutdown() already
+    # catches and logs as SYS-990.
+    def _raise(*a, **kw):
+        raise subprocess.CalledProcessError(1, a[0])
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+
+    with pytest.raises(subprocess.SubprocessError):
+        _poweroff()

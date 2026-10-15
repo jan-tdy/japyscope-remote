@@ -187,6 +187,7 @@ class ControllerUI:
         clock: Callable[[], float] = time.time,
         backlight: Optional[BacklightHAL] = None,
         indi_manager=None,
+        power_control: Optional[Callable[[], None]] = None,
     ):
         self.display = display
         self.input = input_hal
@@ -195,6 +196,14 @@ class ControllerUI:
         # None in --simulate mode, where there's no real indiserver to restart.
         # Dev Tools code 1111.
         self.indi_manager = indi_manager
+        # Actually powers off the Pi (firmware/main.py wires this to `sudo
+        # systemctl poweroff`) — None in --simulate mode and in tests,
+        # where there's no real hardware to shut down. Confirmed on
+        # hardware as a real gap: MENU -> System -> shutdown only stopped
+        # this process (self.running = False below) and never powered off
+        # anything, even though install.sh already grants the `japyscope`
+        # user passwordless sudo for exactly this command.
+        self.power_control = power_control
         self.backlight = backlight or SimulatorBacklight()
         self.catalogs = CatalogRepo(conn)
         self.settings = SettingsRepo(conn)
@@ -238,7 +247,15 @@ class ControllerUI:
             s.transition_at = 0
             if s.screen == "SLEW": self._set("TRACK")
             elif s.screen == "PARKING": self.runtime.set("parked", "true"); self._set("PARKED")
-            elif s.screen == "ALIGN_SAVE": self._set("ALIGN_CONFIRM")
+            # Confirmed on hardware as an infinite loop ("Saving…" <->
+            # "Looks right?" repeating until the app crashed): this used to
+            # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
+            # enters ALIGN_SAVE on "Yes, done" — any further input (a
+            # queued ENC_PUSH, encoder noise) re-entered ALIGN_SAVE and
+            # the 1.5s timer fired again, forever. Alignment is actually
+            # complete by this point (`aligned` was already set true back
+            # in ALIGN_CONFIRM) — go to IDLE instead.
+            elif s.screen == "ALIGN_SAVE": self._set("IDLE")
         if s.screen == "WIFI_ACCESS":
             remaining = max(0, int(s.access_expires - now))
             if now >= s.access_expires: self._set("MENU", 3)
@@ -269,6 +286,23 @@ class ControllerUI:
         self.state.screen = screen
         self.state.index = index
         self.render()
+
+    def _shutdown(self) -> None:
+        """Actually power off (see `power_control`'s docstring above),
+        then stop this process. The panel is left showing SHUTDOWN —
+        e-ink holds its last image with no power, so that's what stays
+        visible through the whole power-off sequence; the dedicated
+        japyscope-shutdown-splash.service (ExecStop) repaints the boot
+        logo over it right as systemd actually tears the system down,
+        however shutdown was triggered (this menu, the Web UI, `sudo
+        poweroff` from SSH, …) — see install/systemd/."""
+        if self.power_control is not None:
+            try:
+                self.power_control()
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("SYS-990 poweroff command failed: %s", exc)
+        self.running = False
+        self._set("SHUTDOWN")
 
     @staticmethod
     def _truth(value: Optional[str]) -> bool:
@@ -698,7 +732,7 @@ class ControllerUI:
         if s.screen == "PARKED":
             if self._move(key, 2): return
             if key == ENC_PUSH and s.index == 0: self.runtime.set("parked", "false"); self._set("IDLE")
-            elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
+            elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen == "WIFI_ACCESS":
             if key in ("9", ENC_PUSH): self._set("MENU", 3)
@@ -749,7 +783,7 @@ class ControllerUI:
             return
         if s.screen == "SYSTEM_CONFIRM":
             if key == "9": self._set("MENU", 9)
-            elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
+            elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
             if key in ("9", ENC_PUSH): self._set("MENU")
@@ -844,6 +878,13 @@ class ControllerUI:
 
     def _digits(self, key: str) -> None:
         s = self.state
+        # Same "1"/"7" encoder stand-in as _move() (see its docstring) —
+        # DEVTOOLS/SUDO_SET read ENC_UP/ENC_DOWN directly rather than going
+        # through _move(), so they need their own translation here too.
+        if key == "1":
+            key = ENC_UP
+        elif key == "7":
+            key = ENC_DOWN
         if key == "9": self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU"); return
         if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
         if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return

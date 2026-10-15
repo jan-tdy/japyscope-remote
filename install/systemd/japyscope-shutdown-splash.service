@@ -1,0 +1,31 @@
+[Unit]
+Description=JapyScope e-paper shutdown splash
+DefaultDependencies=no
+# Before=, not After=: systemd stops units in the REVERSE of their start
+# order, so Before=japyscope-app.service here (this unit starts before the
+# app) means this unit is stopped AFTER the app at shutdown — i.e. its
+# ExecStop paints the logo once japyscope-app.service (and whatever it was
+# last showing, e.g. SHUTDOWN) has already stopped, not before. Getting
+# this backwards (After=) would have the app's own screen painted over
+# the logo instead of the other way around, defeating the whole feature.
+Before=japyscope-app.service shutdown.target reboot.target halt.target
+Conflicts=shutdown.target reboot.target halt.target
+
+[Service]
+# Standard systemd idiom for "run this during shutdown": ExecStart does
+# nothing and the unit just stays active (RemainAfterExit=yes). Before=
+# + Conflicts= on shutdown.target/reboot.target/halt.target mean systemd
+# stops this unit before reaching any of them — reaching that point is
+# exactly what runs ExecStop, regardless of what triggered the shutdown.
+Type=oneshot
+RemainAfterExit=yes
+User=japyscope
+Group=japyscope
+SupplementaryGroups=spi gpio
+WorkingDirectory=/opt/japyscope/current
+EnvironmentFile=-/etc/japyscope/environment
+ExecStart=/bin/true
+ExecStop=/opt/japyscope/current/.venv/bin/python -m firmware.shutdown_splash
+
+[Install]
+WantedBy=multi-user.target

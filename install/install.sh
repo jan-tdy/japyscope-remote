@@ -336,7 +336,7 @@ if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.servi
 # (the Web UI's "Restart Wi-Fi setup" action, eventually Dev Tools code
 # 5000) still works either way — everything it needs was just installed
 # above regardless of --no-ap.
-enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
+enable_units=(japyscope-splash.service japyscope-shutdown-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)
 if [[ $no_ap -eq 0 ]]; then
   enable_units=(japyscope-wifi-ap.service "${enable_units[@]}")
 else
@@ -353,6 +353,13 @@ systemctl enable "${enable_units[@]}"
 if systemd_is_live; then
   if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi
   systemctl restart japyscope-app.service japyscope-webui.service
+  # Not "restart": this unit only ever runs /bin/true and stays active
+  # (RemainAfterExit) — its real work is ExecStop, which must fire when
+  # shutdown is actually reached, not now. `start` is a no-op if an
+  # earlier install already brought it up; on a device updating from
+  # before this unit existed, it makes the shutdown splash active for
+  # the rest of this boot too, not just the next one.
+  systemctl start japyscope-shutdown-splash.service
   echo "Wi-Fi setup password: sudo cat $ap_password_file"
   echo "Installed JapyScope $version. Web UI: http://$(hostname -I | awk '{print $1}'):8080/"
 else
