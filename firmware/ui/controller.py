@@ -290,7 +290,18 @@ class ControllerUI:
         here on every list screen regardless of whether it was even
         accurate, wasting a quarter of the 4-line panel on it). With no
         footer, the row it would have taken goes to one more visible item
-        instead."""
+        instead.
+
+        When `values` doesn't fit within `rows` at a glance, also sets
+        `self._scroll` to `(row_start, rows, start, len(values))` — row 1
+        is always right after the title (row 0), regardless of whether a
+        footer follows the item rows — so `render()` can draw a scrollbar
+        showing where this page sits in the whole list (see its own
+        `scroll` plumbing, and `rasterizer.py`'s `_draw_scrollbar` for how
+        the real e-ink backend turns it into pixels). Left at its
+        default (None, reset at the top of `render()`) when everything
+        already fits, so no screen gets a scrollbar that has nothing to
+        indicate."""
         rows = max(1, self.display.visible_rows - (2 if footer else 1))
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
         theme = self._theme()
@@ -303,6 +314,8 @@ class ControllerUI:
             lines.append((theme.marker if selected else theme.unmarked) + text)
             if selected and theme.invert:
                 self._invert_row = len(lines) - 1
+        if len(values) > rows:
+            self._scroll = (1, rows, start, len(values))
         return [*lines, footer] if footer else lines
 
     def render(self, *, coalesce: bool = False) -> None:
@@ -326,10 +339,13 @@ class ControllerUI:
         reverted (confirmed on hardware as wrong, especially noticeable
         backing out with "9"). The lines are always computed fresh from
         the current state either way, so a later render never draws
-        anything stale."""
+        anything stale. `_visible()` may also set `self._scroll` — see
+        its own docstring — drawn as a scrollbar on screens whose list
+        doesn't fit `visible_rows` at a glance."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
+        self._scroll: Optional[tuple[int, int, int, int]] = None
         if screen == "BOOT":
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
@@ -461,9 +477,9 @@ class ControllerUI:
             lines = [screen]
         visible_lines = lines[: self.display.visible_rows]
         if coalesce:
-            self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=True)
+            self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=True, scroll=self._scroll)
             return
-        self.display.draw_lines(visible_lines, invert_row=self._invert_row)
+        self.display.draw_lines(visible_lines, invert_row=self._invert_row, scroll=self._scroll)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         """Scroll the current list/menu by one item on ENC_UP/ENC_DOWN.
