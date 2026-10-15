@@ -27,7 +27,7 @@ def test_no_ap_only_withholds_the_automatic_boot_time_fallback():
     assert "japyscope-wifi-ap --force" in installer
     # The only thing --no-ap gates is enabling/starting the automatic
     # boot-time watcher unit itself.
-    assert 'enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)' in installer
+    assert 'enable_units=(japyscope-splash.service japyscope-shutdown-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)' in installer
     assert 'enable_units=(japyscope-wifi-ap.service "${enable_units[@]}")' in installer
     assert 'if [[ $no_ap -eq 0 ]]; then systemctl restart japyscope-wifi-ap.service; fi' in installer
 
@@ -52,7 +52,7 @@ def test_no_ap_enable_units_logic_actually_disables_and_stops_the_unit():
     # strings but breaks the branching would still be caught.
     installer = read("install/install.sh")
     start = installer.index(
-        'enable_units=(japyscope-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)'
+        'enable_units=(japyscope-splash.service japyscope-shutdown-splash.service japyscope-app.service japyscope-webui.service japyscope-update.timer)'
     )
     end = installer.index('systemctl enable "${enable_units[@]}"', start) + len(
         'systemctl enable "${enable_units[@]}"'

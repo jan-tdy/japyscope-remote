@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional
@@ -36,6 +37,14 @@ def _show_fatal_error(display, code: str, detail: str) -> None:
         display.draw_lines([code, detail[:24], "Check journalctl", "docs/TROUBLESHOOTING.md"])
     except Exception:
         logging.getLogger(__name__).exception("Could not paint %s to the display", code)
+
+
+def _poweroff() -> None:
+    """Real power-off (install.sh grants the `japyscope` user passwordless
+    sudo for exactly this). Fire-and-forget like webui/app.py's own system
+    actions — `systemctl poweroff` tears down every service, this process
+    included, so there's nothing useful to wait for."""
+    subprocess.Popen(["sudo", "systemctl", "poweroff"], start_new_session=True)
 
 
 def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict[str, bool]:
@@ -123,7 +132,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             if manager is not None:
                 manager.start()
                 connect_indi(indi)
-            ui = ControllerUI(display, input_hal, indi, conn, backlight=backlight, indi_manager=manager)
+            ui = ControllerUI(
+                display, input_hal, indi, conn, backlight=backlight, indi_manager=manager,
+                power_control=None if args.simulate else _poweroff,
+            )
             ui.run()
         return 0
     except (FileNotFoundError, ConnectionError) as exc:
@@ -139,6 +151,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         # broke, go look" goes on the panel.
         logging.getLogger(__name__).error("SYS-980 OS/storage-level failure: %s", exc)
         _show_fatal_error(display, "SYS-980", str(exc))
+        return 1
+    except Exception as exc:
+        # Catch-all for anything the two specific branches above don't name
+        # (a bug in the UI/INDI code itself, not a startup or OS/storage
+        # failure) — confirmed on hardware as a silent crash with nothing on
+        # the panel to show for it. Deliberately the widest possible except:
+        # this is the last line of defense, and an unattended device
+        # (Piconcillo) left on a blank/stale screen after a crash is worse
+        # than a wrong-but-honest code telling the owner to go check the
+        # journal.
+        logging.getLogger(__name__).exception("SYS-970 unhandled crash: %s", exc)
+        _show_fatal_error(display, "SYS-970", str(exc))
         return 1
     finally:
         if input_hal is not None:

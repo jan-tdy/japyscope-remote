@@ -102,3 +102,27 @@ def test_sys_980_handler_swallows_a_broken_display_instead_of_masking_the_real_e
     # *new* traceback on top of the original DB/filesystem failure.
     rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
     assert rc == 1
+
+
+class _ControllerUIThatRaisesSomethingUnforeseen:
+    """Stands in for a bug in the UI/INDI code itself — anything that isn't
+    a startup failure (INDI-001/002) or an OS/storage failure (SYS-980).
+    Confirmed on hardware as a silent crash with nothing painted to the
+    panel; SYS-970 is the generic catch-all added to fix that."""
+
+    def __init__(self, *args, **kwargs):
+        self.running = True
+
+    def run(self):
+        raise ValueError("boom")
+
+
+def test_sys_970_painted_to_display_on_an_otherwise_unhandled_crash(monkeypatch, tmp_path):
+    recorder = _RecordingDisplay()
+    monkeypatch.setattr(main_module, "make_display", lambda simulate: recorder)
+    monkeypatch.setattr(main_module, "ControllerUI", _ControllerUIThatRaisesSomethingUnforeseen)
+
+    rc = main_module.main(["--simulate", "--db", str(tmp_path / "test.db")])
+
+    assert rc == 1
+    assert recorder.lines[0] == "SYS-970"
