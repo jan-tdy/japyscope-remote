@@ -124,7 +124,7 @@ in `firmware/ui/` without a matching entry in this table.
 | `1234` | Show system info | functional — IP/hostname, uptime (`/proc/uptime`), INDI connection status (no fake version string — nothing exposes a real INDI version yet) |
 | `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
 | `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
-| `9600` | Select communication interface | functional — opens interface selection (currently one option: RJ12 direct to mount) |
+| `9600` | Select communication interface | functional — opens interface selection: RJ12 direct to mount, or Bluetooth (SynScan); persists to `settings.mount_interface`. Picking Bluetooth only records the intended interface — pairing the mount and binding `/dev/rfcomm0` is a one-time step done over SSH with `install/bluetooth-mount.sh` (see `docs/WIRING.md`), and actually pointing the INDI driver at that port still needs `firmware/indi/client.py` wired up (not yet — same v0 gap as `get_status`/`sync`/`goto`/`park` below) |
 | `9955` | Run custom script | functional — lists `.sh` scripts found in `{homepath}/custom` (`JAPYSCOPE_CUSTOM_SCRIPTS_DIR` env var overrides the directory) and runs the selected one via `/bin/sh`, fire-and-forget |
 | `9999` | Easter egg (astronomer/Moon joke) | functional, cosmetic only |
 | `4200` | Easter egg ("42.") | functional, cosmetic only |

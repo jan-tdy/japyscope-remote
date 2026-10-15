@@ -94,6 +94,11 @@ DEFAULT_SETTINGS = {
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
     "update_repo": "jan-tdy/japyscope-remote",  # OTA source repo — Dev Tools code 0022
     "update_channel": "stable",  # stable | prerelease — Dev Tools code 0033
+    # rj12 | bluetooth — Dev Tools code 9600. "bluetooth" assumes the mount
+    # has already been paired via install/bluetooth-mount.sh (see docs/
+    # WIRING.md); this setting only records which interface the device
+    # should use, it doesn't perform the pairing itself.
+    "mount_interface": "rj12",
     # Whether the external joystick module (docs/WIRING.md, firmware/hal/
     # input/joystick.py) is physically connected at all. Unlike the other
     # HARDWARE_COMPONENTS, the joystick is a genuinely optional accessory —

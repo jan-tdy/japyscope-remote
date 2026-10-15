@@ -106,7 +106,7 @@ apt_retry() {
 }
 
 apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin sudo
+apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin bluez sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -257,6 +257,7 @@ if [[ ! -f /etc/japyscope/environment ]]; then
 fi
 install -o root -g root -m 755 "$source_dir/install/wifi-config.sh" /usr/local/sbin/japyscope-wifi
 install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap
+install -o root -g root -m 755 "$source_dir/install/bluetooth-mount.sh" /usr/local/sbin/japyscope-bluetooth-mount
 ap_password_file=/etc/japyscope/setup-ap-password
 if [[ ! -s $ap_password_file ]]; then
   umask 077
