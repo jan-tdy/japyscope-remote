@@ -540,6 +540,7 @@
   var DRIVERS = ["Sky-Watcher Alt-Az GTi (INDI)"];
   var INTERFACES = ["RJ12 (direct to mount)", "Bluetooth (SynScan)"];
   var REPOS = ["jan-tdy/japyscope-remote"];
+  var WIFI_SWITCH_SLOTS = ["Primary: (demo)", "Secondary: (not configured)"];
   var UPDATE_CHANNELS = ["Stable only", "Stable + prereleases"];
   /* Simulated directory listing — the real firmware globs *.sh in
      {homepath}/custom instead of hardcoding this array. */
@@ -593,7 +594,7 @@
       results:[], resIndex:0, selected:null,
       homeIndex:0, menuIndex:0, alignIndex:0, alignMoreIndex:0, alignConfirmIndex:0, parkConfirmIndex:0, parkedIndex:0, speed:1, starIdx:0,
       backlight:{R:1, G:0, B:0}, backlightChanIndex:0, backlightAutoOff:false, lastActivity:Date.now(),
-      driverIndex:0, interfaceIndex:0, repoIndex:0, channelIndex:0, scriptIndex:0,
+      driverIndex:0, interfaceIndex:0, repoIndex:0, channelIndex:0, scriptIndex:0, wifiSwitchIndex:0,
       sudoDigits:[null,null,null,null], sudoPos:0, sudoCurrent:0,
       slewWarnings:[], slewWarnBack:"IDLE",
       listItems:[], listIndex:0, listTitle:"", catIndex:0,
@@ -711,6 +712,7 @@
       case "REPO_SELECT": return renderRepoSelect();
       case "CHANNEL_SELECT": return renderChannelSelect();
       case "SCRIPT_SELECT": return renderScriptSelect();
+      case "WIFI_SWITCH_SELECT": return renderWifiSwitchSelect();
       case "SUDO_SET": return renderSudoSet();
       default: return setLines(["?"]);
     }
@@ -1027,6 +1029,7 @@
       case "IFACE_SELECT": return handleIfaceSelect(key);
       case "REPO_SELECT": return handleRepoSelect(key);
       case "CHANNEL_SELECT": return handleChannelSelect(key);
+      case "WIFI_SWITCH_SELECT": return handleWifiSwitchSelect(key);
       case "SCRIPT_SELECT": return handleScriptSelect(key);
       case "SUDO_SET": return handleSudoSet(key);
       default: return;
@@ -1407,6 +1410,24 @@
     }
   }
 
+  function renderWifiSwitchSelect(){
+    var lines = ["Switch Wi-Fi network"];
+    WIFI_SWITCH_SLOTS.forEach(function(d,i){ lines.push((i===st.wifiSwitchIndex?"&gt; ":"  ")+d); });
+    setLines(lines);
+  }
+
+  function handleWifiSwitchSelect(key){
+    var n = WIFI_SWITCH_SLOTS.length;
+    if(key === "ENC_UP"){ st.wifiSwitchIndex = (st.wifiSwitchIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.wifiSwitchIndex = (st.wifiSwitchIndex+1)%n; return render(); }
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(key === "ENC_PUSH"){
+      logAction("Switched Wi-Fi network to: "+WIFI_SWITCH_SLOTS[st.wifiSwitchIndex]);
+      st.screen = "IDLE";
+      return render();
+    }
+  }
+
   function handleAlignChoose(key){
     if(key === "ENC_UP" || key === "ENC_DOWN"){ st.alignIndex = 1-st.alignIndex; return render(); }
     if(key === "9"){ st.screen="MENU"; return render(); }
@@ -1576,6 +1597,9 @@
         } else if(code === "5000"){
           logAction("Dev Tools: Wi-Fi setup wizard");
           addTimer(setTimeout(function(){ startWifiSetup(); }, 300));
+        } else if(code === "5001"){
+          logAction("Dev Tools: switch Wi-Fi network");
+          addTimer(setTimeout(function(){ st.wifiSwitchIndex=0; st.screen="WIFI_SWITCH_SELECT"; render(); }, 300));
         } else if(code === "4200"){
           logAction("Dev Tools: easter egg");
           addTimer(setTimeout(function(){

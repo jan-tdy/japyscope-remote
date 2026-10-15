@@ -561,6 +561,64 @@ def test_devtools_9600_selects_bluetooth_and_reopens_on_it():
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_5001_shows_configured_ssids_and_switches(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid", "HomeNet")
+        SettingsRepo(conn).set("wifi_ssid_secondary", "FieldHotspot")
+        calls = []
+        monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        enter_devtools_code(ui, "5001")
+        assert ui.state.screen == "WIFI_SWITCH_SELECT"
+        assert ui.state.wifi_switch_labels == ["Primary: HomeNet", "Secondary: FieldHotspot"]
+        ui.handle(ENC_DOWN)  # move to Secondary
+        ui.handle(ENC_PUSH)
+        assert calls == [["sudo", "/usr/local/sbin/japyscope-wifi-switch", "secondary"]]
+        assert SettingsRepo(conn).get("wifi_active_slot") == "secondary"
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "Switched to secondary" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_reopens_on_previously_active_slot():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid_secondary", "FieldHotspot")
+        SettingsRepo(conn).set("wifi_active_slot", "secondary")
+        enter_devtools_code(ui, "5001")
+        assert ui.state.screen == "WIFI_SWITCH_SELECT"
+        assert ui.state.index == 1
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_unconfigured_slot_shows_error_without_switching(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        enter_devtools_code(ui, "5001")
+        ui.handle(ENC_DOWN)  # Secondary, never configured
+        ui.handle(ENC_PUSH)
+        assert calls == []
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "not set up" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_switch_failure_is_reported(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid", "HomeNet")
+
+        def fail(cmd, **kw): raise OSError("sudo: command not found")
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "5001")
+        ui.handle(ENC_PUSH)  # Primary (index 0)
+        assert ui.state.dev_message[0] == "Switch to primary failed"
+        assert SettingsRepo(conn).get("wifi_active_slot") is None
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_easter_eggs_show_and_dismiss():
     ui, conn, path = make_ui()
     try:

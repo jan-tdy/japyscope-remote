@@ -138,6 +138,7 @@ class UIState:
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
     dev_scripts: list[str] = field(default_factory=list)
     dev_message: list[str] = field(default_factory=list)
+    wifi_switch_labels: list[str] = field(default_factory=list)
 
 
 class ControllerUI:
@@ -154,6 +155,10 @@ class ControllerUI:
     # INTERFACES above.
     REPOS = ("jan-tdy/japyscope-remote",)
     UPDATE_CHANNELS = (("stable", "Stable only"), ("prerelease", "Stable + prereleases"))
+    # Dev Tools code 5001 — see docs/CODES.md. Configuring each slot's
+    # SSID/password happens in the Web UI (System page); this only flips
+    # which already-configured slot is live, via install/wifi-switch.sh.
+    WIFI_SWITCH_SLOTS = ("primary", "secondary")
     # Dev Tools code 9600 — see docs/CODES.md. "bluetooth" pairing/binding
     # itself is done once via install/bluetooth-mount.sh (SSH), not from
     # this screen; selecting it here only records the intended interface.
@@ -465,6 +470,8 @@ class ControllerUI:
             lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
         elif screen == "DEV_SCRIPT_SELECT":
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "WIFI_SWITCH_SELECT":
+            lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
@@ -768,6 +775,11 @@ class ControllerUI:
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
             return
+        if s.screen == "WIFI_SWITCH_SELECT":
+            if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH: self._devtools_wifi_switch(self.WIFI_SWITCH_SLOTS[s.index])
+            return
         if s.screen == "DEV_MESSAGE":
             if key in ("9", ENC_PUSH): self._set("IDLE")
             return
@@ -911,6 +923,8 @@ class ControllerUI:
             self._devtools_system_info()
         elif code == "5000":
             self._set("WIFI_SETUP")
+        elif code == "5001":
+            self._open_wifi_switch_select()
         elif code == "5555":
             self._set("DRIVER_SELECT")
         elif code == "9600":
@@ -973,6 +987,28 @@ class ControllerUI:
             logger.warning("Dev Tools: could not enable ssh: %s", exc)
             status = "Could not enable SSH"
         self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
+
+    def _open_wifi_switch_select(self) -> None:
+        primary = self.settings.get("wifi_ssid", "") or "(not configured)"
+        secondary = self.settings.get("wifi_ssid_secondary", "") or "(not configured)"
+        self.state.wifi_switch_labels = [f"Primary: {primary}", f"Secondary: {secondary}"]
+        active = self.settings.get("wifi_active_slot", "primary")
+        index = self.WIFI_SWITCH_SLOTS.index(active) if active in self.WIFI_SWITCH_SLOTS else 0
+        self._set("WIFI_SWITCH_SELECT", index)
+
+    def _devtools_wifi_switch(self, slot: str) -> None:
+        ssid_key = "wifi_ssid" if slot == "primary" else "wifi_ssid_secondary"
+        if not self.settings.get(ssid_key, ""):
+            self._devtools_message([f"{slot.capitalize()} not set up", "Configure it in the Web UI", "System page first"])
+            return
+        try:
+            subprocess.run(["sudo", "/usr/local/sbin/japyscope-wifi-switch", slot], check=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Wi-Fi switch to %s failed: %s", slot, exc)
+            self._devtools_message([f"Switch to {slot} failed", str(exc)[:32]])
+            return
+        self.settings.set("wifi_active_slot", slot)
+        self._devtools_message([f"Switched to {slot}", "Rejoin that network", "to keep using the Web UI"])
 
     @staticmethod
     def _local_ip() -> str:

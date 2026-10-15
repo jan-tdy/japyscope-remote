@@ -123,6 +123,7 @@ in `firmware/ui/` without a matching entry in this table.
 | `1111` | Restart INDI server | functional — calls `IndiServerManager.restart()` (via `ControllerUI.indi_manager`, wired from `firmware/main.py`); shows "unavailable" in `--simulate` mode, which has no managed indiserver |
 | `1234` | Show system info | functional — IP/hostname, uptime (`/proc/uptime`), INDI connection status (no fake version string — nothing exposes a real INDI version yet) |
 | `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
+| `5001` | Switch Wi-Fi network | functional — picks between the Primary and Secondary Wi-Fi slots (each shown with its configured SSID, or "(not configured)"), runs `install/wifi-switch.sh` via sudo, and persists `settings.wifi_active_slot`. Configuring each slot's SSID/password is done in the Web UI's System page, not here — selecting an unconfigured slot shows an error instead of attempting the switch |
 | `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
 | `9600` | Select communication interface | functional — opens interface selection: RJ12 direct to mount, or Bluetooth (SynScan); persists to `settings.mount_interface`. Picking Bluetooth only records the intended interface — pairing the mount and binding `/dev/rfcomm0` is a one-time step done over SSH with `install/bluetooth-mount.sh` (see `docs/WIRING.md`), and actually pointing the INDI driver at that port still needs `firmware/indi/client.py` wired up (not yet — same v0 gap as `get_status`/`sync`/`goto`/`park` below) |
 | `9955` | Run custom script | functional — lists `.sh` scripts found in `{homepath}/custom` (`JAPYSCOPE_CUSTOM_SCRIPTS_DIR` env var overrides the directory) and runs the selected one via `/bin/sh`, fire-and-forget |
@@ -171,7 +172,7 @@ e-ink panel (see their rows below for why).
 | `OTA-001` | update check failed (no internet / GitHub API unreachable) | `japyscope-app` journal, Web UI → System |
 | `OTA-002` | downloaded release failed checksum verification | same |
 | `OTA-003` | new release failed its post-install health check, rolled back | same |
-| `WIFI-001` | AP-mode setup hotspot failed to start | `hostapd`/`dnsmasq` journal |
+| `WIFI-001` | Joining a configured Wi-Fi network failed — either the initial AP-mode setup join (`/setup`) or configuring the secondary network (Web UI → System) | `japyscope-webui` journal, Web UI → Diagnostics |
 | `SEARCH-001` | SmartSearch online lookup timed out / no internet — fell back to local catalogs only | `japyscope-app` journal |
 | `SYS-001` | Daily `apt-get update`/`upgrade` step failed (best-effort — never blocks the JapyScope release step) | `japyscope-update` journal |
 | `SYS-980` | A fatal OS/storage-level error (e.g. the SD card going read-only mid-run, confirmed during bring-up — see "Filesystem went read-only" in `docs/TROUBLESHOOTING.md`) crashed `japyscope-app` entirely | `japyscope-app` journal **and painted directly to the e-ink panel** (`firmware/main.py`'s `_show_fatal_error`) — this is one of the two codes that bypass the normal DB-backed UI, since it can fire exactly when the DB itself is unwritable, and the panel keeps showing it with no power if the Pi then crash-loops |
