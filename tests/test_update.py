@@ -170,6 +170,78 @@ def test_health_error_rolls_back_current_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
     monkeypatch.setattr(update_module.shutil, "move", lambda _source, target: target.mkdir())
     monkeypatch.setattr(update_module.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_sync_system_files", lambda *_a, **_k: None)
     monkeypatch.setattr(updater, "_health_check", lambda: (_ for _ in ()).throw(UpdateError("unhealthy")))
     with pytest.raises(UpdateError): updater.apply()
     assert updater.current.resolve() == previous
+
+
+def test_apply_syncs_system_files_from_the_new_release_before_restart(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    previous.mkdir(parents=True); (root / "current").symlink_to(previous)
+    updater = Updater(root)
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": "new"})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+    extracted = tmp_path / "extracted"; (extracted / "install").mkdir(parents=True)
+    (extracted / "install" / "sync-system-files.sh").touch()
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+
+    def fake_move(source, target):
+        Path(target).mkdir()
+        for entry in Path(source).iterdir():
+            (Path(target) / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    monkeypatch.setattr(update_module.shutil, "move", fake_move)
+
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_health_check", lambda: None)
+
+    tag = updater.apply()
+
+    assert tag == "new"
+    target = releases / "new"
+    sync_calls = [c for c in calls if c[:1] == ["bash"]]
+    assert sync_calls == [["bash", str(target / "install" / "sync-system-files.sh")]]
+    # Must happen before the restart, or a changed systemd unit (e.g. a
+    # NoNewPrivileges flip) would restart under the old unit definition.
+    restart_index = calls.index(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"])
+    assert calls.index(sync_calls[0]) < restart_index
+
+
+def test_apply_fails_and_rolls_back_when_new_release_has_no_sync_script(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    previous.mkdir(parents=True); (root / "current").symlink_to(previous)
+    updater = Updater(root)
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": "new"})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+    extracted = tmp_path / "extracted"; extracted.mkdir()  # no install/sync-system-files.sh
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+    monkeypatch.setattr(update_module.shutil, "move", lambda _source, target: target.mkdir())
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    with pytest.raises(UpdateError): updater.apply()
+    assert updater.current.resolve() == previous
+
+
+def test_sync_system_files_runs_the_release_script(tmp_path, monkeypatch):
+    release = tmp_path / "release"; (release / "install").mkdir(parents=True)
+    script = release / "install" / "sync-system-files.sh"; script.touch()
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
+    Updater._sync_system_files(release)
+    assert calls == [(["bash", str(script)], {"check": True, "timeout": 30})]
+
+
+def test_sync_system_files_required_raises_when_script_missing(tmp_path):
+    with pytest.raises(UpdateError):
+        Updater._sync_system_files(tmp_path / "no-such-release")
+
+
+def test_sync_system_files_optional_is_a_quiet_no_op_when_script_missing(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+    Updater._sync_system_files(tmp_path / "no-such-release", required=False)
+    assert calls == []

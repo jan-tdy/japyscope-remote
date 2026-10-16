@@ -296,6 +296,19 @@ class Updater:
                     check=True, timeout=300,
                 )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=120)
+                # An OTA update only ever extracts code into releases/<tag>
+                # and flips the `current` symlink — unlike install.sh, it
+                # never re-copies /usr/local/sbin/japyscope-*, the sudoers
+                # file, or the systemd units. Without this, those OS-level
+                # files silently keep running whatever a past install.sh
+                # run left behind, however much a newer release's
+                # install/*.sh, the sudoers line, or a unit changes (seen
+                # on real hardware as a WIFI-001 failure: the installed
+                # japyscope-wifi script rejected --slot because it
+                # predated that flag). Must run — and its systemd unit
+                # copy + daemon-reload land — before the restart below, or
+                # that restart still runs under the old unit definitions.
+                self._sync_system_files(target)
                 self._flip(target)
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
@@ -303,9 +316,24 @@ class Updater:
                 logger.error("OTA-003 new release failed health check; rolling back: %s", exc)
                 if previous is not None:
                     self._flip(previous)
+                    # Match the OS-level files back to the release we're
+                    # rolling back to — a release built before this sync
+                    # step existed has no such script, in which case the
+                    # new release's sync (which already ran above) is left
+                    # in place rather than erroring the rollback over it.
+                    self._sync_system_files(previous, required=False)
                     subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
                 raise UpdateError("OTA-003 update failed and was rolled back") from exc
             return tag
+
+    @staticmethod
+    def _sync_system_files(release: Path, required: bool = True) -> None:
+        script = release / "install" / "sync-system-files.sh"
+        if not script.is_file():
+            if required:
+                raise UpdateError(f"release is missing install/sync-system-files.sh: {release}")
+            return
+        subprocess.run(["bash", str(script)], check=required, timeout=30)
 
     def _flip(self, target: Path) -> None:
         temporary = self.root / ".current.new"
