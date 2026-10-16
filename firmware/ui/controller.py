@@ -1021,7 +1021,13 @@ class ControllerUI:
         self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
 
     def _open_wifi_switch_select(self) -> None:
-        primary = self.settings.get("wifi_ssid", "") or "(not configured)"
+        # Primary's SSID is only ever known here if it was set up via /setup
+        # — a device whose Wi-Fi was configured some other way (Raspberry Pi
+        # Imager, raspi-config, by hand) never recorded one, even though
+        # that network is what's actually working. "(unknown)" rather than
+        # "(not configured)" for that case — switching to it below doesn't
+        # need this label to be right, it's display-only.
+        primary = self.settings.get("wifi_ssid", "") or "(unknown)"
         secondary = self.settings.get("wifi_ssid_secondary", "") or "(not configured)"
         self.state.wifi_switch_labels = [f"Primary: {primary}", f"Secondary: {secondary}"]
         active = self.settings.get("wifi_active_slot", "primary")
@@ -1029,9 +1035,14 @@ class ControllerUI:
         self._set("WIFI_SWITCH_SELECT", index)
 
     def _devtools_wifi_switch(self, slot: str) -> None:
-        ssid_key = "wifi_ssid" if slot == "primary" else "wifi_ssid_secondary"
-        if not self.settings.get(ssid_key, ""):
-            self._devtools_message([f"{slot.capitalize()} not set up", "Configure it in the Web UI", "System page first"])
+        # Only secondary needs a guard: it's the one slot JapyScope actually
+        # creates, so nothing-saved-yet is a real "can't do this". Primary
+        # is deliberately never gated on knowing its SSID — switching to it
+        # means "stop overriding with secondary", which install/
+        # wifi-switch.sh can always do regardless of whether this device's
+        # Wi-Fi was ever set up through /setup (see its own comment).
+        if slot == "secondary" and not self.settings.get("wifi_ssid_secondary", ""):
+            self._devtools_message(["Secondary not set up", "Configure it in the Web UI", "System page first"])
             return
         try:
             subprocess.run(["sudo", "/usr/local/sbin/japyscope-wifi-switch", slot], check=True, timeout=30)

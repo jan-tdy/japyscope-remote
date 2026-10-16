@@ -3,9 +3,19 @@ set -euo pipefail
 
 # Switches to an *already configured* Wi-Fi slot (see wifi-config.sh / the
 # Web UI's System page) without needing the password again — this is what
-# Dev Tools code 5001 (firmware/ui/controller.py) calls. Configuring a slot
-# for the first time already connects to it immediately; this script is
-# for flipping back to a slot that was configured earlier.
+# Dev Tools code 5001 (firmware/ui/controller.py) calls. Configuring the
+# primary slot (the /setup AP-join flow) already connects to it
+# immediately; secondary never does on its own (see wifi-config.sh), so
+# this script is how it actually gets activated, as well as how either
+# slot gets switched back to later.
+#
+# "primary" is deliberately NOT a profile JapyScope creates, names, or
+# otherwise manages the identity of — it's whatever was already configured
+# before: the /setup flow, Raspberry Pi Imager, raspi-config, or by hand.
+# Switching to it never looks up a connection by name; it just stops
+# overriding with the secondary profile (JapyScope's own) and lets
+# NetworkManager's/wpa_supplicant's own logic fall back to whatever that
+# already-working network was.
 
 if [[ $EUID -ne 0 || $# -ne 1 || ( $1 != primary && $1 != secondary ) ]]; then
   echo "usage: sudo japyscope-wifi-switch primary|secondary" >&2
@@ -29,13 +39,21 @@ if [[ $slot == secondary ]]; then
 fi
 
 if [[ ${JAPYSCOPE_NETWORK_BACKEND:-} == networkmanager ]]; then
-  if ! nmcli -t -f NAME connection show | grep -Fxq "$con_name"; then
-    echo "$slot is not configured yet — set it up in the Web UI first." >&2
-    exit 1
+  if [[ $slot == secondary ]]; then
+    if ! nmcli -t -f NAME connection show | grep -Fxq "$con_name"; then
+      echo "secondary is not configured yet — set it up in the Web UI first." >&2
+      exit 1
+    fi
+    nmcli connection modify "$con_name" connection.autoconnect yes
+    nmcli connection modify "$other_con_name" connection.autoconnect no >/dev/null 2>&1 || true
+    nmcli connection up id "$con_name" ifname wlan0
+    exit 0
   fi
-  nmcli connection modify "$con_name" connection.autoconnect yes
+  # primary: stop overriding with secondary and let NetworkManager fall
+  # back on its own -- see the file-level comment for why this never looks
+  # up a "primary" connection by name.
   nmcli connection modify "$other_con_name" connection.autoconnect no >/dev/null 2>&1 || true
-  nmcli connection up id "$con_name" ifname wlan0
+  nmcli connection down id "$other_con_name" >/dev/null 2>&1 || true
   exit 0
 fi
 if [[ ${JAPYSCOPE_NETWORK_BACKEND:-} != wpa_supplicant ]]; then
