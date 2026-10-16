@@ -21,9 +21,14 @@ def test_no_ap_only_withholds_the_automatic_boot_time_fallback():
     # grant are all installed unconditionally — --no-ap must not touch
     # them, since the manual "Restart Wi-Fi setup" path (Web UI System
     # page, eventual Dev Tools code 5000) has to keep working either way.
+    # The AP script/sudoers install itself lives in sync-system-files.sh
+    # (also run, unconditionally, by install/update.py on every OTA
+    # update — see tests/test_update.py), not inline in install.sh.
     assert "apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant" in installer
     assert "if [[ $no_ap -eq 1 ]]" not in installer
-    assert 'install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap' in installer
+    assert '"$script_dir/sync-system-files.sh"' in installer
+    sync_script = read("install/sync-system-files.sh")
+    assert 'install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap' in sync_script
     assert "japyscope-wifi-ap --force" in installer
     # The only thing --no-ap gates is enabling/starting the automatic
     # boot-time watcher unit itself.
