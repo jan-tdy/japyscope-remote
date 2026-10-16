@@ -18,7 +18,12 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/japyscope/current/.venv/bin/python -m firmware.main
 Restart=on-failure
 RestartSec=3
-NoNewPrivileges=true
+# false, matching japyscope-webui.service: some Dev Tools codes (SSH
+# enable, the Wi-Fi switch) need this process to invoke sudo for the
+# narrow, NOPASSWD-only commands in /etc/sudoers.d/japyscope — the keypad
+# input driving them is physical/local, the same trust level webui.service
+# already extends to its own sudo'd actions.
+NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

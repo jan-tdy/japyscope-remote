@@ -14,18 +14,43 @@ error/status code list for support and troubleshooting.
 
 | Key | Meaning |
 |---|---|
-| 1, 3 | unused (reserved) |
+| 1 | **Encoder-up stand-in** (`ENC_UP`) wherever `_move()` is used — see below; also T9 letter entry ("abc") in SmartSearch, where `_move()` isn't in play |
+| 3 | **Force a full refresh** of the current screen (no state change) — see below; also T9 letter entry ("ghi") in SmartSearch, where it's excluded |
 | 2 | Jog Up — only handled on `ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
 | 4 | Jog Left — same screens |
 | 6 | Jog Right — same screens |
 | 8 | Jog Down — same screens |
-| 7 | Jog speed (opens speed adjust) |
+| 7 | Jog speed (opens speed adjust) on IDLE/TRACK/ALIGN_JOG; **encoder-down stand-in** (`ENC_DOWN`) everywhere else `_move()` is used |
+| 5 | **Encoder-push stand-in** (`ENC_PUSH`) everywhere — see below; also T9 letter entry ("mno") in SmartSearch, where it's excluded |
 | 9 | **Back, one level — everywhere except inside SmartSearch text entry** (see below) |
 | 0 | digit "0" / T9 letter entry |
 | FN2 | reserved outside SmartSearch (home-screen easter egg); **inside SmartSearch: cancel/back out** |
 | BKSP | delete last character (text entry) |
 | Encoder rotate | scroll (menus, lists) |
 | Encoder push | open / select / confirm |
+
+Keypad "1"/"7"/"5" as encoder stand-ins ("1"/"7" in
+`ControllerUI._move()`, "5" at the top of `handle()`) are a temporary
+stopgap for the KY-040 rotary encoder's unreliable rotation decode (see
+`firmware/hal/input/encoder.py`'s module docstring) — "1"/"7" are a
+vertical pair on the keypad's left column (up/down), "5" is the center
+"OK" key below the 2/4/6/8 jog directions (select/confirm), together
+usable for full menu/list navigation whenever the real encoder
+misbehaves. "7" only falls back to `ENC_DOWN` outside IDLE, where it's
+already bound to opening speed adjust; "5" falls back to `ENC_PUSH`
+everywhere except TYPE (SmartSearch), where it's still a T9 letter key.
+
+Keypad "3" (`handle()`, top of the method) redraws the current screen
+with a forced full refresh — the only way to clear any ghosting left
+over from partial refreshes, since nothing clears it automatically.
+Excluded on TYPE, where it's still a T9 letter key ("ghi").
+
+Scrolling (`_move()`) always draws a fast partial refresh, never a
+forced full one, however many consecutive scrolls happen — only keypad
+"3" clears accumulated ghosting. A fixed "every Nth scroll is full"
+cadence, and later an idle flush shortly after scrolling stopped, both
+used to force one automatically; both were reported on hardware as an
+unwanted interruption to otherwise-smooth scrolling and were removed.
 
 ### External joystick (optional — `docs/WIRING.md`)
 
@@ -98,8 +123,9 @@ in `firmware/ui/` without a matching entry in this table.
 | `1111` | Restart INDI server | functional — calls `IndiServerManager.restart()` (via `ControllerUI.indi_manager`, wired from `firmware/main.py`); shows "unavailable" in `--simulate` mode, which has no managed indiserver |
 | `1234` | Show system info | functional — IP/hostname, uptime (`/proc/uptime`), INDI connection status (no fake version string — nothing exposes a real INDI version yet) |
 | `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
+| `5001` | Switch Wi-Fi network | functional — picks between the Primary and Secondary Wi-Fi slots (each shown with its configured SSID, or "(not configured)"), runs `install/wifi-switch.sh` via sudo, and persists `settings.wifi_active_slot`. Configuring each slot's SSID/password is done in the Web UI's System page, not here — selecting an unconfigured slot shows an error instead of attempting the switch |
 | `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
-| `9600` | Select communication interface | functional — opens interface selection (currently one option: RJ12 direct to mount) |
+| `9600` | Select communication interface | functional — opens interface selection: RJ12 direct to mount, or Bluetooth (SynScan); persists to `settings.mount_interface`. Picking Bluetooth only records the intended interface — pairing the mount and binding `/dev/rfcomm0` is a one-time step done over SSH with `install/bluetooth-mount.sh` (see `docs/WIRING.md`), and actually pointing the INDI driver at that port still needs `firmware/indi/client.py` wired up (not yet — same v0 gap as `get_status`/`sync`/`goto`/`park` below) |
 | `9955` | Run custom script | functional — lists `.sh` scripts found in `{homepath}/custom` (`JAPYSCOPE_CUSTOM_SCRIPTS_DIR` env var overrides the directory) and runs the selected one via `/bin/sh`, fire-and-forget |
 | `9999` | Easter egg (astronomer/Moon joke) | functional, cosmetic only |
 | `4200` | Easter egg ("42.") | functional, cosmetic only |
@@ -133,7 +159,9 @@ having a shell on the device, not a remote-execution surface.
 
 These don't exist in the HTML mockup — added here for `docs/TROUBLESHOOTING.md`
 and systemd journal greps once the firmware app has real logging. Extend as
-new failure modes are found during bring-up.
+new failure modes are found during bring-up. All of these are journal-only
+except `SYS-980` and `SYS-970`, which also get painted straight to the
+e-ink panel (see their rows below for why).
 
 | Code | Meaning | Where logged |
 |---|---|---|
@@ -144,6 +172,9 @@ new failure modes are found during bring-up.
 | `OTA-001` | update check failed (no internet / GitHub API unreachable) | `japyscope-app` journal, Web UI → System |
 | `OTA-002` | downloaded release failed checksum verification | same |
 | `OTA-003` | new release failed its post-install health check, rolled back | same |
-| `WIFI-001` | AP-mode setup hotspot failed to start | `hostapd`/`dnsmasq` journal |
+| `WIFI-001` | Joining a configured Wi-Fi network failed — either the initial AP-mode setup join (`/setup`) or configuring the secondary network (Web UI → System) | `japyscope-webui` journal, Web UI → Diagnostics |
 | `SEARCH-001` | SmartSearch online lookup timed out / no internet — fell back to local catalogs only | `japyscope-app` journal |
 | `SYS-001` | Daily `apt-get update`/`upgrade` step failed (best-effort — never blocks the JapyScope release step) | `japyscope-update` journal |
+| `SYS-980` | A fatal OS/storage-level error (e.g. the SD card going read-only mid-run, confirmed during bring-up — see "Filesystem went read-only" in `docs/TROUBLESHOOTING.md`) crashed `japyscope-app` entirely | `japyscope-app` journal **and painted directly to the e-ink panel** (`firmware/main.py`'s `_show_fatal_error`) — this is one of the two codes that bypass the normal DB-backed UI, since it can fire exactly when the DB itself is unwritable, and the panel keeps showing it with no power if the Pi then crash-loops |
+| `SYS-970` | Any other unhandled exception crashed `japyscope-app` (a bug, not a startup or OS/storage failure — those get their own codes above) — confirmed on hardware as a silent crash with nothing on the panel | `japyscope-app` journal (with full traceback) **and painted directly to the e-ink panel** — same `_show_fatal_error` mechanism as `SYS-980`, as a last resort so an unattended device never just goes blank |
+| `SYS-990` | `systemctl poweroff` itself (requested via Menu → System → Power off, or the PARKED screen's "Power off") failed to run | `japyscope-app` journal only — not painted; the panel is left on the SHUTDOWN screen regardless, since the user already asked to power off |

@@ -94,6 +94,11 @@ DEFAULT_SETTINGS = {
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
     "update_repo": "jan-tdy/japyscope-remote",  # OTA source repo — Dev Tools code 0022
     "update_channel": "stable",  # stable | prerelease — Dev Tools code 0033
+    # rj12 | bluetooth — Dev Tools code 9600. "bluetooth" assumes the mount
+    # has already been paired via install/bluetooth-mount.sh (see docs/
+    # WIRING.md); this setting only records which interface the device
+    # should use, it doesn't perform the pairing itself.
+    "mount_interface": "rj12",
     # Whether the external joystick module (docs/WIRING.md, firmware/hal/
     # input/joystick.py) is physically connected at all. Unlike the other
     # HARDWARE_COMPONENTS, the joystick is a genuinely optional accessory —
@@ -155,9 +160,16 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # The firmware app (one long-lived connection) and the Web UI (one
+    # short-lived connection per request) both write to the same file
+    # concurrently. WAL lets readers proceed while a writer commits, and
+    # busy_timeout makes SQLite retry instead of raising "database is
+    # locked" immediately when the two do collide on a write.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 

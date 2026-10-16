@@ -2,7 +2,7 @@ import io
 import re
 import subprocess
 
-from shared.db import AccessCodeRepo, CatalogRepo, db_session
+from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, db_session
 import webui.app as app_module
 from webui.app import _default_wifi_configurator, create_app
 
@@ -46,7 +46,7 @@ def test_default_wifi_configurator_passes_utf8_bytes(monkeypatch):
     calls = []
     monkeypatch.setattr(app_module.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
     _default_wifi_configurator("Hvezdaren", "heslo\U0001f52d")
-    assert calls[0][0] == (["sudo", "/usr/local/sbin/japyscope-wifi", "Hvezdaren"],)
+    assert calls[0][0] == (["sudo", "/usr/local/sbin/japyscope-wifi", "--slot", "primary", "Hvezdaren"],)
     assert calls[0][1]["input"] == "heslo\U0001f52d\n".encode("utf-8")
     assert "text" not in calls[0][1]
 
@@ -275,6 +275,84 @@ def test_system_update_action_starts_update_service(tmp_path):
     )
     assert response.status_code == 200
     assert triggered == [["sudo", "systemctl", "start", "japyscope-update.service"]]
+
+
+def test_system_wifi_page_shows_configured_ssids(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn:
+        AccessCodeRepo(conn).issue("123456", 60)
+        SettingsRepo(conn).set("wifi_ssid", "HomeNet")
+        SettingsRepo(conn).set("wifi_ssid_secondary", "FieldHotspot")
+        SettingsRepo(conn).set("wifi_active_slot", "secondary")
+    app = create_app(db_path, wifi_configurator=lambda *_: None, action_runner=lambda *_: None)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.get("/system")
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    assert "HomeNet" in body and "FieldHotspot" in body
+
+
+def test_system_configure_secondary_wifi_persists_and_connects(tmp_path):
+    configured = []
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(
+        db_path,
+        wifi_configurator=lambda ssid, password, slot: configured.append((ssid, password, slot)),
+        action_runner=lambda *_: None,
+    )
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-wifi-secondary",
+            "ssid": "FieldHotspot",
+            "password": "password123",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert configured == [("FieldHotspot", "password123", "secondary")]
+    with db_session(db_path) as conn:
+        repo = SettingsRepo(conn)
+        assert repo.get("wifi_ssid_secondary") == "FieldHotspot"
+        assert repo.get("wifi_active_slot") == "secondary"
+
+
+def test_system_configure_secondary_wifi_validates_password_length(tmp_path):
+    configured = []
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(
+        db_path,
+        wifi_configurator=lambda ssid, password, slot: configured.append((ssid, password, slot)),
+        action_runner=lambda *_: None,
+    )
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-wifi-secondary",
+            "ssid": "FieldHotspot",
+            "password": "short",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert configured == []
+    with db_session(db_path) as conn:
+        assert SettingsRepo(conn).get("wifi_ssid_secondary") is None
 
 
 def test_api_telemetry_endpoint(tmp_path):

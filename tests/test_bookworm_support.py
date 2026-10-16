@@ -45,7 +45,10 @@ def test_bookworm_uses_networkmanager_profiles_for_client_and_setup_ap():
     installer = read("install/install.sh")
     assert "nmcli connection add type wifi" in client
     assert "JapyScope client" in client
-    assert "nmcli connection up id 'JapyScope client' ifname wlan0" in client
+    # Parameterized by slot (primary/secondary — see install/wifi-switch.sh)
+    # rather than the literal connection name, but still "JapyScope client"
+    # for the (default) primary slot.
+    assert "nmcli connection up id \"$con_name\" ifname wlan0" in client
     assert "wifi.mode ap" in installer
     assert "ipv4.method shared" in installer
     assert "nmcli connection up id 'JapyScope Setup' ifname wlan0" in hotspot

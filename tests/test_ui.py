@@ -14,8 +14,9 @@ from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 class Display(DisplayHAL):
     def __init__(self):
-        super().__init__(); self.lines = []; self.invert_row = None
-    def draw_lines(self, lines, invert_row=None): self.lines = lines; self.invert_row = invert_row
+        super().__init__(); self.lines = []; self.invert_row = None; self.partial = None; self.scroll = None
+    def draw_lines(self, lines, invert_row=None, partial=False, scroll=None):
+        self.lines = lines; self.invert_row = invert_row; self.partial = partial; self.scroll = scroll
 
 
 class Backlight(BacklightHAL):
@@ -146,6 +147,55 @@ def test_system_menu_still_reachable_after_language_entry_added():
     finally: conn.close(); os.unlink(path)
 
 
+def test_shutdown_actually_calls_power_control():
+    # Confirmed on hardware as a real gap: confirming shutdown only
+    # stopped the app loop and never powered anything off, even though
+    # install.sh already grants passwordless sudo for exactly this.
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    conn = connect(path); init_db(conn)
+    calls = []
+    ui = ControllerUI(
+        Display(), Input(), Indi(), conn, backlight=Backlight(),
+        power_control=lambda: calls.append(True),
+    )
+    try:
+        ui.state.screen = "SYSTEM_CONFIRM"
+        ui.handle(ENC_PUSH)
+        assert calls == [True]
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_shutdown_without_power_control_still_stops_cleanly():
+    # --simulate / tests: power_control defaults to None, so this must
+    # not raise — just stop the loop as before.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SYSTEM_CONFIRM"
+        ui.handle(ENC_PUSH)
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_shutdown_from_parked_screen_also_calls_power_control():
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    conn = connect(path); init_db(conn)
+    calls = []
+    ui = ControllerUI(
+        Display(), Input(), Indi(), conn, backlight=Backlight(),
+        power_control=lambda: calls.append(True),
+    )
+    try:
+        ui.state.screen = "PARKED"; ui.state.index = 1  # "Power off"
+        ui.handle(ENC_PUSH)
+        assert calls == [True]
+        assert ui.running is False
+        assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_theme_selection_persists_and_defaults_to_arrow():
     ui, conn, path = make_ui()
     try:
@@ -183,9 +233,10 @@ def test_invert_theme_flags_selected_row_without_text_marker():
     try:
         SettingsRepo(conn).set("ui_theme", "invert")
         ui._set("MENU", 2)
-        # visible_rows=4 for the default profile, so only 2 menu rows are
-        # shown at a time (title + 2 rows + footer) and the window scrolls
-        # to keep the selected item (index 2) as the first visible row.
+        # MENU has no footer, so _visible() shows visible_rows - 1 item rows
+        # at a time; picking an index past that window exercises the part
+        # that scrolls to keep the selected item (index 2) as the first
+        # visible row, regardless of exactly how many rows that is.
         assert ui.display.invert_row == 1
         assert ui.display.lines[1] == ui._t("menu.park_toggle")
     finally: conn.close(); os.unlink(path)
@@ -208,6 +259,36 @@ def test_smartsearch_nine_types_and_fn2_cancels():
         assert ui.state.text == "w"
         ui.handle("9"); assert ui.state.text == "x"
         ui.handle(FN2); assert ui.state.screen == "CATALOG_MENU"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_smartsearch_typing_is_a_partial_refresh():
+    # Typing changes a value (the search text) while staying on the same
+    # TYPE screen — same category as scrolling, so it should coalesce to a
+    # fast partial refresh rather than a full one on every keypress.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TYPE"; ui.handle("9")
+        assert ui.display.partial is True
+    finally: conn.close(); os.unlink(path)
+
+
+def test_wifi_access_countdown_tick_is_a_partial_refresh():
+    # The per-second countdown changes a value (remaining time) while
+    # staying on the same WIFI_ACCESS screen — should coalesce to a
+    # partial refresh, not force a full one every second.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.access_code = "123456"
+        ui.state.access_expires = now[0] + 600
+        ui._set("WIFI_ACCESS")
+        assert ui.display.partial is False  # the screen transition itself is full
+
+        now[0] += 1.0
+        ui.tick()
+        assert ui.display.partial is True
     finally: conn.close(); os.unlink(path)
 
 
@@ -250,6 +331,24 @@ def test_slew_without_coordinates_shows_error():
         assert ui.state.screen == "ERROR"
         assert ui.state.transition_at == 0
         assert ui.indi.goto_target is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_code_enterable_via_keypad_1_7_5_stand_ins():
+    # "1"/"7" (ENC_UP/ENC_DOWN) and "5" (ENC_PUSH) should work for entering
+    # a Dev Tools code too, not just the real encoder — DEVTOOLS/SUDO_SET
+    # read ENC_UP/ENC_DOWN directly (not via _move()), so they need their
+    # own translation in _digits(), separate from _move()'s.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"; ui.state.index = 2  # Home -> Dev Tools
+        ui.handle("5")  # ENC_PUSH stand-in
+        assert ui.state.screen == "DEVTOOLS"
+        for digit in "0022":
+            for _ in range(int(digit)):
+                ui.handle("1")  # ENC_UP stand-in
+            ui.handle("5")  # ENC_PUSH stand-in
+        assert ui.state.screen == "DEV_REPO_SELECT"
     finally: conn.close(); os.unlink(path)
 
 
@@ -442,6 +541,81 @@ def test_devtools_9600_opens_iface_select_and_back_returns_idle():
         assert ui.state.screen == "IFACE_SELECT"
         ui.handle(ENC_PUSH)
         assert ui.state.screen == "IDLE"
+        # Default (no prior selection) persists "rj12", the first option.
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_selects_bluetooth_and_reopens_on_it():
+    ui, conn, path = make_ui()
+    try:
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert SettingsRepo(conn).get("mount_interface") == "bluetooth"
+        # Reopening the picker starts on the previously persisted choice.
+        enter_devtools_code(ui, "9600")
+        assert ui.state.screen == "IFACE_SELECT"
+        assert ui.state.index == 1
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_shows_configured_ssids_and_switches(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid", "HomeNet")
+        SettingsRepo(conn).set("wifi_ssid_secondary", "FieldHotspot")
+        calls = []
+        monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        enter_devtools_code(ui, "5001")
+        assert ui.state.screen == "WIFI_SWITCH_SELECT"
+        assert ui.state.wifi_switch_labels == ["Primary: HomeNet", "Secondary: FieldHotspot"]
+        ui.handle(ENC_DOWN)  # move to Secondary
+        ui.handle(ENC_PUSH)
+        assert calls == [["sudo", "/usr/local/sbin/japyscope-wifi-switch", "secondary"]]
+        assert SettingsRepo(conn).get("wifi_active_slot") == "secondary"
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "Switched to secondary" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_reopens_on_previously_active_slot():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid_secondary", "FieldHotspot")
+        SettingsRepo(conn).set("wifi_active_slot", "secondary")
+        enter_devtools_code(ui, "5001")
+        assert ui.state.screen == "WIFI_SWITCH_SELECT"
+        assert ui.state.index == 1
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_unconfigured_slot_shows_error_without_switching(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        enter_devtools_code(ui, "5001")
+        ui.handle(ENC_DOWN)  # Secondary, never configured
+        ui.handle(ENC_PUSH)
+        assert calls == []
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "not set up" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_5001_switch_failure_is_reported(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("wifi_ssid", "HomeNet")
+
+        def fail(cmd, **kw): raise OSError("sudo: command not found")
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "5001")
+        ui.handle(ENC_PUSH)  # Primary (index 0)
+        assert ui.state.dev_message[0] == "Switch to primary failed"
+        assert SettingsRepo(conn).get("wifi_active_slot") is None
     finally: conn.close(); os.unlink(path)
 
 
@@ -540,6 +714,26 @@ def test_manual_two_star_alignment_syncs_each_real_star():
     finally: conn.close(); os.unlink(path)
 
 
+def test_align_save_lands_on_idle_not_back_on_align_confirm():
+    # Confirmed on hardware as an infinite loop: ALIGN_SAVE's timer used to
+    # send the screen back to ALIGN_CONFIRM — the very screen whose "Yes,
+    # done" enters ALIGN_SAVE in the first place — so any further input
+    # (a queued push, encoder noise) re-entered ALIGN_SAVE and the cycle
+    # repeated until the app crashed.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.screen = "ALIGN_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)  # "Yes, done" -> ALIGN_SAVE
+        assert ui.state.screen == "ALIGN_SAVE"
+
+        now[0] += 2.0  # past the 1.5s transition_at
+        ui.tick()
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_track_screen_jogs_and_keeps_its_own_keys_working():
     ui, conn, path = make_ui()
     try:
@@ -560,4 +754,193 @@ def test_jog_uses_the_current_speed():
         ui.state.screen = "TRACK"; ui.state.speed = 8
         ui.handle("6")
         assert ui.indi.jogs[-1] == ("E", 8)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scrolling_never_forces_a_full_refresh_mid_burst():
+    # A fixed "every Nth scroll is full" cadence used to interrupt
+    # otherwise-smooth scrolling with an unwanted full, visibly-flashing
+    # refresh mid-burst — removed. Scrolling should stay partial no
+    # matter how many consecutive detents happen; only keypad "3" clears
+    # ghosting.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.partial is False  # screen transitions always get a full refresh
+
+        for _ in range(10):
+            ui.handle(ENC_DOWN)
+            assert ui.display.partial is True
+    finally: conn.close(); os.unlink(path)
+
+
+def test_tick_never_auto_promotes_scrolling_to_a_full_refresh():
+    # An idle flush used to force a full, visibly-flashing refresh shortly
+    # after scrolling stopped (even after a single isolated click) —
+    # reported on hardware as still interrupting otherwise-smooth
+    # scrolling, so it was removed outright. tick() should never turn a
+    # pending partial frame into a full one on its own, whether scrolling
+    # was a single click or a longer burst; only keypad "3" forces a full
+    # refresh now.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+
+        ui.handle(ENC_DOWN)
+        ui.handle(ENC_DOWN)
+        assert ui.display.partial is True
+
+        now[0] += 10.0
+        ui.tick()
+        assert ui.display.partial is True  # no auto full refresh, however long idle
+    finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_shows_the_actual_running_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: "v1.2.3")
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware v1.2.3"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_about_screen_falls_back_to_dev_outside_an_installed_release(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(controller_module, "current_version", lambda: None)
+        ui._set("ABOUT")
+        assert ui.display.lines[2] == "Firmware dev"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_1_and_7_are_encoder_up_down_stand_ins_on_menu():
+    # Temporary stopgap while the physical rotary encoder is unreliable —
+    # "1"/"7" on the matrix keypad should move the selection exactly like
+    # ENC_UP/ENC_DOWN wherever _move() is used.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        ui.handle("7")
+        assert ui.state.index == 1
+        ui.handle("1")
+        assert ui.state.index == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_7_on_idle_still_opens_speed_adjust_not_navigation():
+    # IDLE is the one screen where literal "7" already means something
+    # (open SPEED_ADJUST) — that binding must keep winning over the
+    # ENC_DOWN stand-in, so "7" there should NOT move the IDLE menu.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE", 0)
+        ui.handle("7")
+        assert ui.state.screen == "SPEED_ADJUST"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_1_still_works_as_encoder_up_stand_in_on_idle():
+    # "1" has no conflicting binding on IDLE, so it should still navigate
+    # the home menu there even though "7" is reserved for speed.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE", 1)
+        ui.handle("1")
+        assert ui.state.screen == "IDLE" and ui.state.index == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_is_an_encoder_push_stand_in():
+    # Same stopgap spirit as "1"/"7": "5" (the keypad's center "OK" key,
+    # below the 2/4/6/8 jog directions) should act as ENC_PUSH everywhere
+    # except TYPE, where it's still a T9 letter key.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        ui.handle("5")
+        assert ui.state.screen == "TIME_SYNC"  # MENU item 0 selected, same as ENC_PUSH
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_5_still_types_in_smartsearch_not_select():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("TYPE")
+        ui.handle("5")
+        assert ui.state.text == "m"  # T9 letter entry, not ENC_PUSH's "search"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_3_forces_a_full_refresh_without_changing_state():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 2)
+        ui.display.partial = True  # pretend the last draw was partial
+        ui.handle("3")
+        assert ui.state.screen == "MENU" and ui.state.index == 2  # unchanged
+        assert ui.display.partial is False  # forced full refresh
+    finally: conn.close(); os.unlink(path)
+
+
+def test_keypad_3_still_types_in_smartsearch_not_force_refresh():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("TYPE")
+        ui.handle("3")
+        assert ui.state.text == "g"  # T9 letter entry, not a forced refresh
+    finally: conn.close(); os.unlink(path)
+
+
+def test_screen_transitions_are_always_a_full_refresh():
+    # Confirmed on hardware: making _set() partial was wrong, especially
+    # noticeable going back with "9" — screen transitions (a completely
+    # different frame each time) should always be a full refresh.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE")
+        assert ui.display.partial is False
+        ui._set("MENU", 0)
+        assert ui.display.partial is False
+        ui.handle("9")
+        assert ui.state.screen == "IDLE" and ui.display.partial is False
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_set_when_a_menu_does_not_fit_at_a_glance():
+    # MENU has 11 entries but only 5 rows are available for them (6
+    # visible_rows minus 1 for the title, no footer) — it doesn't fit at
+    # a glance, so render() should hand the display a scrollbar (see
+    # ControllerUI._visible()'s docstring): (row_start=1, rows, start,
+    # total).
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.scroll == (1, 5, 0, 11)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_absent_when_a_menu_fits_on_screen():
+    # IDLE's HOME menu is only 3 entries with a footer (aligned/not
+    # aligned) — 4 rows are available, so everything fits already; no
+    # scrollbar should be drawn for it.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("IDLE")
+        assert ui.display.scroll is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scroll_indicator_tracks_the_current_position_while_scrolling():
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 0)
+        assert ui.display.scroll == (1, 5, 0, 11)
+
+        for _ in range(6):
+            ui.handle(ENC_DOWN)
+        assert ui.state.index == 6
+        assert ui.display.scroll == (1, 5, 6, 11)  # window scrolled to keep index 6 visible
     finally: conn.close(); os.unlink(path)

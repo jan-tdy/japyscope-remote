@@ -7,8 +7,11 @@ from __future__ import annotations
 import pytest
 
 from firmware.hal.display.epaper import (
+    _CMD_DISPLAY_OPTION,
     _CMD_DISPLAY_UPDATE_CONTROL_2,
     _CMD_DRIVER_OUTPUT_CONTROL,
+    _CMD_DATA_ENTRY_MODE,
+    _CMD_BORDER_WAVEFORM,
     _CMD_MASTER_ACTIVATION,
     _CMD_SET_RAM_X_ADDRESS,
     _CMD_SET_RAM_Y_ADDRESS,
@@ -19,13 +22,23 @@ from firmware.hal.display.epaper import (
     _CMD_WRITE_LUT,
     _CMD_WRITE_RAM_BW,
     _CMD_WRITE_VCOM,
+    _PARTIAL_BORDER_WAVEFORM,
+    _PARTIAL_DISPLAY_OPTION,
     FULL_UPDATE_VOLTAGES_2_13,
     FULL_UPDATE_WAVEFORM_2_13,
+    PARTIAL_UPDATE_WAVEFORM_2_13,
     EPaperDisplay,
+    partial_update_mode,
     spi_speed_hz,
 )
 from firmware.hal.display.profiles import PROFILE_2_13, PROFILE_4_26
-from firmware.hal.display.rasterizer import render, rotate_90, stride_for
+from firmware.hal.display.rasterizer import (
+    _SCROLLBAR_RESERVED_PX,
+    _SCROLLBAR_WIDTH_PX,
+    render,
+    rotate_90,
+    stride_for,
+)
 
 
 class _FakeGPIO:
@@ -102,8 +115,12 @@ def test_spi_write_frame_sends_bitmap_then_activates():
 
     commands = [call[0] for call in spi.writes]
     assert _CMD_WRITE_RAM_BW in commands
-    assert commands.index(_CMD_WRITE_RAM_BW) < commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2)
-    assert commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2) < commands.index(_CMD_MASTER_ACTIVATION)
+    # _CMD_DISPLAY_UPDATE_CONTROL_2's own byte value (0x22) coincides with
+    # EOPT's data byte in FULL_UPDATE_VOLTAGES_2_13, now also written here
+    # (the full-LUT-reload path) — take the *last* occurrence, the real
+    # activation, not EOPT's incidental match earlier in the sequence.
+    activate_index = len(commands) - 1 - commands[::-1].index(_CMD_DISPLAY_UPDATE_CONTROL_2)
+    assert commands.index(_CMD_WRITE_RAM_BW) < activate_index < commands.index(_CMD_MASTER_ACTIVATION)
 
     # PROFILE_2_13's native RAM is portrait (122x250), transposed from its
     # 250x122 logical canvas — the write must carry the *rotated* bitmap,
@@ -144,8 +161,12 @@ def test_spi_write_frame_passes_through_unrotated_when_native_matches_logical():
 
 
 def _data_after(spi: _FakeSPI, cmd: int) -> list[int]:
+    # Last match, not first: a single-byte data value elsewhere in the
+    # sequence (e.g. EOPT's byte happening to equal another command's own
+    # code) can coincidentally equal [cmd] too. Every call site here wants
+    # the real command's own data, which is always the latest such write.
     commands = spi.writes
-    idx = next(i for i, w in enumerate(commands) if w == [cmd])
+    idx = len(commands) - 1 - next(i for i, w in enumerate(commands[::-1]) if w == [cmd])
     return commands[idx + 1]
 
 
@@ -188,6 +209,49 @@ def test_refresh_uses_register_waveform_on_2_13_and_otp_elsewhere():
     assert [_CMD_WRITE_LUT] not in other._spi.writes
     other._spi_write_frame(render(PROFILE_4_26, ["x"]))
     assert _data_after(other._spi, _CMD_DISPLAY_UPDATE_CONTROL_2) == [0xF7]
+
+
+def test_full_refresh_reloads_full_lut_and_border_after_a_partial_one(monkeypatch):
+    # Confirmed on hardware: a full refresh issued after at least one
+    # partial refresh still logged "full refresh" (the normal ~0.7s busy
+    # wait), but visibly behaved like a partial one. Root cause:
+    # _spi_write_frame() never reloads its own waveform — it just
+    # activates with whatever LUT is currently resident in the SSD1680's
+    # register, and every partial refresh overwrites that register (and
+    # the border waveform) with its own values, never restoring them.
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    display._init_controller()
+    spi.writes.clear()
+
+    display.draw_bitmap(render(PROFILE_2_13, ["x"]), partial=True)
+    assert display._loaded_lut == "partial"
+
+    spi.writes.clear()
+    display._spi_write_frame(render(PROFILE_2_13, ["y"]))
+
+    commands = [call[0] for call in spi.writes]
+    assert commands.count(_CMD_WRITE_LUT) == 1
+    assert bytes(spi.writes[commands.index(_CMD_WRITE_LUT) + 1]) == FULL_UPDATE_WAVEFORM_2_13
+    border_index = commands.index(_CMD_BORDER_WAVEFORM)
+    assert bytes(spi.writes[border_index + 1]) == bytes([0x05])
+    assert display._loaded_lut == "full"
+    # The reload must happen before the frame is activated, not after.
+    assert border_index < commands.index(_CMD_WRITE_RAM_BW)
+
+
+def test_full_refresh_does_not_reload_lut_when_already_full():
+    # The common case (no partial refresh happened since init, or since
+    # the last full refresh) shouldn't pay the reload cost every time.
+    display, _, spi = _wired_display()
+    display._init_controller()
+    assert display._loaded_lut == "full"
+    spi.writes.clear()
+
+    display._spi_write_frame(render(PROFILE_2_13, ["x"]))
+
+    commands = [call[0] for call in spi.writes]
+    assert _CMD_WRITE_LUT not in commands
 
 
 def test_init_controller_uses_native_ram_axes_not_logical():
@@ -237,15 +301,118 @@ def test_draw_lines_uses_ensure_hardware_then_writes_frame(monkeypatch):
     assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
 
 
+def test_draw_bitmap_uses_ensure_hardware_then_writes_frame_as_is(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_2_13, ["x"])
+    display.draw_bitmap(bitmap)
+    assert _CMD_WRITE_RAM_BW in [call[0] for call in spi.writes]
+    expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
+    assert any(bytes(w) == expected for w in spi.writes)
+
+
+def test_partial_refresh_sends_partial_lut_then_quick_activate_then_final_write(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_2_13, ["x"])
+
+    display.draw_bitmap(bitmap, partial=True)
+
+    commands = [call[0] for call in spi.writes]
+    assert commands.count(_CMD_WRITE_LUT) == 1
+    assert bytes(spi.writes[commands.index(_CMD_WRITE_LUT) + 1]) == PARTIAL_UPDATE_WAVEFORM_2_13
+    assert commands.count(_CMD_DISPLAY_OPTION) == 1
+    assert bytes(spi.writes[commands.index(_CMD_DISPLAY_OPTION) + 1]) == _PARTIAL_DISPLAY_OPTION
+    # Two 0x22/0x20 activations: a priming one (no new RAM write between the
+    # LUT load and it) and the real one, after WRITE_RAM — never only one.
+    activate_indices = [i for i, c in enumerate(commands) if c == _CMD_MASTER_ACTIVATION]
+    assert len(activate_indices) == 2
+    write_ram_index = commands.index(_CMD_WRITE_RAM_BW)
+    assert activate_indices[0] < write_ram_index < activate_indices[1]
+    expected = rotate_90(bitmap, PROFILE_2_13.width, PROFILE_2_13.height, clockwise=True)
+    assert bytes(spi.writes[write_ram_index + 1]) == expected
+    # Border waveform set twice: 0x05 at init (_wired_display()), 0x80 here.
+    border_indices = [i for i, c in enumerate(commands) if c == _CMD_BORDER_WAVEFORM]
+    assert bytes(spi.writes[border_indices[-1] + 1]) == bytes([_PARTIAL_BORDER_WAVEFORM])
+
+
+def test_partial_refresh_does_not_resend_driver_output_control_or_entry_mode(monkeypatch):
+    # A prior revision re-sent DRIVER_OUTPUT_CONTROL/DATA_ENTRY_MODE right
+    # after the quick reset, on the theory that the hardware RST pulse
+    # clears those registers. Reported on hardware as making every partial
+    # refresh behave like a slow, flashing full refresh — removed again, to
+    # match the reference displayPartial() this sequence is ported from,
+    # which never re-sends either command between the reset and the LUT
+    # load. Only the LUT write (once at init, immediately re-loaded here)
+    # should appear before the first activation.
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+
+    display.draw_bitmap(render(PROFILE_2_13, ["x"]), partial=True)
+
+    commands = [call[0] for call in spi.writes]
+    reset_index = commands.index(_CMD_WRITE_LUT)  # the partial LUT load, right after the quick reset
+    pre_lut_commands = commands[:reset_index]
+    assert _CMD_DRIVER_OUTPUT_CONTROL not in pre_lut_commands
+    assert _CMD_DATA_ENTRY_MODE not in pre_lut_commands
+
+
+def test_partial_update_mode_defaults_to_quality_and_is_overridable(monkeypatch):
+    monkeypatch.delenv("JAPYSCOPE_EPAPER_PARTIAL_MODE", raising=False)
+    assert partial_update_mode() == 0x0F
+    monkeypatch.setenv("JAPYSCOPE_EPAPER_PARTIAL_MODE", "0x0C")
+    assert partial_update_mode() == 0x0C
+    monkeypatch.setenv("JAPYSCOPE_EPAPER_PARTIAL_MODE", "not-a-number")
+    assert partial_update_mode() == 0x0F  # invalid override falls back, doesn't crash
+
+
+def test_partial_refresh_pulses_reset_before_the_partial_lut(monkeypatch):
+    display, gpio, spi = _wired_display()
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    gpio.calls.clear()
+
+    display.draw_bitmap(render(PROFILE_2_13, ["x"]), partial=True)
+
+    rst_values = [value for name, pin, value in gpio.calls if pin == display.rst_pin]
+    assert rst_values[:2] == [gpio.LOW, gpio.HIGH]
+
+
+def test_partial_refresh_unsupported_profile_falls_back_to_full(monkeypatch):
+    display = EPaperDisplay(profile=PROFILE_4_26)
+    gpio, spi = _FakeGPIO(), _FakeSPI()
+    display._gpio, display._spi = gpio, spi
+    monkeypatch.setattr(display, "_ensure_hardware", lambda: None)
+    bitmap = render(PROFILE_4_26, ["x"])
+
+    display.draw_bitmap(bitmap, partial=True)
+
+    commands = [call[0] for call in spi.writes]
+    assert _CMD_DISPLAY_OPTION not in commands
+    assert bytes(spi.writes[commands.index(_CMD_DISPLAY_UPDATE_CONTROL_2) + 1]) == bytes([0xF7])  # OTP full update
+
+
+def test_spi_write_frame_partial_reports_whether_it_ran(monkeypatch):
+    display, gpio, spi = _wired_display()
+    assert display._spi_write_frame_partial(render(PROFILE_2_13, ["x"])) is True
+
+    other = EPaperDisplay(profile=PROFILE_4_26)
+    other._gpio, other._spi = _FakeGPIO(), _FakeSPI()
+    assert other._spi_write_frame_partial(render(PROFILE_4_26, ["x"])) is False
+    assert other._spi.writes == []  # genuinely did nothing, not a silent full refresh
+
+
 def test_render_output_size_matches_profile():
     bitmap = render(PROFILE_2_13, ["Menu"])
     assert len(bitmap) == stride_for(PROFILE_2_13.width) * PROFILE_2_13.height
 
 
 def test_render_never_raises_on_unmapped_or_accented_text():
-    # Slovak strings from firmware/ui/i18n.py — must degrade, not crash.
+    # Slovak strings from firmware/ui/i18n.py — Roboto covers these
+    # diacritics natively now (unlike the old dot-matrix font, no folding
+    # to a base Latin letter needed), but must still degrade, not crash,
+    # on a glyph Roboto genuinely doesn't have (the emoji below).
     render(PROFILE_2_13, ["Zarovnanie", "Zaparkovať / Odparkovať", "Podsvietenie"])
-    render(PROFILE_2_13, ["\U0001f600 emoji stays a box glyph"])
+    render(PROFILE_2_13, ["\U0001f600 emoji doesn't crash the renderer"])
 
 
 def _zero_row_stride_padding(buf: bytes, width: int, height: int) -> bytes:
@@ -288,3 +455,58 @@ def test_render_invert_row_flips_the_whole_row_band_not_just_glyphs():
 
     assert bytes(b ^ 0xFF for b in plain[row0]) == bytes(inverted[row0])
     assert plain[row1] == inverted[row1]  # untouched rows stay identical
+
+
+def _pixel(buf: bytes, stride: int, x: int, y: int) -> int:
+    """1 = white (no ink), 0 = black — same convention as the module
+    under test (rasterizer.py's module docstring)."""
+    return (buf[y * stride + x // 8] >> (7 - (x % 8))) & 1
+
+
+def test_no_scrollbar_drawn_without_scroll_info():
+    # Short labels that never reach anywhere near the right edge at
+    # MENU_FONT_PX, so the rightmost column staying all-white confirms no
+    # scrollbar — not just that the labels happened not to collide with one.
+    plain = render(PROFILE_2_13, ["Menu", "Item 1", "Item 2"])
+    stride = stride_for(PROFILE_2_13.width)
+    assert all(_pixel(plain, stride, PROFILE_2_13.width - 1, y) == 1 for y in range(PROFILE_2_13.height))
+
+
+def test_scrollbar_thumb_is_smaller_and_lower_for_a_later_page():
+    stride = stride_for(PROFILE_2_13.width)
+    row_height = PROFILE_2_13.height // PROFILE_2_13.visible_rows
+    x = PROFILE_2_13.width - 1
+
+    # A single visible row out of a long (20-item) list: near the top...
+    near_top = render(PROFILE_2_13, ["Menu", "Item"], scroll=(1, 1, 0, 20))
+    # ...and near the bottom of that same list.
+    near_bottom = render(PROFILE_2_13, ["Menu", "Item"], scroll=(1, 1, 19, 20))
+
+    band_top, band_bottom = row_height, 2 * row_height
+    top_ink = [y for y in range(band_top, band_bottom) if _pixel(near_top, stride, x, y) == 0]
+    bottom_ink = [y for y in range(band_top, band_bottom) if _pixel(near_bottom, stride, x, y) == 0]
+
+    assert top_ink and bottom_ink
+    assert min(top_ink) < min(bottom_ink)  # thumb moved down with the page
+
+
+def test_scrollbar_reserves_room_so_text_never_overlaps_it():
+    long_line = "This line is intentionally long enough to reach the panel's right edge easily"
+    stride = stride_for(PROFILE_2_13.width)
+    reserved_x0 = PROFILE_2_13.width - _SCROLLBAR_RESERVED_PX
+    row_height = PROFILE_2_13.height // PROFILE_2_13.visible_rows
+
+    def ink_in_columns(buf: bytes, x0: int, x1: int) -> bool:
+        # Text is vertically centered within its row band, not pinned to
+        # y=0 — scan the whole first row's band rather than a single row
+        # of pixels.
+        return any(_pixel(buf, stride, x, y) == 0 for y in range(row_height) for x in range(x0, x1))
+
+    plain = render(PROFILE_2_13, [long_line])
+    assert ink_in_columns(plain, reserved_x0, PROFILE_2_13.width)
+
+    scrolled = render(PROFILE_2_13, [long_line], scroll=(0, 1, 0, 1))
+    # The gap between text and the scrollbar's own track/thumb column
+    # should have no ink from the (now narrower) text.
+    gap_end = PROFILE_2_13.width - _SCROLLBAR_WIDTH_PX
+    assert not ink_in_columns(scrolled, reserved_x0, gap_end)

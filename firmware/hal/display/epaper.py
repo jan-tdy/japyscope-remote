@@ -1,8 +1,10 @@
 """Real e-ink driver backend (SPI), targeting the SSD1680-family controller
 `profiles.py` confirms for the 2.13" panel (also covers the 4.26"/SSD1677
 profile — SSD1677 is command-compatible with SSD1680 for the subset used
-here). Full-refresh only: `DisplayHAL.draw_lines` replaces the whole screen
-each call (see base.py).
+here). `DisplayHAL.draw_lines`/`draw_bitmap` take an optional `partial=True`
+for a fast refresh (see `_spi_write_frame_partial`) instead of the slow,
+electromechanical full refresh that was the only option before; see
+`firmware/ui/controller.py` for when each is used.
 
 The 2.13" panel on Seeed's XIAO ePaper driver board has no usable
 full-refresh waveform in its OTP: a refresh with 0x22=0xF7 ("load LUT from
@@ -70,11 +72,35 @@ _CMD_END_OPTION = 0x3F
 _CMD_GATE_VOLTAGE = 0x03
 _CMD_SOURCE_VOLTAGE = 0x04
 _CMD_WRITE_VCOM = 0x2C
+_CMD_DISPLAY_OPTION = 0x37  # Waveshare's displayPartial(); undocumented under this name in the datasheet's command list
 
 # 0x22 display-update sequences: display mode 1 with the waveform from OTP,
 # or with the waveform already loaded into registers via 0x32.
 _UPDATE_FULL_OTP_LUT = 0xF7
 _UPDATE_FULL_REGISTER_LUT = 0xC7
+# Partial refresh is two 0x22/0x20 activations: a "prime" pass with no new
+# RAM content (just the new LUT/border/display-option settings taking
+# effect against whatever's already in RAM), then the real one after the
+# new frame is written — see _spi_write_frame_partial().
+_UPDATE_PARTIAL_PRIME = 0xC0
+_UPDATE_PARTIAL_QUALITY = 0x0F  # Waveshare also lists 0x0C ("fast", more ghosting) and 0xCF
+
+
+def partial_update_mode() -> int:
+    """The 0x22 byte for the real (non-prime) partial-refresh activation —
+    0x0F by default, but reported as needing "a bit of tuning" on real
+    hardware once partial refresh was actually visible. Override with
+    JAPYSCOPE_EPAPER_PARTIAL_MODE (hex or decimal, e.g. "0x0C" or "12") to
+    try Waveshare's other two documented partial modes without a firmware
+    change: 0x0C ("fast", more ghosting, possibly also fixes whatever was
+    wrong) or 0xCF."""
+    value = os.environ.get("JAPYSCOPE_EPAPER_PARTIAL_MODE", "").strip()
+    if not value:
+        return _UPDATE_PARTIAL_QUALITY
+    try:
+        return int(value, 0)
+    except ValueError:
+        return _UPDATE_PARTIAL_QUALITY
 
 # Waveshare epd2in13_V3.py `lut_full_update` (same bytes ESPHome's 2.13inv3
 # loads): 153 bytes for 0x32 — 5x12 voltage selects, 12x7 phase timings,
@@ -96,8 +122,40 @@ FULL_UPDATE_WAVEFORM_2_13 = bytes(
 # EOPT (0x3F), VGH (0x03), VSH1/VSH2/VSL (0x04), VCOM (0x2C).
 FULL_UPDATE_VOLTAGES_2_13 = (0x22, 0x17, bytes([0x41, 0x00, 0x32]), 0x36)
 
+# Waveshare epd2in13_V3.py `lut_partial_update` — same 153-byte shape as the
+# full waveform above (same source), a different waveform picked for speed
+# over quality: real SSD1680 hardware reportedly does a partial refresh in
+# roughly a third the time of a full one, at the cost of some ghosting that
+# accumulates over repeated partial refreshes — periodic full refreshes
+# clear it (see firmware/ui/controller.py). Shares FULL_UPDATE_VOLTAGES_2_13
+# (EOPT/VGH/source/VCOM) — confirmed identical between Waveshare's two LUT
+# entries, not an assumption made here.
+PARTIAL_UPDATE_WAVEFORM_2_13 = bytes(
+    [0x0, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x80, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x40, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0] * 12
+    + [0x14, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+    + [0x0] * (8 * 7)
+    + [0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x0, 0x0, 0x0]
+)
+
+# Partial-refresh-only register state (Waveshare's displayPartial): a 10-byte
+# 0x37 "display option" payload and a different border waveform (0x80, vs
+# 0x05 at init) — both confirmed against the same reference source as the
+# waveform tables above, not derived/guessed.
+_PARTIAL_DISPLAY_OPTION = bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00])
+_PARTIAL_BORDER_WAVEFORM = 0x80
+
 _REGISTER_WAVEFORMS = {
     "2.13in": (FULL_UPDATE_WAVEFORM_2_13, FULL_UPDATE_VOLTAGES_2_13),
+}
+_PARTIAL_REGISTER_WAVEFORMS = {
+    "2.13in": (PARTIAL_UPDATE_WAVEFORM_2_13, FULL_UPDATE_VOLTAGES_2_13),
 }
 
 # spidev's SPI_IOC_WR_MAX xfer size on the Pi is 4096 bytes by default;
@@ -125,6 +183,10 @@ class EPaperDisplay(DisplayHAL):
         self.busy_pin = busy_pin
         self._spi = None
         self._gpio = None
+        # Which waveform is currently resident in the SSD1680's LUT
+        # register ("full"/"partial"/None) — see _spi_write_frame()'s
+        # docstring for why this needs tracking at all.
+        self._loaded_lut: Optional[str] = None
 
     def _ensure_hardware(self) -> None:
         if self._spi is not None:
@@ -240,6 +302,16 @@ class EPaperDisplay(DisplayHAL):
         self._gpio.output(self.rst_pin, self._gpio.HIGH)
         time.sleep(0.12)
 
+    def _quick_reset(self) -> None:
+        """Abbreviated reset pulse before a partial refresh (Waveshare's
+        displayPartial) — a real hardware reset of the controller, just
+        with a much shorter settle than _reset()'s; BUSY-gating the LUT
+        write right after (_load_waveform(), via _wait_busy()) stands in
+        for the longer fixed delay."""
+        self._gpio.output(self.rst_pin, self._gpio.LOW)
+        time.sleep(0.001)
+        self._gpio.output(self.rst_pin, self._gpio.HIGH)
+
     def _init_controller(self) -> None:
         profile = self.profile
         self._wait_busy(phase="hw-reset")
@@ -258,12 +330,7 @@ class EPaperDisplay(DisplayHAL):
         )
         self._write_command(_CMD_DATA_ENTRY_MODE, bytes([0x03]))  # X then Y, both incrementing
 
-        source_stride = stride_for(profile.native_width)
-        self._write_command(_CMD_SET_RAM_X_ADDRESS, bytes([0x00, (source_stride - 1) & 0xFF]))
-        self._write_command(
-            _CMD_SET_RAM_Y_ADDRESS,
-            bytes([0x00, 0x00, gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF]),
-        )
+        self._set_window()
         self._write_command(_CMD_BORDER_WAVEFORM, bytes([0x05]))
         self._write_command(_CMD_TEMP_SENSOR_CONTROL, bytes([0x80]))  # internal sensor
         self._write_command(_CMD_DISPLAY_UPDATE_CONTROL, bytes([0x00, 0x80]))
@@ -276,11 +343,29 @@ class EPaperDisplay(DisplayHAL):
         if waveform is None:
             return
         lut, (eopt, vgh, source, vcom) = waveform
+        self._load_waveform(lut, eopt, vgh, source, vcom)
+        self._loaded_lut = "full"
+
+    def _load_waveform(self, lut: bytes, eopt: int, vgh: int, source: bytes, vcom: int) -> None:
         self._write_command(_CMD_WRITE_LUT, lut)
         self._write_command(_CMD_END_OPTION, bytes([eopt]))
         self._write_command(_CMD_GATE_VOLTAGE, bytes([vgh]))
         self._write_command(_CMD_SOURCE_VOLTAGE, source)
         self._write_command(_CMD_WRITE_VCOM, bytes([vcom]))
+
+    def _set_window(self) -> None:
+        """The RAM address window — native axes, full frame. Set once at
+        init, and re-asserted by _spi_write_frame_partial() since the quick
+        reset pulse before a partial refresh is a real hardware reset
+        (Waveshare's displayPartial does the same defensive re-assert)."""
+        profile = self.profile
+        gate_minus_1 = profile.native_height - 1
+        source_stride = stride_for(profile.native_width)
+        self._write_command(_CMD_SET_RAM_X_ADDRESS, bytes([0x00, (source_stride - 1) & 0xFF]))
+        self._write_command(
+            _CMD_SET_RAM_Y_ADDRESS,
+            bytes([0x00, 0x00, gate_minus_1 & 0xFF, (gate_minus_1 >> 8) & 0xFF]),
+        )
 
     def _set_cursor(self, x_byte: int, y: int) -> None:
         self._write_command(_CMD_SET_RAM_X_COUNTER, bytes([x_byte & 0xFF]))
@@ -288,12 +373,31 @@ class EPaperDisplay(DisplayHAL):
 
     # -- DisplayHAL interface --------------------------------------------
 
-    def _render_text_to_bitmap(self, lines: list[str], invert_row: Optional[int] = None) -> bytes:
-        return render_text_to_bitmap(self.profile, lines, invert_row)
+    def _render_text_to_bitmap(
+        self,
+        lines: list[str],
+        invert_row: Optional[int] = None,
+        scroll: Optional[tuple[int, int, int, int]] = None,
+    ) -> bytes:
+        return render_text_to_bitmap(self.profile, lines, invert_row, scroll)
 
-    def draw_lines(self, lines: list[str], invert_row: Optional[int] = None) -> None:
+    def draw_lines(
+        self,
+        lines: list[str],
+        invert_row: Optional[int] = None,
+        partial: bool = False,
+        scroll: Optional[tuple[int, int, int, int]] = None,
+    ) -> None:
         self._ensure_hardware()
-        bitmap = self._render_text_to_bitmap(lines, invert_row)
+        bitmap = self._render_text_to_bitmap(lines, invert_row, scroll)
+        if partial and self._spi_write_frame_partial(bitmap):
+            return
+        self._spi_write_frame(bitmap)
+
+    def draw_bitmap(self, bitmap: bytes, partial: bool = False) -> None:
+        self._ensure_hardware()
+        if partial and self._spi_write_frame_partial(bitmap):
+            return
         self._spi_write_frame(bitmap)
 
     def _to_native_orientation(self, bitmap: bytes) -> bytes:
@@ -310,6 +414,23 @@ class EPaperDisplay(DisplayHAL):
         )
 
     def _spi_write_frame(self, bitmap: bytes) -> None:
+        """Full refresh. For a profile with a register waveform, this
+        activates with whatever LUT is currently resident in the
+        SSD1680's own LUT register — loaded once at init, but silently
+        overwritten with the *partial* waveform (and the border waveform
+        changed to the partial-specific 0x80) by every
+        _spi_write_frame_partial() call since, with neither ever restored
+        there. Confirmed on hardware: after at least one partial refresh,
+        a later call here still logged "full refresh" (and took the
+        expected ~0.7s), while visibly behaving like a partial one — the
+        panel was running the full-refresh activation sequence against
+        the partial waveform's voltage curve and border setting. Restore
+        both to their init-time values whenever the register doesn't
+        already hold the full waveform."""
+        if self.profile.name in _REGISTER_WAVEFORMS and self._loaded_lut != "full":
+            self._write_command(_CMD_BORDER_WAVEFORM, bytes([0x05]))
+            self._load_register_waveform()
+            self._wait_busy(phase="full LUT reload")
         native = self._to_native_orientation(bitmap)
         # The controller picks each pixel's waveform from both RAMs; ESPHome's
         # 2.13inv3 fills the second one too rather than leave power-on garbage.
@@ -324,6 +445,51 @@ class EPaperDisplay(DisplayHAL):
         # A real full refresh is electromechanical — on the order of a
         # second or more, not milliseconds; see _wait_busy()'s docstring.
         self._wait_busy(phase="full refresh", min_expected_s=0.3)
+
+    def _spi_write_frame_partial(self, bitmap: bytes) -> bool:
+        """Fast refresh (Waveshare epd2in13_V3.py's displayPartial, same
+        reference source as the waveform tables): only defined for a
+        profile with a partial register waveform — returns False and does
+        nothing otherwise, so callers fall back to _spi_write_frame().
+        Trades quality for speed (real SSD1680 hardware reportedly does
+        this in roughly a third the time of a full refresh) — ghosting
+        accumulates over repeated partial refreshes since this never
+        rewrites the "red" RAM full refreshes use as the diff reference
+        (see firmware/ui/controller.py for the periodic full refresh that
+        clears it).
+
+        A previous revision of this method re-sent DRIVER_OUTPUT_CONTROL
+        and DATA_ENTRY_MODE right after _quick_reset(), on the theory that
+        the hardware RST pulse clears those registers to power-on defaults.
+        Reported on hardware as making every partial refresh behave like a
+        full one (slow, visibly flashing) — removed again, since the
+        reference displayPartial() this is ported from doesn't re-send
+        them either and is the confirmed-working source for every other
+        byte in this sequence; whatever made the original garbling report
+        happen, it wasn't this."""
+        waveform = _PARTIAL_REGISTER_WAVEFORMS.get(self.profile.name)
+        if waveform is None:
+            return False
+        native = self._to_native_orientation(bitmap)
+        lut, (eopt, vgh, source, vcom) = waveform
+
+        self._quick_reset()
+        self._load_waveform(lut, eopt, vgh, source, vcom)
+        self._loaded_lut = "partial"
+        self._wait_busy(phase="partial LUT load")
+        self._write_command(_CMD_DISPLAY_OPTION, _PARTIAL_DISPLAY_OPTION)
+        self._write_command(_CMD_BORDER_WAVEFORM, bytes([_PARTIAL_BORDER_WAVEFORM]))
+        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([_UPDATE_PARTIAL_PRIME]))
+        self._write_command(_CMD_MASTER_ACTIVATION)
+        self._wait_busy(phase="partial prime")
+
+        self._set_window()
+        self._set_cursor(0, 0)
+        self._write_command(_CMD_WRITE_RAM_BW, native)
+        self._write_command(_CMD_DISPLAY_UPDATE_CONTROL_2, bytes([partial_update_mode()]))
+        self._write_command(_CMD_MASTER_ACTIVATION)
+        self._wait_busy(phase="partial refresh", min_expected_s=0.05)
+        return True
 
     def sleep(self) -> None:
         """Deep-sleep the panel (SSD1680 datasheet 0x10) — call when the

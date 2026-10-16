@@ -47,6 +47,24 @@ password (e.g. no physical e-ink display yet): it's stored in plain text at
 it from another machine (or use physical console access) if you have no
 other way to reach the Pi's shell.
 
+## `pip install --require-hashes -r requirements.lock` fails on `pillow`: "No matching distribution found" / "Could not find a version that satisfies the requirement"
+
+You're installing on Raspberry Pi OS **Bullseye** (Python 3.9).
+`requirements.lock` pins `Pillow` — used by
+`firmware/hal/display/rasterizer.py` to render the e-paper menu text and
+boot logo with a real TTF font instead of the old hand-built dot-matrix
+bitmap font — and the pinned Pillow release dropped Python 3.9 support, so
+no installable build exists for Bullseye's interpreter. This is not a bug
+to work around on Bullseye; it's an intentional, unsupported combination
+(see `docs/INSTALL.md`'s Bullseye note). Two ways forward:
+
+- Reflash the card with **Bookworm** or **Trixie** Lite instead (same
+  install steps — see `docs/INSTALL.md`) — the supported path.
+- Stay on Bullseye: fork `requirements.txt`/`requirements.lock` yourself
+  with an older, 3.9-compatible Pillow pinned (and regenerate the lockfile
+  with `pip-compile --generate-hashes` under Python 3.9). Not tested or
+  maintained here — you own keeping that fork working.
+
 ## `pip install` fails on `dbus-python`: "meson-python: error: Could not find ninja version 1.8.2 or newer"
 
 **Fixed as of this doc** — if you're still hitting this, you have an old
@@ -324,6 +342,13 @@ times. None of that touches the *hardware* half above: if the root
 filesystem is genuinely read-only, both scripts detect it and stop
 immediately with a message pointing back here, rather than retrying (which
 would just risk more corruption).
+
+If this happens at runtime instead of during install/update — the SD card
+going read-only while `japyscope-app` is already running — the app now
+shows `SYS-980` directly on the e-ink panel when it crashes (see
+`docs/CODES.md`), alongside the journal entry, specifically so this is
+visible on an unattended device without needing SSH access to a Pi that
+may itself be struggling to respond.
 
 ## `INDI-001`: server or driver did not start
 

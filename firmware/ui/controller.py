@@ -24,6 +24,7 @@ from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
+from shared.version import current_version
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
@@ -44,6 +45,19 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+# A full e-paper refresh (see firmware/hal/display/epaper.py) is
+# electromechanical — on the order of a second, visibly flashing — but a
+# *partial* refresh (same module) is much faster at the cost of some
+# ghosting that builds up over repeated partial refreshes. So scrolling
+# (`_move`, below) draws every single detent as a partial refresh and
+# never auto-promotes to a full one, however many consecutive scrolls
+# happen — confirmed on hardware that any automatic "clean up" full
+# refresh during/after scrolling (whether a fixed "every Nth scroll"
+# cadence, or an idle flush shortly after scrolling stopped) was still
+# visibly interrupting otherwise-smooth scrolling, so neither exists
+# anymore. Keypad "3" (see `handle()`) is the only way to force a full
+# refresh on demand, to clear ghosting when it's actually noticeable.
+# Screen transitions (`_set`) always get a full refresh regardless.
 # Bright, easy-to-recognize alignment stars with real J2000 coordinates —
 # picking one and centering it (ALIGN_STAR_PICK -> ALIGN_JOG) calls
 # IndiClient.sync() with these, which is what actually teaches the mount
@@ -124,6 +138,7 @@ class UIState:
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
     dev_scripts: list[str] = field(default_factory=list)
     dev_message: list[str] = field(default_factory=list)
+    wifi_switch_labels: list[str] = field(default_factory=list)
 
 
 class ControllerUI:
@@ -140,6 +155,14 @@ class ControllerUI:
     # INTERFACES above.
     REPOS = ("jan-tdy/japyscope-remote",)
     UPDATE_CHANNELS = (("stable", "Stable only"), ("prerelease", "Stable + prereleases"))
+    # Dev Tools code 5001 — see docs/CODES.md. Configuring each slot's
+    # SSID/password happens in the Web UI (System page); this only flips
+    # which already-configured slot is live, via install/wifi-switch.sh.
+    WIFI_SWITCH_SLOTS = ("primary", "secondary")
+    # Dev Tools code 9600 — see docs/CODES.md. "bluetooth" pairing/binding
+    # itself is done once via install/bluetooth-mount.sh (SSH), not from
+    # this screen; selecting it here only records the intended interface.
+    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
 
     def __init__(
         self,
@@ -151,6 +174,7 @@ class ControllerUI:
         clock: Callable[[], float] = time.time,
         backlight: Optional[BacklightHAL] = None,
         indi_manager=None,
+        power_control: Optional[Callable[[], None]] = None,
     ):
         self.display = display
         self.input = input_hal
@@ -159,6 +183,14 @@ class ControllerUI:
         # None in --simulate mode, where there's no real indiserver to restart.
         # Dev Tools code 1111.
         self.indi_manager = indi_manager
+        # Actually powers off the Pi (firmware/main.py wires this to `sudo
+        # systemctl poweroff`) — None in --simulate mode and in tests,
+        # where there's no real hardware to shut down. Confirmed on
+        # hardware as a real gap: MENU -> System -> shutdown only stopped
+        # this process (self.running = False below) and never powered off
+        # anything, even though install.sh already grants the `japyscope`
+        # user passwordless sudo for exactly this command.
+        self.power_control = power_control
         self.backlight = backlight or SimulatorBacklight()
         self.catalogs = CatalogRepo(conn)
         self.settings = SettingsRepo(conn)
@@ -193,13 +225,21 @@ class ControllerUI:
             s.transition_at = 0
             if s.screen == "SLEW": self._set("TRACK")
             elif s.screen == "PARKING": self.runtime.set("parked", "true"); self._set("PARKED")
-            elif s.screen == "ALIGN_SAVE": self._set("ALIGN_CONFIRM")
+            # Confirmed on hardware as an infinite loop ("Saving…" <->
+            # "Looks right?" repeating until the app crashed): this used to
+            # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
+            # enters ALIGN_SAVE on "Yes, done" — any further input (a
+            # queued ENC_PUSH, encoder noise) re-entered ALIGN_SAVE and
+            # the 1.5s timer fired again, forever. Alignment is actually
+            # complete by this point (`aligned` was already set true back
+            # in ALIGN_CONFIRM) — go to IDLE instead.
+            elif s.screen == "ALIGN_SAVE": self._set("IDLE")
         if s.screen == "WIFI_ACCESS":
             remaining = max(0, int(s.access_expires - now))
             if now >= s.access_expires: self._set("MENU", 3)
             elif remaining != s.access_last_remaining:
                 s.access_last_remaining = remaining
-                self.render()
+                self.render(coalesce=True)
 
     def _refresh_status(self) -> None:
         get_status = getattr(self.indi, "get_status", None)
@@ -225,6 +265,23 @@ class ControllerUI:
         self.state.index = index
         self.render()
 
+    def _shutdown(self) -> None:
+        """Actually power off (see `power_control`'s docstring above),
+        then stop this process. The panel is left showing SHUTDOWN —
+        e-ink holds its last image with no power, so that's what stays
+        visible through the whole power-off sequence; the dedicated
+        japyscope-shutdown-splash.service (ExecStop) repaints the boot
+        logo over it right as systemd actually tears the system down,
+        however shutdown was triggered (this menu, the Web UI, `sudo
+        poweroff` from SSH, …) — see install/systemd/."""
+        if self.power_control is not None:
+            try:
+                self.power_control()
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("SYS-990 poweroff command failed: %s", exc)
+        self.running = False
+        self._set("SHUTDOWN")
+
     @staticmethod
     def _truth(value: Optional[str]) -> bool:
         return str(value).lower() in {"1", "true", "yes", "on"}
@@ -235,8 +292,26 @@ class ControllerUI:
     def _theme(self):
         return get_theme(self.settings.get("ui_theme", DEFAULT_THEME))
 
-    def _visible(self, title: str, values: Sequence[str], footer: str = "rotate · push · 9=back") -> list[str]:
-        rows = max(1, self.display.visible_rows - 2)
+    def _visible(self, title: str, values: Sequence[str], footer: Optional[str] = None) -> list[str]:
+        """`footer`, when given, is genuinely useful per-screen status (e.g.
+        IDLE's aligned/not-aligned, RESULTS' online/offline note) — never a
+        generic control hint ("rotate · push · 9=back" used to default
+        here on every list screen regardless of whether it was even
+        accurate, wasting a quarter of the 4-line panel on it). With no
+        footer, the row it would have taken goes to one more visible item
+        instead.
+
+        When `values` doesn't fit within `rows` at a glance, also sets
+        `self._scroll` to `(row_start, rows, start, len(values))` — row 1
+        is always right after the title (row 0), regardless of whether a
+        footer follows the item rows — so `render()` can draw a scrollbar
+        showing where this page sits in the whole list (see its own
+        `scroll` plumbing, and `rasterizer.py`'s `_draw_scrollbar` for how
+        the real e-ink backend turns it into pixels). Left at its
+        default (None, reset at the top of `render()`) when everything
+        already fits, so no screen gets a scrollbar that has nothing to
+        indicate."""
+        rows = max(1, self.display.visible_rows - (2 if footer else 1))
         start = max(0, min(self.state.index, max(0, len(values) - rows)))
         theme = self._theme()
         lines = [title]
@@ -248,19 +323,43 @@ class ControllerUI:
             lines.append((theme.marker if selected else theme.unmarked) + text)
             if selected and theme.invert:
                 self._invert_row = len(lines) - 1
-        return [*lines, footer]
+        if len(values) > rows:
+            self._scroll = (1, rows, start, len(values))
+        return [*lines, footer] if footer else lines
 
-    def render(self) -> None:
+    def render(self, *, coalesce: bool = False) -> None:
+        """Redraw the current screen. `coalesce=True` (only passed by
+        `_move`, for same-screen scrolling, and a handful of other
+        within-screen value changes — T9 typing, the WIFI_ACCESS
+        countdown, a digit/backlight/speed adjustment) always draws a
+        fast partial refresh, with no automatic promotion to a full one —
+        confirmed on hardware that any auto "clean up" full refresh during
+        or after scrolling (a fixed "every Nth" cadence, or an idle flush
+        once scrolling stopped) was still visibly interrupting otherwise-
+        smooth scrolling, so neither exists anymore; keypad "3" (see
+        `handle()`) is the only way to force a full refresh, on demand,
+        when ghosting actually needs clearing. `_set()` (any screen
+        transition) always draws full (coalesce left at its default
+        False): its content is a completely different frame from whatever
+        came before, so there's nothing to usefully diff a partial refresh
+        against, and a full refresh there also gives the user an
+        unambiguous "this is a new screen" cue — don't make this
+        coalesce=True again without an explicit request; it was tried and
+        reverted (confirmed on hardware as wrong, especially noticeable
+        backing out with "9"). The lines are always computed fresh from
+        the current state either way, so a later render never draws
+        anything stale. `_visible()` may also set `self._scroll` — see
+        its own docstring — drawn as a scrollbar on screens whose list
+        doesn't fit `visible_rows` at a glance."""
         s = self.state
         screen = s.screen
         self._invert_row: Optional[int] = None
+        self._scroll: Optional[tuple[int, int, int, int]] = None
         if screen == "BOOT":
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
             lines = self._visible(
-                self._t("boot.park_question"),
-                [self._t("boot.park_yes"), self._t("boot.park_no")],
-                self._t("footer.rotate_push"),
+                self._t("boot.park_question"), [self._t("boot.park_yes"), self._t("boot.park_no")]
             )
         elif screen == "BOOT_SYNC_FAILED":
             lines = [
@@ -331,8 +430,7 @@ class ControllerUI:
             lines = [self._t("park.parking"), "", "", ""]
         elif screen == "PARKED":
             lines = self._visible(
-                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")],
-                self._t("footer.rotate_push"),
+                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")]
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
@@ -357,17 +455,23 @@ class ControllerUI:
         elif screen == "LOCATION":
             lines = ["Location", f"Lat {self.settings.get('latitude')}", f"Lon {self.settings.get('longitude')}", "push/9=back"]
         elif screen == "ABOUT":
-            lines = [self._t("about.line1"), self._t("about.line2"), self._t("about.line3"), self._t("footer.push_back")]
+            version = current_version() or "dev"
+            lines = [
+                self._t("about.line1"), self._t("about.line2"),
+                self._t("about.line3", version=version), self._t("footer.push_back"),
+            ]
         elif screen == "DRIVER_SELECT":
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
-            lines = self._visible("Mount interface", ["RJ12 serial"])
+            lines = self._visible("Mount interface", [label for _, label in self.MOUNT_INTERFACES])
         elif screen == "DEV_REPO_SELECT":
             lines = self._visible("Set repo", list(self.REPOS))
         elif screen == "DEV_CHANNEL_SELECT":
             lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
         elif screen == "DEV_SCRIPT_SELECT":
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "WIFI_SWITCH_SELECT":
+            lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
@@ -382,14 +486,36 @@ class ControllerUI:
             lines = ["Cannot slew", s.error_message, "", "push/9=back"]
         else:
             lines = [screen]
-        self.display.draw_lines(lines[: self.display.visible_rows], invert_row=self._invert_row)
+        visible_lines = lines[: self.display.visible_rows]
+        if coalesce:
+            self.display.draw_lines(visible_lines, invert_row=self._invert_row, partial=True, scroll=self._scroll)
+            return
+        self.display.draw_lines(visible_lines, invert_row=self._invert_row, scroll=self._scroll)
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
+        """Scroll the current list/menu by one item on ENC_UP/ENC_DOWN.
+
+        Temporary stopgap while the physical KY-040 rotary encoder is
+        unreliable (see firmware/hal/input/encoder.py's debounce-tuning
+        saga): the matrix keypad's "1" and "7" — a vertical pair on its
+        left column — also act as ENC_UP/ENC_DOWN here, so menus stay
+        navigable by hand regardless of how the encoder is behaving.
+        Remove this once the encoder is replaced/fixed (an Adafruit
+        STEMMA QT I2C encoder is the planned hardware fix) or keep it as
+        a permanent secondary input if it proves useful either way.
+        "7" is excluded on IDLE, where it already opens SPEED_ADJUST (see
+        handle()'s IDLE case) — that binding wins there instead; "1" has
+        no such conflict anywhere and always works.
+        """
+        if key == "1":
+            key = ENC_UP
+        elif key == "7" and self.state.screen != "IDLE":
+            key = ENC_DOWN
         if key not in (ENC_UP, ENC_DOWN) or count <= 0:
             return False
         delta = -1 if key == ENC_UP else 1
         self.state.index = (self.state.index + delta) % count if wrap else max(0, min(count - 1, self.state.index + delta))
-        self.render()
+        self.render(coalesce=True)
         return True
 
     def _jog(self, key: str) -> bool:
@@ -440,6 +566,21 @@ class ControllerUI:
 
     def handle(self, key: str) -> None:
         s = self.state
+        # Keypad "3" — manual "force a full refresh" on the current
+        # screen, no state change. The only way to clear ghosting left
+        # over from scrolling's partial refreshes, since nothing does
+        # that automatically; excluded on TYPE, where it's still a T9
+        # letter key ("ghi").
+        if key == "3" and s.screen != "TYPE":
+            self.render()
+            return
+        # Keypad "5" — the center key below the 2/4/6/8 jog directions,
+        # phone-keypad "OK" position — stands in for ENC_PUSH everywhere
+        # except TYPE, where it's still a T9 letter key ("mno"). Same
+        # stopgap spirit as "1"/"7" standing in for ENC_UP/ENC_DOWN in
+        # _move() while the KY-040 rotary encoder is unreliable.
+        if key == "5" and s.screen != "TYPE":
+            key = ENC_PUSH
         if s.screen == "BOOT_PARK_CHECK":
             if self._move(key, 2): return
             if key == ENC_PUSH:
@@ -519,7 +660,7 @@ class ControllerUI:
         if s.screen == "SPEED_ADJUST":
             idx = SPEEDS.index(s.speed)
             if key in (ENC_UP, ENC_DOWN):
-                s.speed = SPEEDS[max(0, min(len(SPEEDS) - 1, idx + (-1 if key == ENC_UP else 1)))]; self.render()
+                s.speed = SPEEDS[max(0, min(len(SPEEDS) - 1, idx + (-1 if key == ENC_UP else 1)))]; self.render(coalesce=True)
             elif key in (ENC_PUSH, "9"): self._set(s.return_screen)
             return
         if s.screen == "ALIGN_CHOOSE":
@@ -581,7 +722,7 @@ class ControllerUI:
         if s.screen == "PARKED":
             if self._move(key, 2): return
             if key == ENC_PUSH and s.index == 0: self.runtime.set("parked", "false"); self._set("IDLE")
-            elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
+            elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen == "WIFI_ACCESS":
             if key in ("9", ENC_PUSH): self._set("MENU", 3)
@@ -590,7 +731,7 @@ class ControllerUI:
             if self._move(key, 3): return
             if key == ENC_PUSH:
                 s.backlight[s.index] = (s.backlight[s.index] + 1) % 3
-                self.backlight.set(*s.backlight); self.render()
+                self.backlight.set(*s.backlight); self.render(coalesce=True)
             elif key == "9": self._set("MENU", 5)
             return
         if s.screen == "LANGUAGE":
@@ -622,17 +763,29 @@ class ControllerUI:
                 self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
                 self._set("IDLE")
             return
+        if s.screen == "IFACE_SELECT":
+            if self._move(key, len(self.MOUNT_INTERFACES)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH:
+                self.settings.set("mount_interface", self.MOUNT_INTERFACES[s.index][0])
+                self._set("IDLE")
+            return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
+            return
+        if s.screen == "WIFI_SWITCH_SELECT":
+            if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH: self._devtools_wifi_switch(self.WIFI_SWITCH_SLOTS[s.index])
             return
         if s.screen == "DEV_MESSAGE":
             if key in ("9", ENC_PUSH): self._set("IDLE")
             return
         if s.screen == "SYSTEM_CONFIRM":
             if key == "9": self._set("MENU", 9)
-            elif key == ENC_PUSH: self.running = False; self._set("SHUTDOWN")
+            elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen in {"LOCATION", "ABOUT", "TIME_SYNC"}:
             if key in ("9", ENC_PUSH): self._set("MENU")
@@ -640,8 +793,8 @@ class ControllerUI:
         if s.screen == "ERROR" and key in ("9", ENC_PUSH):
             self._set(s.return_screen)
             return
-        if s.screen in {"WIFI_SETUP", "DRIVER_SELECT", "IFACE_SELECT"} and key in ("9", ENC_PUSH):
-            # All three are only reachable via Dev Tools codes (5000/5555/9600) — back always goes to IDLE.
+        if s.screen in {"WIFI_SETUP", "DRIVER_SELECT"} and key in ("9", ENC_PUSH):
+            # Both are only reachable via Dev Tools codes (5000/5555) — back always goes to IDLE.
             self._set("IDLE")
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
@@ -694,15 +847,15 @@ class ControllerUI:
         if key == FN2: self._set("CATALOG_MENU"); return
         if key == ENC_PUSH and s.text:
             s.results, s.online_available = self.search.search(s.text, self._local_objects()); self._set("RESULTS"); return
-        if key == BKSP: s.text = s.text[:-1]; s.t9_key = None; self.render(); return
-        if key == "0": s.text += "0"; s.t9_key = None; self.render(); return
+        if key == BKSP: s.text = s.text[:-1]; s.t9_key = None; self.render(coalesce=True); return
+        if key == "0": s.text += "0"; s.t9_key = None; self.render(coalesce=True); return
         if key not in T9: return
         now = self.clock(); letters = T9[key]
         if s.t9_key == key and now - s.t9_at <= 0.65 and s.text:
             s.t9_pos = (s.t9_pos + 1) % len(letters); s.text = s.text[:-1] + letters[s.t9_pos]
         else:
             s.t9_key = key; s.t9_pos = 0; s.text += letters[0]
-        s.t9_at = now; self.render()
+        s.t9_at = now; self.render(coalesce=True)
 
     def _confirm_slew(self, obj: SearchResult, return_screen: str) -> None:
         self.state.selected = obj; self.state.return_screen = return_screen
@@ -727,9 +880,16 @@ class ControllerUI:
 
     def _digits(self, key: str) -> None:
         s = self.state
+        # Same "1"/"7" encoder stand-in as _move() (see its docstring) —
+        # DEVTOOLS/SUDO_SET read ENC_UP/ENC_DOWN directly rather than going
+        # through _move(), so they need their own translation here too.
+        if key == "1":
+            key = ENC_UP
+        elif key == "7":
+            key = ENC_DOWN
         if key == "9": self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU"); return
-        if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(); return
-        if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(); return
+        if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
+        if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return
         if key == ENC_PUSH:
             s.digits.append(s.digit_value); s.digit_value = 0
             if len(s.digits) == 4:
@@ -739,7 +899,7 @@ class ControllerUI:
                     self._set("MENU")
                 else:
                     self._devtools_code(code)
-            else: self.render()
+            else: self.render(coalesce=True)
 
     def _devtools_code(self, code: str) -> None:
         """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
@@ -763,10 +923,14 @@ class ControllerUI:
             self._devtools_system_info()
         elif code == "5000":
             self._set("WIFI_SETUP")
+        elif code == "5001":
+            self._open_wifi_switch_select()
         elif code == "5555":
             self._set("DRIVER_SELECT")
         elif code == "9600":
-            self._set("IFACE_SELECT")
+            ifaces = [k for k, _ in self.MOUNT_INTERFACES]
+            current = self.settings.get("mount_interface", ifaces[0])
+            self._set("IFACE_SELECT", ifaces.index(current) if current in ifaces else 0)
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")
@@ -823,6 +987,28 @@ class ControllerUI:
             logger.warning("Dev Tools: could not enable ssh: %s", exc)
             status = "Could not enable SSH"
         self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
+
+    def _open_wifi_switch_select(self) -> None:
+        primary = self.settings.get("wifi_ssid", "") or "(not configured)"
+        secondary = self.settings.get("wifi_ssid_secondary", "") or "(not configured)"
+        self.state.wifi_switch_labels = [f"Primary: {primary}", f"Secondary: {secondary}"]
+        active = self.settings.get("wifi_active_slot", "primary")
+        index = self.WIFI_SWITCH_SLOTS.index(active) if active in self.WIFI_SWITCH_SLOTS else 0
+        self._set("WIFI_SWITCH_SELECT", index)
+
+    def _devtools_wifi_switch(self, slot: str) -> None:
+        ssid_key = "wifi_ssid" if slot == "primary" else "wifi_ssid_secondary"
+        if not self.settings.get(ssid_key, ""):
+            self._devtools_message([f"{slot.capitalize()} not set up", "Configure it in the Web UI", "System page first"])
+            return
+        try:
+            subprocess.run(["sudo", "/usr/local/sbin/japyscope-wifi-switch", slot], check=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Wi-Fi switch to %s failed: %s", slot, exc)
+            self._devtools_message([f"Switch to {slot} failed", str(exc)[:32]])
+            return
+        self.settings.set("wifi_active_slot", slot)
+        self._devtools_message([f"Switched to {slot}", "Rejoin that network", "to keep using the Web UI"])
 
     @staticmethod
     def _local_ip() -> str:

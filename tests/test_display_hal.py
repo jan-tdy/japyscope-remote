@@ -22,6 +22,16 @@ def test_simulator_display_does_not_crash_on_empty_and_full_screens(capsys):
     assert "JapyScope Remote" in out
 
 
+def test_simulator_display_draws_bitmap_without_crashing(capsys):
+    from firmware.hal.display.boot_logo import render as render_boot_logo
+
+    display = SimulatorDisplay(profile=PROFILE_2_13)
+    display.draw_bitmap(render_boot_logo(PROFILE_2_13))
+    out = capsys.readouterr().out
+    assert "2.13in 250x122 bitmap" in out
+    assert "█" in out  # at least one filled ("ink") cell was printed
+
+
 def test_simulator_display_redacts_sensitive_lines_before_printing(capsys):
     display = SimulatorDisplay(profile=PROFILE_2_13)
 

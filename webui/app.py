@@ -115,9 +115,9 @@ def get_system_telemetry() -> dict[str, str]:
     return telemetry
 
 
-def _default_wifi_configurator(ssid: str, password: str) -> None:
+def _default_wifi_configurator(ssid: str, password: str, slot: str = "primary") -> None:
     subprocess.run(
-        ["sudo", "/usr/local/sbin/japyscope-wifi", ssid],
+        ["sudo", "/usr/local/sbin/japyscope-wifi", "--slot", slot, ssid],
         input=(password + "\n").encode("utf-8"), check=True, timeout=30,
     )
 
@@ -128,7 +128,7 @@ def _default_action_runner(command: list[str]) -> None:
 
 def create_app(
     db_path: Optional[str] = None,
-    wifi_configurator: Callable[[str, str], None] = _default_wifi_configurator,
+    wifi_configurator: Callable[..., None] = _default_wifi_configurator,
     action_runner: Callable[[list[str]], None] = _default_action_runner,
 ) -> Flask:
     app = Flask(__name__)
@@ -233,7 +233,9 @@ def create_app(
                     flash("Wi-Fi configuration failed; check Diagnostics.", "error")
                 else:
                     with db_session(app.config["DATABASE"]) as conn:
-                        SettingsRepo(conn).set("wifi_ssid", ssid)
+                        repo = SettingsRepo(conn)
+                        repo.set("wifi_ssid", ssid)
+                        repo.set("wifi_active_slot", "primary")
                     flash(f"Connecting to {ssid}. Rejoin that network to continue.", "ok")
         return render_template("setup.html")
 
@@ -504,13 +506,44 @@ def create_app(
             "reboot": ["sudo", "systemctl", "reboot"],
             "poweroff": ["sudo", "systemctl", "poweroff"],
         }
-        if request.method == "POST":
-            action = request.form.get("action", "")
-            if action in commands:
-                action_runner(commands[action]); flash(f"System action queued: {action}.", "ok")
-            else: abort(400)
-            return redirect(url_for("system"))
-        return render_template("system.html")
+        with db_session(app.config["DATABASE"]) as conn:
+            repo = SettingsRepo(conn)
+            if request.method == "POST":
+                action = request.form.get("action", "")
+                if action == "configure-wifi-secondary":
+                    ssid = request.form.get("ssid", "")
+                    password = request.form.get("password", "")
+                    ssid_bytes = len(ssid.encode("utf-8"))
+                    password_bytes = len(password.encode("utf-8"))
+                    if not 1 <= ssid_bytes <= 32 or not 8 <= password_bytes <= 63 or "\n" in password or "\r" in password:
+                        flash("Enter an SSID (up to 32 bytes) and a Wi-Fi password of 8 to 63 bytes.", "error")
+                    else:
+                        try:
+                            wifi_configurator(ssid, password, "secondary")
+                        except (OSError, subprocess.SubprocessError) as exc:
+                            logger.error("WIFI-001 secondary Wi-Fi configuration failed: %s", exc)
+                            flash("Wi-Fi configuration failed; check Diagnostics.", "error")
+                        else:
+                            repo.set("wifi_ssid_secondary", ssid)
+                            repo.set("wifi_active_slot", "secondary")
+                            flash(
+                                f"Secondary network set to {ssid} and connected now. "
+                                "Switch back to Primary from the controller's Dev Tools (code 5001) if needed.",
+                                "ok",
+                            )
+                elif action in commands:
+                    action_runner(commands[action]); flash(f"System action queued: {action}.", "ok")
+                else: abort(400)
+                return redirect(url_for("system"))
+            primary_ssid = repo.get("wifi_ssid", "")
+            secondary_ssid = repo.get("wifi_ssid_secondary", "")
+            active_slot = repo.get("wifi_active_slot", "primary")
+        return render_template(
+            "system.html",
+            primary_ssid=primary_ssid,
+            secondary_ssid=secondary_ssid,
+            active_slot=active_slot,
+        )
 
     if os.environ.get("JAPYSCOPE_DEV_MODE") == "1":
         @app.cli.command("gen-code")
