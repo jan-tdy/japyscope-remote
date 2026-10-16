@@ -373,7 +373,16 @@ class ControllerUI:
                 self._t("home.aligned") if aligned else self._t("home.not_aligned"),
             )
         elif screen == "MENU":
-            lines = self._visible(self._t("menu.title"), [self._t(k) for k in self.MENU])
+            items = [self._t(k) for k in self.MENU]
+            if self.settings.get("sudo_password_is_default") == "1":
+                # Nagged on every Menu visit (not just once at first boot,
+                # which is easy to miss) until the owner picks their own
+                # sudo password instead of the random one generated at
+                # install — see docs/CODES.md's "Sudo password" section
+                # and shared/db.py's init_db().
+                sudo_index = self.MENU.index("menu.sudo_password")
+                items[sudo_index] = f"{items[sudo_index]} (default!)"
+            lines = self._visible(self._t("menu.title"), items)
         elif screen == "LANGUAGE":
             lines = self._visible(self._t("language.title"), [name for name, _ in LANGUAGES])
         elif screen == "THEME":
@@ -896,6 +905,8 @@ class ControllerUI:
                 code = "".join(map(str, s.digits))
                 if s.screen == "SUDO_SET":
                     self.settings.set_password("sudo_password", code)
+                    self.settings.set("sudo_password_is_default", "0")
+                    self.runtime.delete("sudo_password_first_boot")
                     self._set("MENU")
                 else:
                     self._devtools_code(code)

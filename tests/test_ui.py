@@ -101,6 +101,37 @@ def test_boot_sync_failure_retry_returns_to_star_pick():
     finally: conn.close(); os.unlink(path)
 
 
+def test_menu_nags_about_default_sudo_password_until_changed():
+    # Regression test for jan-tdy/japyscope-remote#35: a fresh install
+    # must not silently keep the old well-known "1234" default — the Menu
+    # entry itself flags it on every visit instead.
+    ui, conn, path = make_ui()
+    try:
+        ui._set("MENU", 8)  # Sudo Password's slot in ControllerUI.MENU
+        assert any("(default!)" in line for line in ui.display.lines)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_setting_sudo_password_clears_default_reminder():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 8  # Menu -> Sudo Password
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "SUDO_SET"
+        for digit in "5678":
+            for _ in range(int(digit)):
+                ui.handle(ENC_UP)
+            ui.handle(ENC_PUSH)
+        assert ui.state.screen == "MENU"
+        settings = SettingsRepo(conn)
+        assert settings.get("sudo_password_is_default") == "0"
+        assert settings.verify_password("sudo_password", "5678") is True
+        assert StateRepo(conn).get("sudo_password_first_boot") is None
+        ui._set("MENU", 8)
+        assert not any("(default!)" in line for line in ui.display.lines)
+    finally: conn.close(); os.unlink(path)
+
+
 def test_language_selection_persists_and_translates():
     ui, conn, path = make_ui()
     try:

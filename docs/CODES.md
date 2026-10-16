@@ -142,9 +142,16 @@ having a shell on the device, not a remote-execution surface.
 
 ## Sudo password
 
-- Default: `1234` (factory default, stored as a salted PBKDF2 hash in
-  `shared.db` `settings.sudo_password`).
-- Set via Menu → Sudo Password (same rotary-dial 4-digit entry as Dev Tools codes).
+- Default: a random 4-digit code generated per device on first boot
+  (`shared.db`'s `init_db()`), stored as a salted PBKDF2 hash in
+  `settings.sudo_password`. It used to be the hardcoded literal `1234` —
+  the same password on every device, visible to anyone reading this repo
+  — which is no longer the case (see jan-tdy/japyscope-remote#35).
+- While still unchanged, the Menu entry itself reads "Sudo Password
+  (default!)" every time the screen is opened, driven by
+  `settings.sudo_password_is_default` reading `1` — a nag the owner can't
+  miss by only seeing once, nudging them to pick their own.
+- Set via Menu → Sudo Password (same rotary-dial 4-digit entry as Dev Tools codes, and no need to know the current code first) — this also clears the reminder and erases the generated code from `state`.
 - Intended to guard destructive Dev Tools actions — none of the current codes need it (see table above), since none are destructive yet.
 - **Not a real security boundary** — same spirit as the Web UI access code below: a deterrent, not encryption-grade auth. Don't build anything safety-critical behind it without upgrading the mechanism first.
 
