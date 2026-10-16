@@ -715,6 +715,25 @@ def test_devtools_5001_unconfigured_slot_shows_error_without_switching(monkeypat
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_5001_switch_to_primary_works_even_when_its_ssid_was_never_recorded(monkeypatch):
+    # Wi-Fi configured some other way than /setup (Raspberry Pi Imager,
+    # raspi-config, by hand) never writes settings.wifi_ssid, even though
+    # that network is the one actually working. Switching back to it must
+    # not be gated on knowing its SSID -- only secondary (the one slot
+    # JapyScope actually creates) needs that guard.
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        enter_devtools_code(ui, "5001")
+        assert ui.state.wifi_switch_labels[0] == "Primary: (unknown)"
+        ui.handle(ENC_PUSH)  # Primary (index 0), still never configured via /setup
+        assert calls == [["sudo", "/usr/local/sbin/japyscope-wifi-switch", "primary"]]
+        assert SettingsRepo(conn).get("wifi_active_slot") == "primary"
+        assert "Switched to primary" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_5001_switch_failure_is_reported(monkeypatch):
     ui, conn, path = make_ui()
     try:

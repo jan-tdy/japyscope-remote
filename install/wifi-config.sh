@@ -47,23 +47,58 @@ if [[ ${JAPYSCOPE_NETWORK_BACKEND:-} == networkmanager ]]; then
     exit 2
   fi
   # Only replace our own profile, never a connection made by Raspberry Pi
-  # Imager or by the owner.  Bring the new profile up before tearing down the
-  # setup AP so a failed association can still be recovered on the next boot.
+  # Imager or by the owner.
   nmcli connection delete id "$con_name" >/dev/null 2>&1 || true
-  nmcli connection add type wifi ifname wlan0 con-name "$con_name" autoconnect yes ssid "$ssid"
+  # autoconnect no here regardless of slot: primary flips it to yes (and
+  # connects now) a few lines down, but secondary never does either on its
+  # own -- see the big comment below for why.
+  nmcli connection add type wifi ifname wlan0 con-name "$con_name" autoconnect no ssid "$ssid"
   nmcli connection modify "$con_name" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password" ipv4.method auto ipv6.method auto
-  # Whichever slot is (re)configured becomes the one NetworkManager
-  # reconnects to on its own after a reboot; the other slot stops
-  # autoconnecting so a later Dev Tools switch (japyscope-wifi-switch)
-  # actually sticks across a power cycle instead of being raced by this one.
-  nmcli connection modify "$other_con_name" connection.autoconnect no >/dev/null 2>&1 || true
-  nmcli connection down id 'JapyScope Setup' >/dev/null 2>&1 || true
-  nmcli connection up id "$con_name" ifname wlan0
+  if [[ $slot == primary ]]; then
+    # The AP-join flow (/setup) always means "connect to this now" -- it's
+    # how the device first gets online, or rejoins after a factory reset.
+    # Bring the new profile up before tearing down the setup AP so a
+    # failed association can still be recovered on the next boot.
+    #
+    # Secondary is different on purpose: it's saved for later, often from
+    # somewhere its network isn't even in range yet (that's the whole
+    # point of a second slot), so saving it must never force a connection
+    # attempt that could fail, and must never touch whatever is already
+    # working -- including disabling its autoconnect, which previously
+    # happened unconditionally here and could leave a device unable to
+    # auto-reconnect to EITHER network if the new one then failed to
+    # associate. Activating a saved secondary slot is a separate, explicit
+    # step (japyscope-wifi-switch), not a side effect of saving it.
+    nmcli connection modify "$con_name" connection.autoconnect yes
+    nmcli connection modify "$other_con_name" connection.autoconnect no >/dev/null 2>&1 || true
+    nmcli connection down id 'JapyScope Setup' >/dev/null 2>&1 || true
+    nmcli connection up id "$con_name" ifname wlan0
+  fi
   exit 0
 fi
 if [[ ${JAPYSCOPE_NETWORK_BACKEND:-} != wpa_supplicant ]]; then
   echo "unknown JapyScope network backend: ${JAPYSCOPE_NETWORK_BACKEND:-missing}" >&2
   exit 1
+fi
+live_config=/etc/wpa_supplicant/wpa_supplicant.conf
+primary_fragment=/etc/wpa_supplicant/japyscope-primary.conf
+if [[ $slot == secondary && ! -r $primary_fragment && -r $live_config ]]; then
+  # First-ever use of the secondary slot on a device whose Wi-Fi was never
+  # configured through JapyScope's own flow (Raspberry Pi Imager, raspi-config,
+  # or by hand) -- there's no "primary" fragment to switch back to later
+  # because nothing ever saved one. Capture whatever's live right now, so
+  # japyscope-wifi-switch has something to restore afterwards; best-effort,
+  # never blocks saving the secondary network over it.
+  capture_tmp=$(mktemp /etc/wpa_supplicant/.japyscope.XXXXXX)
+  trap 'rm -f "$capture_tmp"' EXIT
+  awk '/^network=\{/{found=1} found' "$live_config" > "$capture_tmp" 2>/dev/null || true
+  if [[ -s $capture_tmp ]]; then
+    chown root:root "$capture_tmp"; chmod 600 "$capture_tmp"
+    mv "$capture_tmp" "$primary_fragment"
+  else
+    rm -f "$capture_tmp"
+  fi
+  trap - EXIT
 fi
 # Persisted separately from the live wpa_supplicant.conf below (which only
 # ever holds the *active* slot) so japyscope-wifi-switch can bring either
@@ -76,6 +111,12 @@ chown root:root "$fragment_tmp"
 chmod 600 "$fragment_tmp"
 mv "$fragment_tmp" "$fragment"
 trap - EXIT
+if [[ $slot != primary ]]; then
+  # Saved for later, same reasoning as the NetworkManager branch above --
+  # never applied immediately. Switching to it is japyscope-wifi-switch's
+  # job, not this script's.
+  exit 0
+fi
 config_tmp=$(mktemp /etc/wpa_supplicant/.japyscope.XXXXXX)
 trap 'rm -f "$config_tmp"' EXIT
 {

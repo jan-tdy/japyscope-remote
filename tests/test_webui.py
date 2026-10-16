@@ -258,7 +258,7 @@ def test_system_wifi_page_shows_configured_ssids(tmp_path):
     assert "HomeNet" in body and "FieldHotspot" in body
 
 
-def test_system_configure_secondary_wifi_persists_and_connects(tmp_path):
+def test_system_configure_secondary_wifi_saves_without_connecting(tmp_path):
     configured = []
     db_path = str(tmp_path / "web.db")
     with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
@@ -286,7 +286,9 @@ def test_system_configure_secondary_wifi_persists_and_connects(tmp_path):
     with db_session(db_path) as conn:
         repo = SettingsRepo(conn)
         assert repo.get("wifi_ssid_secondary") == "FieldHotspot"
-        assert repo.get("wifi_active_slot") == "secondary"
+        # Saving never connects on its own — activating it is a separate,
+        # explicit Dev Tools step (code 5001), not a side effect of saving.
+        assert repo.get("wifi_active_slot") is None
 
 
 def test_system_configure_secondary_wifi_validates_password_length(tmp_path):

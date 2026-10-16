@@ -521,10 +521,10 @@ def create_app(
                             flash("Wi-Fi configuration failed; check Diagnostics.", "error")
                         else:
                             repo.set("wifi_ssid_secondary", ssid)
-                            repo.set("wifi_active_slot", "secondary")
                             flash(
-                                f"Secondary network set to {ssid} and connected now. "
-                                "Switch back to Primary from the controller's Dev Tools (code 5001) if needed.",
+                                f"Secondary network saved as {ssid}. It won't connect on its own — "
+                                "switch to it from the controller's Dev Tools (code 5001) when you're "
+                                "actually in range.",
                                 "ok",
                             )
                 elif action in commands:
