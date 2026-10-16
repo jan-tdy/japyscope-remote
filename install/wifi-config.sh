@@ -19,7 +19,8 @@ if [[ $slot != primary && $slot != secondary ]]; then
   echo "usage: sudo japyscope-wifi [--slot primary|secondary] SSID (password on stdin)" >&2
   exit 2
 fi
-if (( ${#ssid} < 1 || ${#ssid} > 32 )); then
+ssid_bytes=$(printf %s "$ssid" | wc -c)
+if (( ssid_bytes < 1 || ssid_bytes > 32 )); then
   echo "invalid SSID length" >&2
   exit 2
 fi

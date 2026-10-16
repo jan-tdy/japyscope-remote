@@ -74,15 +74,28 @@ check_writable_root() {
 }
 
 wait_for_apt_lock() {
-  local lock=/var/lib/dpkg/lock-frontend waited=0
-  while [[ -e $lock ]] && ! flock -n "$lock" true 2>/dev/null; do
-    waited=$((waited + 2))
-    if (( waited >= 120 )); then
-      echo "Timed out waiting for another apt/dpkg process to finish." >&2
-      return 1
-    fi
-    sleep 2
-  done
+  local lock=/var/lib/dpkg/lock-frontend
+  [[ ! -e $lock ]] && return 0
+  # dpkg uses POSIX record locks, which are independent from flock(2).
+  # Raspberry Pi OS includes Python; if it is missing on a stripped image,
+  # apt-get's DPkg::Lock::Timeout below still provides the safe fallback.
+  command -v python3 >/dev/null || return 0
+  python3 - "$lock" <<'PY'
+import fcntl
+import sys
+import time
+
+deadline = time.monotonic() + 120
+with open(sys.argv[1], "w", encoding="ascii") as lock:
+    while True:
+        try:
+            fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit("Timed out waiting for another apt/dpkg process to finish.")
+            time.sleep(2)
+PY
 }
 
 heal_dpkg() {
@@ -105,8 +118,8 @@ apt_retry() {
   return 1
 }
 
-apt_retry apt-get update
-apt_retry apt-get install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin bluez sudo
+apt_retry apt-get -o DPkg::Lock::Timeout=120 update
+apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends python3 python3-dev python3-venv python3-pip build-essential pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev libcfitsio-dev curl ca-certificates indi-bin bluez sudo
 command -v indiserver >/dev/null
 command -v indi_skywatcherAltAzMount >/dev/null
 
@@ -127,10 +140,10 @@ command -v indi_skywatcherAltAzMount >/dev/null
 # class and enum definitions in the same translation unit. Purge it
 # unconditionally (safe no-op if it was never installed, or already
 # removed by a prior run) before laying down the prebuilt headers.
-# Never mix the old distribution headers with the 2.x header set: SWIG
-# includes several files directly, so mixed include paths produce duplicate
-# declarations. This is needed on both supported OS releases.
-apt_retry apt-get purge -y libindi-dev
+apt_retry apt-get -o DPkg::Lock::Timeout=120 purge -y libindi-dev
+# Belt-and-braces: this device's dpkg state has a history of corruption
+# (see "Filesystem went read-only" below), so don't trust the purge alone
+# to have actually cleared the directory — remove it directly too.
 rm -rf /usr/include/libindi
 libindi_core_marker=/usr/local/share/japyscope/libindi-core-installed
 # shellcheck disable=SC1091
@@ -140,12 +153,14 @@ source "$source_dir/install/libindi-core.env"
 # immutable), so a tag-only marker would wrongly skip re-fetching.
 if [[ "$(cat "$libindi_core_marker" 2>/dev/null || true)" != "$LIBINDI_CORE_SHA256" ]]; then
   tmp_tarball=$(mktemp)
+  trap 'rm -f "${tmp_tarball:-}"' EXIT
   echo "Fetching prebuilt INDI core ($LIBINDI_CORE_TAG) for pyindi-client..." >&2
   curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
     "https://github.com/jan-tdy/japyscope-remote/releases/download/$LIBINDI_CORE_TAG/$LIBINDI_CORE_ASSET"
   echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
   tar -xzf "$tmp_tarball" -C /usr/local
   rm -f "$tmp_tarball"
+  trap - EXIT
   if [[ -d /usr/local/lib/arm-linux-gnueabihf ]]; then
     find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
   fi
@@ -160,12 +175,12 @@ if [[ ${VERSION_CODENAME:-} == bullseye ]]; then
   # the AP's own setup — the Web UI's "Restart Wi-Fi setup" action (and the
   # eventual Dev Tools code 5000, see docs/CODES.md) must still be able to
   # bring the hotspot up manually on request.
-  apt_retry apt-get install -y --no-install-recommends hostapd dnsmasq wpasupplicant
+  apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends hostapd dnsmasq wpasupplicant
   network_backend=wpa_supplicant
 else
   # Bookworm/Trixie's supported network stack is NetworkManager; do not
   # install hostapd/dnsmasq alongside it and fight for wlan0.
-  apt_retry apt-get install -y --no-install-recommends network-manager
+  apt_retry apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends network-manager
   systemctl enable NetworkManager.service
   if systemd_is_live; then systemctl start NetworkManager.service; fi
   command -v nmcli >/dev/null
@@ -182,6 +197,7 @@ getent group spi >/dev/null || groupadd --system spi
 getent group i2c >/dev/null || groupadd --system i2c
 getent group systemd-journal >/dev/null || groupadd --system systemd-journal
 if ! id japyscope >/dev/null 2>&1; then useradd --system --home /var/lib/japyscope --create-home --shell /usr/sbin/nologin japyscope; fi
+# The Web UI diagnostics page reads the service journal directly.
 usermod -a -G gpio,spi,i2c,dialout,netdev,systemd-journal,adm japyscope
 install -d -o root -g root -m 755 /opt/japyscope/releases /etc/japyscope
 printf 'JAPYSCOPE_NETWORK_BACKEND=%s\n' "$network_backend" > /etc/japyscope/network-backend
@@ -263,9 +279,11 @@ ap_password_file=/etc/japyscope/setup-ap-password
 if [[ ! -s $ap_password_file ]]; then
   umask 077
   python3 -c 'import secrets; print(secrets.token_hex(12))' > "$ap_password_file"
-  chown root:japyscope "$ap_password_file"
-  chmod 640 "$ap_password_file"
 fi
+# Always repair these after a partial/power-loss-interrupted prior run; a
+# nonempty root-only file prevents the controller from showing the password.
+chown root:japyscope "$ap_password_file"
+chmod 640 "$ap_password_file"
 if [[ $network_backend == wpa_supplicant ]]; then
 python3 - "$source_dir/install/hostapd.conf" /etc/hostapd/japyscope.conf "$ap_password_file" <<'PY'
 import pathlib
