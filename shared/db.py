@@ -160,9 +160,16 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # The firmware app (one long-lived connection) and the Web UI (one
+    # short-lived connection per request) both write to the same file
+    # concurrently. WAL lets readers proceed while a writer commits, and
+    # busy_timeout makes SQLite retry instead of raising "database is
+    # locked" immediately when the two do collide on a write.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
