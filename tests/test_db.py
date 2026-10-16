@@ -19,9 +19,47 @@ def conn():
 
 def test_default_settings_seeded(conn):
     settings = SettingsRepo(conn)
+    state = StateRepo(conn)
     assert settings.get("timezone") == "UTC"
-    assert settings.get("sudo_password") != "1234"
-    assert settings.verify_password("sudo_password", "1234") is True
+    # A fresh install no longer seeds the well-known "1234" default
+    # (jan-tdy/japyscope-remote#35) — it gets a random per-device code
+    # instead, left in `state` (not `settings`) so ControllerUI can show
+    # it to the owner until they pick their own.
+    assert settings.get("sudo_password_is_default") == "1"
+    default_password = state.get("sudo_password_first_boot")
+    assert default_password is not None
+    assert len(default_password) == 4 and default_password.isdigit()
+    assert settings.get("sudo_password") != default_password
+    assert settings.verify_password("sudo_password", default_password) is True
+
+
+def test_fresh_install_does_not_use_well_known_default_password(conn):
+    # Regression test for jan-tdy/japyscope-remote#35: the seeded password
+    # must not be the old hardcoded "1234" that every device used to share.
+    settings = SettingsRepo(conn)
+    state = StateRepo(conn)
+    assert state.get("sudo_password_first_boot") != "1234"
+    assert settings.verify_password("sudo_password", "1234") is False
+
+
+def test_fresh_install_password_is_randomized_per_device():
+    fd1, path1 = tempfile.mkstemp(suffix=".db")
+    os.close(fd1)
+    fd2, path2 = tempfile.mkstemp(suffix=".db")
+    os.close(fd2)
+    conn1 = connect(path1)
+    conn2 = connect(path2)
+    try:
+        init_db(conn1)
+        init_db(conn2)
+        password1 = StateRepo(conn1).get("sudo_password_first_boot")
+        password2 = StateRepo(conn2).get("sudo_password_first_boot")
+        assert password1 != password2
+    finally:
+        conn1.close()
+        conn2.close()
+        os.unlink(path1)
+        os.unlink(path2)
 
 
 def test_passwords_are_salted_and_verified(conn):
