@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 
 import requests
@@ -577,18 +578,96 @@ def test_devtools_9600_opens_iface_select_and_back_returns_idle():
     finally: conn.close(); os.unlink(path)
 
 
-def test_devtools_9600_selects_bluetooth_and_reopens_on_it():
+def test_devtools_9600_bluetooth_not_yet_paired_triggers_scan(monkeypatch):
     ui, conn, path = make_ui()
     try:
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="AA:BB:CC:DD:EE:FF|SynScan Mount\n"),
+        )
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN)  # select Bluetooth (index 1), not persisted yet
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "BT_SCAN_SELECT"
+        assert ui.state.bt_scan_results == [("AA:BB:CC:DD:EE:FF", "SynScan Mount")]
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged until paired
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bluetooth_scan_pair_persists_and_reopens_selected(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[-2:] == ["scan", "8"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout="AA:BB:CC:DD:EE:FF|SynScan Mount\n")
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
         enter_devtools_code(ui, "9600")
         ui.handle(ENC_DOWN)
-        ui.handle(ENC_PUSH)
-        assert ui.state.screen == "IDLE"
+        ui.handle(ENC_PUSH)  # scans
+        assert ui.state.screen == "BT_SCAN_SELECT"
+        ui.handle(ENC_PUSH)  # pick the only device, pair it
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "Paired" in ui.state.dev_message[0]
+        assert SettingsRepo(conn).get("bluetooth_mount_paired") == "1"
         assert SettingsRepo(conn).get("mount_interface") == "bluetooth"
-        # Reopening the picker starts on the previously persisted choice.
+        assert calls[0][-2:] == ["scan", "8"]
+        assert calls[1][-2:] == ["pair", "AA:BB:CC:DD:EE:FF"]
+
+        # Reopening 9600 now goes straight to IDLE on push (already paired),
+        # no rescanning needed, and starts on the previously picked slot.
         enter_devtools_code(ui, "9600")
         assert ui.state.screen == "IFACE_SELECT"
         assert ui.state.index == 1
+        calls.clear()
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert calls == []
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bluetooth_scan_finds_nothing(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        enter_devtools_code(ui, "9601")
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "No Bluetooth devices found" in ui.state.dev_message[0]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bluetooth_scan_failure_is_reported(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fail(cmd, **kw): raise OSError("bluetoothctl not found")
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9601")
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Bluetooth scan failed"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bluetooth_pair_failure_suggests_manual_ssh_pairing(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fake_run(cmd, **kw):
+            if cmd[-2:] == ["scan", "8"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout="AA:BB:CC:DD:EE:FF|SynScan Mount\n")
+            raise subprocess.CalledProcessError(1, cmd)
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
+        enter_devtools_code(ui, "9601")
+        ui.handle(ENC_PUSH)  # pick the only device, pairing fails (e.g. needs a PIN)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Pairing failed"
+        assert SettingsRepo(conn).get("bluetooth_mount_paired") is None
     finally: conn.close(); os.unlink(path)
 
 

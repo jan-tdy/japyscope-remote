@@ -139,6 +139,7 @@ class UIState:
     dev_scripts: list[str] = field(default_factory=list)
     dev_message: list[str] = field(default_factory=list)
     wifi_switch_labels: list[str] = field(default_factory=list)
+    bt_scan_results: list[tuple[str, str]] = field(default_factory=list)  # (mac, name)
 
 
 class ControllerUI:
@@ -159,9 +160,10 @@ class ControllerUI:
     # SSID/password happens in the Web UI (System page); this only flips
     # which already-configured slot is live, via install/wifi-switch.sh.
     WIFI_SWITCH_SLOTS = ("primary", "secondary")
-    # Dev Tools code 9600 — see docs/CODES.md. "bluetooth" pairing/binding
-    # itself is done once via install/bluetooth-mount.sh (SSH), not from
-    # this screen; selecting it here only records the intended interface.
+    # Dev Tools codes 9600/9601 — see docs/CODES.md. Picking "bluetooth"
+    # here for the first time (or 9601 any time) triggers a scan + pick
+    # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
+    # recording the choice — there's no module paired yet to talk to.
     MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
 
     def __init__(
@@ -481,6 +483,10 @@ class ControllerUI:
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
         elif screen == "WIFI_SWITCH_SELECT":
             lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
+        elif screen == "BT_SCAN_SELECT":
+            lines = self._visible(
+                "Select Bluetooth device", [name for _, name in s.bt_scan_results] or ["(none found)"]
+            )
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
@@ -776,8 +782,14 @@ class ControllerUI:
             if self._move(key, len(self.MOUNT_INTERFACES)): return
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH:
-                self.settings.set("mount_interface", self.MOUNT_INTERFACES[s.index][0])
-                self._set("IDLE")
+                selected = self.MOUNT_INTERFACES[s.index][0]
+                if selected == "bluetooth" and self.settings.get("bluetooth_mount_paired", "0") != "1":
+                    # Not paired yet — scan instead of just recording the
+                    # choice, since there's no mount to talk to otherwise.
+                    self._start_bluetooth_scan()
+                else:
+                    self.settings.set("mount_interface", selected)
+                    self._set("IDLE")
             return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
@@ -788,6 +800,13 @@ class ControllerUI:
             if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH: self._devtools_wifi_switch(self.WIFI_SWITCH_SLOTS[s.index])
+            return
+        if s.screen == "BT_SCAN_SELECT":
+            if self._move(key, max(1, len(s.bt_scan_results)), wrap=False): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH and s.bt_scan_results:
+                mac, name = s.bt_scan_results[s.index]
+                self._devtools_bluetooth_pair(mac, name)
             return
         if s.screen == "DEV_MESSAGE":
             if key in ("9", ENC_PUSH): self._set("IDLE")
@@ -942,6 +961,8 @@ class ControllerUI:
             ifaces = [k for k, _ in self.MOUNT_INTERFACES]
             current = self.settings.get("mount_interface", ifaces[0])
             self._set("IFACE_SELECT", ifaces.index(current) if current in ifaces else 0)
+        elif code == "9601":
+            self._start_bluetooth_scan()
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")
@@ -1020,6 +1041,45 @@ class ControllerUI:
             return
         self.settings.set("wifi_active_slot", slot)
         self._devtools_message([f"Switched to {slot}", "Rejoin that network", "to keep using the Web UI"])
+
+    def _start_bluetooth_scan(self) -> None:
+        """Dev Tools codes 9600 (first-time Bluetooth pick) and 9601
+        (re-pair). Blocks the UI for the scan's duration — same tradeoff
+        as the other synchronous sudo'd Dev Tools actions, but longer
+        (~8s) since it's a real radio scan; the message painted first is
+        the only feedback until it's done."""
+        self.state.dev_message = ["Scanning Bluetooth...", "(about 8 seconds)"]
+        self._set("DEV_MESSAGE")
+        try:
+            result = subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "scan", "8"],
+                capture_output=True, text=True, check=True, timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Bluetooth scan failed: %s", exc)
+            self._devtools_message(["Bluetooth scan failed", str(exc)[:32]])
+            return
+        devices: list[tuple[str, str]] = []
+        for line in result.stdout.splitlines():
+            mac, _, name = line.partition("|")
+            if mac:
+                devices.append((mac, name or mac))
+        self.state.bt_scan_results = devices
+        if not devices:
+            self._devtools_message(["No Bluetooth devices found", "Check the mount is on", "and in range, then retry"])
+            return
+        self._set("BT_SCAN_SELECT")
+
+    def _devtools_bluetooth_pair(self, mac: str, name: str) -> None:
+        try:
+            subprocess.run(["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "pair", mac], check=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Bluetooth pairing with %s failed: %s", mac, exc)
+            self._devtools_message(["Pairing failed", name[:21], "May need a manual PIN", "pair once over SSH"])
+            return
+        self.settings.set("bluetooth_mount_paired", "1")
+        self.settings.set("mount_interface", "bluetooth")
+        self._devtools_message([f"Paired: {name[:21]}", "Bluetooth is now the", "active mount interface"])
 
     @staticmethod
     def _local_ip() -> str:
