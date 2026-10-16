@@ -60,19 +60,26 @@ wiring above entirely — which also removes the one metal path tying the
 controller's ground to the mount's, a candidate fix for the ground-loop
 issue seen on this setup.
 
-One-time pairing/bind, over SSH (Dev Tools code `0044`), not from the
-device UI — entering a MAC address on the 3x4 keypad isn't practical:
+Pairing is done from the device itself — Dev Tools code `9600` (or `9601`
+to re-pair later) scans for nearby Bluetooth devices for a few seconds and
+shows them on a pick list; selecting one pairs/trusts it and binds it to a
+persistent `/dev/rfcomm0` via `japyscope-rfcomm-mount.service`, so it
+survives reboots. No MAC address typing on the 3x4 keypad required — see
+`docs/CODES.md`.
+
+This works automatically for modules that use "Just Works" Secure Simple
+Pairing (no PIN prompt), which covers most modern Bluetooth Classic SPP
+modules. If pairing fails there — most likely a module that still needs a
+PIN this flow can't supply — the Dev Tools screen says so, and it falls
+back to a one-time manual pairing over SSH:
 
 ```
 sudo japyscope-bluetooth-mount pair AA:BB:CC:DD:EE:FF
 ```
 
-This pairs and trusts the module, then binds it to a persistent
-`/dev/rfcomm0` via `japyscope-rfcomm-mount.service` (`install/
-bluetooth-mount.sh`), so it survives reboots. `sudo japyscope-bluetooth-mount
-unpair` reverses it. Afterwards, select it on the device: Dev Tools code
-`9600` → "Bluetooth (SynScan)" (persists `settings.mount_interface`, see
-`docs/CODES.md`).
+(`bluetoothctl`, `agent on`, `pair <MAC>`, answering the PIN prompt,
+pairs it with BlueZ directly — the script finds it already paired
+afterwards.) `sudo japyscope-bluetooth-mount unpair` reverses either path.
 
 **Not yet wired end-to-end**: picking Bluetooth there only records the
 intent — actually pointing the `indi_skywatcherAltAzMount` driver at
