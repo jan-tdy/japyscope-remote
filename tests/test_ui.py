@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import tempfile
 
@@ -8,6 +9,7 @@ from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from firmware.indi.client import MountStatus
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
 from firmware.ui import controller as controller_module
 from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
@@ -1072,4 +1074,37 @@ def test_scroll_indicator_tracks_the_current_position_while_scrolling():
             ui.handle(ENC_DOWN)
         assert ui.state.index == 6
         assert ui.display.scroll == (1, 5, 6, 11)  # window scrolled to keep index 6 visible
+    finally: conn.close(); os.unlink(path)
+
+
+def test_refresh_status_skips_a_locked_key_instead_of_crashing(monkeypatch):
+    # A transient "database is locked" on one status key must be logged and
+    # skipped for that tick, not propagate out of _refresh_status() and crash
+    # the whole UI loop (see issue #36 — busy_timeout/WAL already handle the
+    # retry at the SQLite level; this is the belt-and-suspenders layer).
+    ui, conn, path = make_ui()
+    try:
+        status = MountStatus(
+            connected=True, ra="1:00:00", dec="+10:00:00", alt=45.0, az=90.0,
+            tracking=True, aligned=True, parked=False,
+        )
+        ui.indi.get_status = lambda: status
+
+        real_set = ui.runtime.set
+        calls = []
+
+        def flaky_set(key, value):
+            calls.append(key)
+            if key == "ra":
+                raise sqlite3.OperationalError("database is locked")
+            real_set(key, value)
+
+        monkeypatch.setattr(ui.runtime, "set", flaky_set)
+
+        ui._refresh_status()  # must not raise
+
+        assert "ra" in calls  # the locked key was attempted
+        assert StateRepo(conn).get("ra") is None  # ...but its write was skipped
+        assert StateRepo(conn).get("dec") == "+10:00:00"  # other keys still wrote fine
+        assert StateRepo(conn).get("indi_connected") == "true"
     finally: conn.close(); os.unlink(path)

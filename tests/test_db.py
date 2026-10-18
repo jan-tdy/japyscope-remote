@@ -106,6 +106,36 @@ def test_state_is_separate_from_settings(conn):
     assert SettingsRepo(conn).get("parked") is None
 
 
+def test_concurrent_connections_read_during_write(conn):
+    # jan-tdy/japyscope-remote#36: the firmware (one long-lived connection,
+    # ~1 Hz state writes) and the Web UI (one connection per request) share
+    # one SQLite file. Without WAL, a writer's transaction blocks readers
+    # until it commits; with WAL a reader on its own connection can proceed
+    # while another connection's write transaction is still open.
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+    writer = connect(db_path)
+    reader = connect(db_path)
+    try:
+        state = StateRepo(writer)
+        state.set("ra", "12:34:56.0")
+
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "UPDATE state SET value = ? WHERE key = ?", ("13:00:00.0", "ra")
+        )
+        # The write transaction is still open (no commit yet) - a read on a
+        # separate connection must not block or raise "database is locked".
+        row = reader.execute("SELECT value FROM state WHERE key = ?", ("ra",)).fetchone()
+        assert row["value"] == "12:34:56.0"
+        writer.commit()
+
+        row = reader.execute("SELECT value FROM state WHERE key = ?", ("ra",)).fetchone()
+        assert row["value"] == "13:00:00.0"
+    finally:
+        writer.close()
+        reader.close()
+
+
 def test_access_code_expiry(conn):
     codes = AccessCodeRepo(conn)
     codes.issue("123456", ttl_seconds=60)

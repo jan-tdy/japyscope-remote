@@ -11,6 +11,7 @@ import logging
 import os
 import random
 import socket
+import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -259,8 +260,12 @@ class ControllerUI:
         }
         for key, value in values.items():
             encoded = str(value).lower() if isinstance(value, bool) else str(value)
-            if self.runtime.get(key) != encoded:
-                self.runtime.set(key, encoded)
+            try:
+                if self.runtime.get(key) != encoded:
+                    self.runtime.set(key, encoded)
+            except sqlite3.OperationalError as exc:
+                logger.warning("Skipping status write for %s: %s", key, exc)
+                continue
 
     def _set(self, screen: str, index: int = 0) -> None:
         self.state.screen = screen
