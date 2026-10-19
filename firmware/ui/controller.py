@@ -1021,6 +1021,25 @@ class ControllerUI:
         ])
 
     @staticmethod
+    def _subprocess_failure_detail(exc: Exception) -> str:
+        """The real reason a sudo'd Dev Tools subprocess failed, for the
+        one-line status screen — `str(CalledProcessError)` is just a repr
+        of the command and its exit code ("Command '[...]' returned
+        non-zero exit status 1."), which told the owner nothing they
+        didn't already know and used to be all that got shown (truncated
+        to 32 chars, e.g. "Command '['sudo', '/usr/local/s"). Prefer the
+        failed command's own stderr/stdout — e.g. bluetoothctl's "No
+        default controller available" — when there is any."""
+        if isinstance(exc, subprocess.CalledProcessError):
+            for stream in (exc.stderr, exc.stdout):
+                if stream:
+                    lines = [line.strip() for line in stream.strip().splitlines() if line.strip()]
+                    if lines:
+                        return lines[-1][:42]
+            return f"exit status {exc.returncode}"
+        return str(exc)[:42]
+
+    @staticmethod
     def _time_sync_status() -> tuple[bool, str]:
         """Ask systemd whether the clock has actually been synchronized
         against NTP, and via what — the Menu's Time Sync screen used to
@@ -1114,7 +1133,7 @@ class ControllerUI:
             )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.error("Dev Tools: Bluetooth scan failed: %s", exc)
-            self._devtools_message(["Bluetooth scan failed", str(exc)[:32]])
+            self._devtools_message(["Bluetooth scan failed", self._subprocess_failure_detail(exc)])
             return
         devices: list[tuple[str, str]] = []
         for line in result.stdout.splitlines():
@@ -1129,10 +1148,15 @@ class ControllerUI:
 
     def _devtools_bluetooth_pair(self, mac: str, name: str) -> None:
         try:
-            subprocess.run(["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "pair", mac], check=True, timeout=30)
+            subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "pair", mac],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.error("Dev Tools: Bluetooth pairing with %s failed: %s", mac, exc)
-            self._devtools_message(["Pairing failed", name[:21], "May need a manual PIN", "pair once over SSH"])
+            self._devtools_message([
+                "Pairing failed", name[:21], self._subprocess_failure_detail(exc), "pair once over SSH",
+            ])
             return
         self.settings.set("bluetooth_mount_paired", "1")
         self.settings.set("mount_interface", "bluetooth")

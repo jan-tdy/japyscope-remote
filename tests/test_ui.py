@@ -656,6 +656,25 @@ def test_devtools_bluetooth_scan_failure_is_reported(monkeypatch):
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_bluetooth_scan_failure_shows_the_real_reason(monkeypatch):
+    # A failed scan used to show a useless truncated repr of the command
+    # itself ("Command '['sudo', '/usr/local/s") instead of the actual
+    # reason (bluetoothctl's own stderr) — this is what the owner actually
+    # needs to diagnose a real hardware/adapter problem.
+    ui, conn, path = make_ui()
+    try:
+        def fail(cmd, **kw):
+            raise subprocess.CalledProcessError(
+                1, cmd, output="", stderr="No default controller available\n"
+            )
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9601")
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Bluetooth scan failed"
+        assert "No default controller available" in ui.state.dev_message[1]
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_bluetooth_pair_failure_suggests_manual_ssh_pairing(monkeypatch):
     ui, conn, path = make_ui()
     try:
