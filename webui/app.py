@@ -527,6 +527,19 @@ def create_app(
                                 "actually in range.",
                                 "ok",
                             )
+                elif action == "configure-mount-wifi":
+                    host = request.form.get("mount_wifi_host", "").strip()
+                    try:
+                        ipaddress.ip_address(host)
+                    except ValueError:
+                        flash("Enter a valid IPv4/IPv6 address (e.g. 192.168.4.1 for the mount's own hotspot, or its LAN IP in Station mode).", "error")
+                    else:
+                        repo.set("mount_wifi_host", host)
+                        flash(
+                            f"Mount WiFi IP saved as {host}. Select WiFi on the controller's "
+                            "Dev Tools (code 9600) to actually connect.",
+                            "ok",
+                        )
                 elif action in commands:
                     action_runner(commands[action]); flash(f"System action queued: {action}.", "ok")
                 else: abort(400)
@@ -534,11 +547,13 @@ def create_app(
             primary_ssid = repo.get("wifi_ssid", "")
             secondary_ssid = repo.get("wifi_ssid_secondary", "")
             active_slot = repo.get("wifi_active_slot", "primary")
+            mount_wifi_host = repo.get("mount_wifi_host", "")
         return render_template(
             "system.html",
             primary_ssid=primary_ssid,
             secondary_ssid=secondary_ssid,
             active_slot=active_slot,
+            mount_wifi_host=mount_wifi_host,
         )
 
     if os.environ.get("JAPYSCOPE_DEV_MODE") == "1":

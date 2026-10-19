@@ -724,6 +724,62 @@ def test_devtools_9600_bluetooth_not_yet_paired_triggers_scan(monkeypatch):
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_9600_wifi_without_configured_ip_shows_message():
+    ui, conn, path = make_ui()
+    try:
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # select WiFi (index 2)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "No mount WiFi IP set"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # select WiFi (index 2)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connecting via WiFi"
+        assert "192.168.4.1" in ui.state.dev_message
+        assert SettingsRepo(conn).get("mount_interface") == "wifi"
+        assert calls == [
+            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION.CONNECT=On"],
+        ]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def fail(cmd, **kw):
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such property CONNECTION_MODE\n")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount WiFi connect failed"
+        assert "No such property" in ui.state.dev_message[1]
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged on failure
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_bluetooth_scan_pair_persists_and_reopens_selected(monkeypatch):
     ui, conn, path = make_ui()
     try:

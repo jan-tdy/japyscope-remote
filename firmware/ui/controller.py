@@ -168,7 +168,17 @@ class ControllerUI:
     # here for the first time (or 9601 any time) triggers a scan + pick
     # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
     # recording the choice — there's no module paired yet to talk to.
-    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
+    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"))
+    # indi_skywatcherAltAzMount's own INDI device name and the standard
+    # INDI::Connection::TCP property names used to point it at the
+    # mount's SynScan WiFi module over the network (UDP port 11880 — the
+    # module is a transparent serial<->UDP bridge for the same SynScan
+    # protocol RJ12 carries, confirmed against independent open-source
+    # reimplementations of it) instead of a serial port. UNVERIFIED
+    # against a live session with this exact driver/mount — same caveat
+    # as firmware/indi/manager.py's own docstring.
+    INDI_MOUNT_DEVICE = "SkyWatcher Alt-Az"
+    INDI_MOUNT_WIFI_PORT = 11880
 
     def __init__(
         self,
@@ -869,6 +879,8 @@ class ControllerUI:
                     # Not paired yet — scan instead of just recording the
                     # choice, since there's no mount to talk to otherwise.
                     self._start_bluetooth_scan()
+                elif selected == "wifi":
+                    self._connect_mount_wifi()
                 else:
                     self.settings.set("mount_interface", selected)
                     self._set("IDLE")
@@ -1269,6 +1281,38 @@ class ControllerUI:
         self.settings.set("bluetooth_mount_paired", "1")
         self.settings.set("mount_interface", "bluetooth")
         self._devtools_message([f"Paired: {name[:21]}", "Bluetooth is now the", "active mount interface"])
+
+    def _connect_mount_wifi(self) -> None:
+        """Dev Tools code 9600's "WiFi" choice. Points the already-running
+        indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
+        mount's SynScan WiFi module over the network instead of a serial
+        port, using indi_setprop (bundled with indi-bin, same subprocess
+        style as the other Dev Tools actions) rather than the still-
+        unfinished PyIndi client layer (firmware/indi/client.py) — that
+        layer's get_status/sync/goto/park gap is unrelated to which
+        transport the driver itself talks to the mount over."""
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            self._devtools_message([
+                "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
+            ])
+            return
+        device = self.INDI_MOUNT_DEVICE
+        steps = [
+            f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+            f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+            f"{device}.DEVICE_ADDRESS.PORT={self.INDI_MOUNT_WIFI_PORT}",
+            f"{device}.CONNECTION.CONNECT=On",
+        ]
+        for step in steps:
+            try:
+                subprocess.run(["indi_setprop", step], capture_output=True, text=True, check=True, timeout=10)
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("Dev Tools: mount WiFi connect failed (%s): %s", step, exc)
+                self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
+                return
+        self.settings.set("mount_interface", "wifi")
+        self._devtools_message(["Connecting via WiFi", host, "now the active mount interface"])
 
     @staticmethod
     def _local_ip() -> str:
