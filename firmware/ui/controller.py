@@ -450,7 +450,12 @@ class ControllerUI:
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
-            lines = ["Web UI access code", s.access_code, f"Valid {remain // 60:02}:{remain % 60:02}", "push/9=back"]
+            lines = [
+                "Web UI access code",
+                s.access_code,
+                f"{self._local_ip()}:8080 · {remain // 60:02}:{remain % 60:02}",
+                "push/9=back",
+            ]
         elif screen == "WIFI_SETUP":
             password_path = os.environ.get(
                 "JAPYSCOPE_AP_PASSWORD_FILE", "/etc/japyscope/setup-ap-password"
@@ -495,7 +500,13 @@ class ControllerUI:
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
         elif screen == "TIME_SYNC":
-            lines = ["Time synchronized", "using system NTP", "", "push/9=back"]
+            synced, method = self._time_sync_status()
+            lines = [
+                "Clock synchronized" if synced else "Clock NOT synchronized",
+                method,
+                "",
+                "push/9=back",
+            ]
         elif screen == "SYSTEM_CONFIRM":
             lines = ["Power off controller?", "push=yes", "", "9=back"]
         elif screen == "SHUTDOWN":
@@ -844,9 +855,16 @@ class ControllerUI:
             if self._truth(self.runtime.get("parked", "false")): self.runtime.set("parked", "false"); self._set("IDLE")
             else: self._set("PARK_CONFIRM")
         elif s.index == 3:
-            s.access_code = f"{random.SystemRandom().randrange(100000, 1000000)}"
-            s.access_expires = self.clock() + 600; s.access_last_remaining = -1
-            self.codes.issue(s.access_code, 600); self._set("WIFI_ACCESS")
+            # Only mint a fresh code (and restart the 10-minute countdown)
+            # when the current one is gone or expired — just reopening this
+            # menu entry to glance at the remaining time used to invalidate
+            # a still-valid, already-in-use code every time.
+            if not s.access_code or self.clock() >= s.access_expires:
+                s.access_code = f"{random.SystemRandom().randrange(100000, 1000000)}"
+                s.access_expires = self.clock() + 600
+                self.codes.issue(s.access_code, 600)
+            s.access_last_remaining = -1
+            self._set("WIFI_ACCESS")
         elif s.index == 4: self._set("LOCATION")
         elif s.index == 5: self._set("BACKLIGHT")
         elif s.index == 6:
@@ -999,7 +1017,30 @@ class ControllerUI:
             "System Info",
             f"{self._local_ip()} · {socket.gethostname()}.local",
             f"Uptime {self._uptime()} · INDI {'up' if connected else 'down'}",
+            f"Web UI: http://{self._local_ip()}:8080/",
         ])
+
+    @staticmethod
+    def _time_sync_status() -> tuple[bool, str]:
+        """Ask systemd whether the clock has actually been synchronized
+        against NTP, and via what — the Menu's Time Sync screen used to
+        claim "Time synchronized using system NTP" unconditionally, with
+        no real check behind it."""
+        try:
+            result = subprocess.run(
+                ["timedatectl", "show", "-p", "NTPSynchronized", "-p", "NTP", "--value"],
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            lines = result.stdout.splitlines()
+            synced = lines[0].strip() == "yes" if lines else False
+            ntp_enabled = lines[1].strip() == "yes" if len(lines) > 1 else False
+        except (OSError, subprocess.SubprocessError, IndexError):
+            return False, "NTP status unknown"
+        if synced:
+            return True, "via systemd-timesyncd (NTP)"
+        if ntp_enabled:
+            return False, "NTP enabled, not synced yet"
+        return False, "NTP is disabled"
 
     @staticmethod
     def _uptime() -> str:
