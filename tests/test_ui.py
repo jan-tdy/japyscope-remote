@@ -593,6 +593,47 @@ def test_devtools_9955_lists_and_runs_custom_script(monkeypatch, tmp_path):
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_9956_lists_and_runs_official_script(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(("run", cmd))
+            assert cmd[-1] == "list"
+            return subprocess.CompletedProcess(cmd, 0, stdout="cleanup-old-rollbacks.sh\n")
+
+        def fake_popen(cmd, **kw):
+            calls.append(("popen", cmd))
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(controller_module.subprocess, "Popen", fake_popen)
+        enter_devtools_code(ui, "9956")
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        assert ui.state.dev_scripts == ["cleanup-old-rollbacks.sh"]
+        ui.handle(ENC_PUSH)  # run it
+        assert calls[0] == ("run", ["sudo", "/usr/local/sbin/japyscope-run-official-script", "list"])
+        assert calls[1] == ("popen", ["sudo", "/usr/local/sbin/japyscope-run-official-script", "run", "cleanup-old-rollbacks.sh"])
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "cleanup-old-rollbacks.sh" in ui.state.dev_message
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9956_list_failure_shows_empty_not_a_crash(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fail(cmd, **kw): raise subprocess.CalledProcessError(1, cmd, stderr="offline\n")
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9956")
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        assert ui.state.dev_scripts == []
+        ui.handle(ENC_PUSH)  # nothing to run, screen unchanged
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_9955_no_scripts_found(monkeypatch, tmp_path):
     monkeypatch.setenv("JAPYSCOPE_CUSTOM_SCRIPTS_DIR", str(tmp_path / "missing"))
     ui, conn, path = make_ui()

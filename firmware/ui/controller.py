@@ -555,6 +555,8 @@ class ControllerUI:
             lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
         elif screen == "DEV_SCRIPT_SELECT":
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            lines = self._visible("Run official script", s.dev_scripts or ["(none found / offline)"])
         elif screen == "WIFI_SWITCH_SELECT":
             lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
         elif screen == "BT_SCAN_SELECT":
@@ -890,6 +892,11 @@ class ControllerUI:
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
             return
+        if s.screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH and s.dev_scripts: self._run_official_script(s.dev_scripts[s.index])
+            return
         if s.screen == "WIFI_SWITCH_SELECT":
             if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
             if key == "9": self._set("IDLE"); return
@@ -1109,6 +1116,9 @@ class ControllerUI:
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")
+        elif code == "9956":
+            self.state.dev_scripts = self._list_official_scripts()
+            self._set("DEV_OFFICIAL_SCRIPT_SELECT")
         elif code == "9999":
             self._devtools_message(["Why did the astronomer", "break up with the Moon?", "Because it needed space."])
         elif code == "4200":
@@ -1344,4 +1354,33 @@ class ControllerUI:
             self._devtools_message([f"Running {name}", "", "(started in background)"])
         except OSError as exc:
             logger.error("Dev Tools: failed to run script %s: %s", name, exc)
+            self._devtools_message([f"Failed to run {name}", str(exc)[:32]])
+
+    def _list_official_scripts(self) -> list[str]:
+        """Dev Tools code 9956 — unlike 9955's local ~/custom scripts,
+        these are fetched from github.com/japyscope/scripts and only ever
+        run after their checksum is verified against that repo's own
+        SHA256SUMS (install/official-script-runner.sh does both the
+        listing and the verification — this just asks it what's there)."""
+        try:
+            result = subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-run-official-script", "list"],
+                capture_output=True, text=True, check=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Dev Tools: could not list official scripts: %s", exc)
+            return []
+        return sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+    def _run_official_script(self, name: str) -> None:
+        # Fire-and-forget, same as _run_custom_script — the privileged
+        # helper does its own download+checksum-verify+execute inline
+        # before this returns, which can take a while (network fetch
+        # plus whatever the script itself does), so this doesn't block
+        # the UI waiting for it.
+        try:
+            subprocess.Popen(["sudo", "/usr/local/sbin/japyscope-run-official-script", "run", name])
+            self._devtools_message(["Verifying & running", name, "(started in background)"])
+        except OSError as exc:
+            logger.error("Dev Tools: failed to run official script %s: %s", name, exc)
             self._devtools_message([f"Failed to run {name}", str(exc)[:32]])
