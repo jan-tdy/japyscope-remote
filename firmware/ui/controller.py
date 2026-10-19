@@ -14,7 +14,7 @@ import socket
 import sqlite3
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -27,6 +27,7 @@ from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_L
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from shared.version import current_version
 
+from . import astro
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
 from .search import SearchResult, SmartSearch
@@ -141,6 +142,8 @@ class UIState:
     dev_message: list[str] = field(default_factory=list)
     wifi_switch_labels: list[str] = field(default_factory=list)
     bt_scan_results: list[tuple[str, str]] = field(default_factory=list)  # (mac, name)
+    update_last_phase: str = ""
+    update_dismissed: bool = False
 
 
 class ControllerUI:
@@ -206,6 +209,25 @@ class ControllerUI:
 
     def start(self) -> None:
         self.render()
+        update_status = self.runtime.get("update_status")
+        if update_status in ("success", "failed"):
+            # A finished OTA update (`install/update.py`'s `apply()`)
+            # restarts this very process right after writing this status
+            # -- so this boot is the first chance to actually show the
+            # result, before the usual BOOT_PARK_CHECK question. Cleared
+            # immediately so a later, unrelated boot never replays it.
+            tag = self.runtime.get("update_tag", "")
+            phase = self.runtime.get("update_phase", "")
+            error = self.runtime.get("update_error", "")
+            for key in ("update_status", "update_phase", "update_tag", "update_error"):
+                self.runtime.delete(key)
+            if update_status == "success":
+                self.state.dev_message = ["Update installed", f"Now running {tag}" if tag else "Update complete"]
+            else:
+                detail = "Rolled back to the previous version" if phase == "rolled_back" else "Update failed"
+                self.state.dev_message = ["Update failed", detail, error[:32] if error else ""]
+            self._set("UPDATE_RESULT")
+            return
         self.state.screen = "BOOT_PARK_CHECK"
         self.state.index = 0
         self.render()
@@ -243,6 +265,38 @@ class ControllerUI:
             elif remaining != s.access_last_remaining:
                 s.access_last_remaining = remaining
                 self.render(coalesce=True)
+        self._poll_update_status()
+
+    def _poll_update_status(self) -> None:
+        """Surfaces `install/update.py`'s progress (written to `state` as
+        `update_status`/`update_phase`) on the device -- but only ever by
+        taking over an already-idle screen, never by interrupting
+        whatever the owner is actually doing (TRACK, aligning, browsing a
+        catalog, Dev Tools...). The scheduled daily update timer
+        (`japyscope-update.timer`) fires at a random hour completely
+        independent of what's on screen -- unconditionally jumping to an
+        update screen from any screen would make that routine, unattended
+        background check actively interrupt real use."""
+        s = self.state
+        status = self.runtime.get("update_status")
+        if s.screen == "IDLE" and status == "running" and not s.update_dismissed:
+            s.update_last_phase = ""
+            self._set("UPDATE_STATUS")
+        elif s.screen == "UPDATE_STATUS":
+            if status == "running":
+                phase = self.runtime.get("update_phase", "")
+                if phase != s.update_last_phase:
+                    s.update_last_phase = phase
+                    self.render(coalesce=True)
+            else:
+                # Finished without the process restart a real install
+                # triggers -- e.g. already up to date, or a failure
+                # before anything was actually touched -- so this screen
+                # has nothing left to watch.
+                for key in ("update_status", "update_phase", "update_tag", "update_error"):
+                    self.runtime.delete(key)
+                s.update_dismissed = False
+                self._set("IDLE")
 
     def _refresh_status(self) -> None:
         get_status = getattr(self.indi, "get_status", None)
@@ -499,6 +553,15 @@ class ControllerUI:
             )
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
+        elif screen == "UPDATE_STATUS":
+            phase_text = {
+                "checking": "Checking for update…",
+                "downloading": "Downloading…",
+                "installing": "Installing…",
+            }.get(self.runtime.get("update_phase", ""), "Working…")
+            lines = ["Software Update", phase_text, "", "9=hide (keeps running)"]
+        elif screen == "UPDATE_RESULT":
+            lines = [*s.dev_message, "push/9=continue"]
         elif screen == "TIME_SYNC":
             synced, method = self._time_sync_status()
             lines = [
@@ -658,7 +721,10 @@ class ControllerUI:
             if key == "9": self._set("CATALOG_MENU", 1)
             elif key == ENC_PUSH and rows:
                 row = rows[s.index]; s.catalog_id = row["id"]
-                s.list_items = [SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]) for i in self.catalogs.list_items(row["id"])]
+                s.list_items = [
+                    self._with_live_alt(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]))
+                    for i in self.catalogs.list_items(row["id"])
+                ]
                 s.catalog_title = row["name"]; self._set("LIST")
             return
         if s.screen == "LIST":
@@ -827,6 +893,20 @@ class ControllerUI:
         if s.screen == "DEV_MESSAGE":
             if key in ("9", ENC_PUSH): self._set("IDLE")
             return
+        if s.screen == "UPDATE_STATUS":
+            # Just hides it -- the update (a separate process,
+            # `install/update.py`) keeps running either way; there is
+            # nothing here to cancel. `update_dismissed` stops
+            # `_poll_update_status` from immediately bringing it right
+            # back on the very next tick while the same update is still
+            # running.
+            if key in ("9", ENC_PUSH):
+                s.update_dismissed = True
+                self._set("IDLE")
+            return
+        if s.screen == "UPDATE_RESULT":
+            if key in ("9", ENC_PUSH): self._set("BOOT_PARK_CHECK")
+            return
         if s.screen == "SYSTEM_CONFIRM":
             if key == "9": self._set("MENU", 9)
             elif key == ENC_PUSH: self._shutdown()
@@ -890,8 +970,35 @@ class ControllerUI:
     def _local_objects(self) -> list[SearchResult]:
         objects = [item for values in BUILTIN_CATALOGS.values() for item in values]
         for catalog in self.catalogs.list_catalogs():
-            objects.extend(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]) for i in self.catalogs.list_items(catalog["id"]))
+            objects.extend(
+                self._with_live_alt(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]))
+                for i in self.catalogs.list_items(catalog["id"])
+            )
         return objects
+
+    def _with_live_alt(self, obj: SearchResult) -> SearchResult:
+        """Fill in `obj.alt` from its RA/Dec plus the configured observer
+        location and the current time, when it doesn't already have one.
+        Custom catalog items (`shared/db.py`'s `CatalogItem`, via the Web
+        UI) and online SmartSearch/Sesame results never carry an `alt` --
+        unlike `BUILTIN_CATALOGS`'s demo entries, nothing computed one for
+        them, so they always showed "Alt: --" (and, worse, silently never
+        triggered the below-horizon warning in `_confirm_slew`). Returns
+        `obj` unchanged if it already has an `alt`, or if its RA/Dec can't
+        be parsed, or the device has no location configured yet."""
+        if obj.alt is not None:
+            return obj
+        ra_deg = astro.ra_to_degrees(obj.ra)
+        dec_deg = astro.dec_to_degrees(obj.dec)
+        if ra_deg is None or dec_deg is None:
+            return obj
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            return obj
+        alt = astro.altitude_degrees(ra_deg, dec_deg, latitude, longitude, self.clock())
+        return replace(obj, alt=alt)
 
     def _type(self, key: str) -> None:
         s = self.state
@@ -909,6 +1016,7 @@ class ControllerUI:
         s.t9_at = now; self.render(coalesce=True)
 
     def _confirm_slew(self, obj: SearchResult, return_screen: str) -> None:
+        obj = self._with_live_alt(obj)
         self.state.selected = obj; self.state.return_screen = return_screen
         if not self._truth(self.runtime.get("aligned", "false")) or (obj.alt is not None and obj.alt < 0): self._set("WARN")
         else: self._begin_slew()
@@ -1129,7 +1237,7 @@ class ControllerUI:
         try:
             result = subprocess.run(
                 ["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "scan", "8"],
-                capture_output=True, text=True, check=True, timeout=20,
+                capture_output=True, text=True, check=True, timeout=30,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.error("Dev Tools: Bluetooth scan failed: %s", exc)
