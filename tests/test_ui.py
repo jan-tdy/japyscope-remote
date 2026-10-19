@@ -593,6 +593,47 @@ def test_devtools_9955_lists_and_runs_custom_script(monkeypatch, tmp_path):
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_9956_lists_and_runs_official_script(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(("run", cmd))
+            assert cmd[-1] == "list"
+            return subprocess.CompletedProcess(cmd, 0, stdout="cleanup-old-rollbacks.sh\n")
+
+        def fake_popen(cmd, **kw):
+            calls.append(("popen", cmd))
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(controller_module.subprocess, "Popen", fake_popen)
+        enter_devtools_code(ui, "9956")
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        assert ui.state.dev_scripts == ["cleanup-old-rollbacks.sh"]
+        ui.handle(ENC_PUSH)  # run it
+        assert calls[0] == ("run", ["sudo", "/usr/local/sbin/japyscope-run-official-script", "list"])
+        assert calls[1] == ("popen", ["sudo", "/usr/local/sbin/japyscope-run-official-script", "run", "cleanup-old-rollbacks.sh"])
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "cleanup-old-rollbacks.sh" in ui.state.dev_message
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9956_list_failure_shows_empty_not_a_crash(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fail(cmd, **kw): raise subprocess.CalledProcessError(1, cmd, stderr="offline\n")
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9956")
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        assert ui.state.dev_scripts == []
+        ui.handle(ENC_PUSH)  # nothing to run, screen unchanged
+        assert ui.state.screen == "DEV_OFFICIAL_SCRIPT_SELECT"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_9955_no_scripts_found(monkeypatch, tmp_path):
     monkeypatch.setenv("JAPYSCOPE_CUSTOM_SCRIPTS_DIR", str(tmp_path / "missing"))
     ui, conn, path = make_ui()
@@ -721,6 +762,62 @@ def test_devtools_9600_bluetooth_not_yet_paired_triggers_scan(monkeypatch):
         assert ui.state.screen == "BT_SCAN_SELECT"
         assert ui.state.bt_scan_results == [("AA:BB:CC:DD:EE:FF", "SynScan Mount")]
         assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged until paired
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_without_configured_ip_shows_message():
+    ui, conn, path = make_ui()
+    try:
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # select WiFi (index 2)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "No mount WiFi IP set"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # select WiFi (index 2)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connecting via WiFi"
+        assert "192.168.4.1" in ui.state.dev_message
+        assert SettingsRepo(conn).get("mount_interface") == "wifi"
+        assert calls == [
+            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION.CONNECT=On"],
+        ]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def fail(cmd, **kw):
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such property CONNECTION_MODE\n")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount WiFi connect failed"
+        assert "No such property" in ui.state.dev_message[1]
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged on failure
     finally: conn.close(); os.unlink(path)
 
 

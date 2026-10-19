@@ -29,6 +29,27 @@
 </section>
 
 <section>
+  <h3>Mount WiFi (SynScan)</h3>
+  <p class="muted">
+    The mount's own SynScan WiFi module, reached over the network instead of RJ12/Bluetooth.
+    Use <code>192.168.4.1</code> if the mount is in its own Access Point mode, or its LAN IP
+    (check your router) if it's in Station mode on your WiFi. This only stores the address —
+    actually connecting is done on the controller's Dev Tools (code 9600), same as Bluetooth.
+  </p>
+  <form method="post" style="max-width: 22rem; margin: 1.25rem 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="configure-mount-wifi">
+
+    <label for="mount-wifi-host">Mount WiFi IP</label>
+    <input id="mount-wifi-host" name="mount_wifi_host" maxlength="45" required placeholder="192.168.4.1" value="{{ mount_wifi_host }}">
+
+    <div style="margin-top: 1rem;">
+      <button type="submit" class="primary" style="width: 100%;">Save</button>
+    </div>
+  </form>
+</section>
+
+<section>
   <h3>Service Control</h3>
   <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
     <form method="post" class="inline">

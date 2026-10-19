@@ -168,7 +168,17 @@ class ControllerUI:
     # here for the first time (or 9601 any time) triggers a scan + pick
     # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
     # recording the choice — there's no module paired yet to talk to.
-    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
+    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"))
+    # indi_skywatcherAltAzMount's own INDI device name and the standard
+    # INDI::Connection::TCP property names used to point it at the
+    # mount's SynScan WiFi module over the network (UDP port 11880 — the
+    # module is a transparent serial<->UDP bridge for the same SynScan
+    # protocol RJ12 carries, confirmed against independent open-source
+    # reimplementations of it) instead of a serial port. UNVERIFIED
+    # against a live session with this exact driver/mount — same caveat
+    # as firmware/indi/manager.py's own docstring.
+    INDI_MOUNT_DEVICE = "SkyWatcher Alt-Az"
+    INDI_MOUNT_WIFI_PORT = 11880
 
     def __init__(
         self,
@@ -545,6 +555,8 @@ class ControllerUI:
             lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
         elif screen == "DEV_SCRIPT_SELECT":
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            lines = self._visible("Run official script", s.dev_scripts or ["(none found / offline)"])
         elif screen == "WIFI_SWITCH_SELECT":
             lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
         elif screen == "BT_SCAN_SELECT":
@@ -869,6 +881,8 @@ class ControllerUI:
                     # Not paired yet — scan instead of just recording the
                     # choice, since there's no mount to talk to otherwise.
                     self._start_bluetooth_scan()
+                elif selected == "wifi":
+                    self._connect_mount_wifi()
                 else:
                     self.settings.set("mount_interface", selected)
                     self._set("IDLE")
@@ -877,6 +891,11 @@ class ControllerUI:
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
             if key == "9": self._set("IDLE"); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
+            return
+        if s.screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
+            if key == "9": self._set("IDLE"); return
+            if key == ENC_PUSH and s.dev_scripts: self._run_official_script(s.dev_scripts[s.index])
             return
         if s.screen == "WIFI_SWITCH_SELECT":
             if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
@@ -1097,6 +1116,9 @@ class ControllerUI:
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")
+        elif code == "9956":
+            self.state.dev_scripts = self._list_official_scripts()
+            self._set("DEV_OFFICIAL_SCRIPT_SELECT")
         elif code == "9999":
             self._devtools_message(["Why did the astronomer", "break up with the Moon?", "Because it needed space."])
         elif code == "4200":
@@ -1270,6 +1292,38 @@ class ControllerUI:
         self.settings.set("mount_interface", "bluetooth")
         self._devtools_message([f"Paired: {name[:21]}", "Bluetooth is now the", "active mount interface"])
 
+    def _connect_mount_wifi(self) -> None:
+        """Dev Tools code 9600's "WiFi" choice. Points the already-running
+        indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
+        mount's SynScan WiFi module over the network instead of a serial
+        port, using indi_setprop (bundled with indi-bin, same subprocess
+        style as the other Dev Tools actions) rather than the still-
+        unfinished PyIndi client layer (firmware/indi/client.py) — that
+        layer's get_status/sync/goto/park gap is unrelated to which
+        transport the driver itself talks to the mount over."""
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            self._devtools_message([
+                "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
+            ])
+            return
+        device = self.INDI_MOUNT_DEVICE
+        steps = [
+            f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+            f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+            f"{device}.DEVICE_ADDRESS.PORT={self.INDI_MOUNT_WIFI_PORT}",
+            f"{device}.CONNECTION.CONNECT=On",
+        ]
+        for step in steps:
+            try:
+                subprocess.run(["indi_setprop", step], capture_output=True, text=True, check=True, timeout=10)
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("Dev Tools: mount WiFi connect failed (%s): %s", step, exc)
+                self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
+                return
+        self.settings.set("mount_interface", "wifi")
+        self._devtools_message(["Connecting via WiFi", host, "now the active mount interface"])
+
     @staticmethod
     def _local_ip() -> str:
         # UDP "connect" never sends a packet — just asks the routing table
@@ -1300,4 +1354,33 @@ class ControllerUI:
             self._devtools_message([f"Running {name}", "", "(started in background)"])
         except OSError as exc:
             logger.error("Dev Tools: failed to run script %s: %s", name, exc)
+            self._devtools_message([f"Failed to run {name}", str(exc)[:32]])
+
+    def _list_official_scripts(self) -> list[str]:
+        """Dev Tools code 9956 — unlike 9955's local ~/custom scripts,
+        these are fetched from github.com/japyscope/scripts and only ever
+        run after their checksum is verified against that repo's own
+        SHA256SUMS (install/official-script-runner.sh does both the
+        listing and the verification — this just asks it what's there)."""
+        try:
+            result = subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-run-official-script", "list"],
+                capture_output=True, text=True, check=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Dev Tools: could not list official scripts: %s", exc)
+            return []
+        return sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+    def _run_official_script(self, name: str) -> None:
+        # Fire-and-forget, same as _run_custom_script — the privileged
+        # helper does its own download+checksum-verify+execute inline
+        # before this returns, which can take a while (network fetch
+        # plus whatever the script itself does), so this doesn't block
+        # the UI waiting for it.
+        try:
+            subprocess.Popen(["sudo", "/usr/local/sbin/japyscope-run-official-script", "run", name])
+            self._devtools_message(["Verifying & running", name, "(started in background)"])
+        except OSError as exc:
+            logger.error("Dev Tools: failed to run official script %s: %s", name, exc)
             self._devtools_message([f"Failed to run {name}", str(exc)[:32]])

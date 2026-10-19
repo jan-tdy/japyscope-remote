@@ -320,6 +320,50 @@ def test_system_configure_secondary_wifi_validates_password_length(tmp_path):
         assert SettingsRepo(conn).get("wifi_ssid_secondary") is None
 
 
+def test_system_configure_mount_wifi_saves_valid_ip(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(db_path, action_runner=lambda *_: None)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-mount-wifi",
+            "mount_wifi_host": "192.168.4.1",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with db_session(db_path) as conn:
+        assert SettingsRepo(conn).get("mount_wifi_host") == "192.168.4.1"
+
+
+def test_system_configure_mount_wifi_rejects_invalid_ip(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(db_path, action_runner=lambda *_: None)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-mount-wifi",
+            "mount_wifi_host": "not-an-ip",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with db_session(db_path) as conn:
+        assert SettingsRepo(conn).get("mount_wifi_host") is None
+
+
 def test_api_telemetry_endpoint(tmp_path):
     client, _ = authenticated_client(tmp_path)
     response = client.get("/api/telemetry")

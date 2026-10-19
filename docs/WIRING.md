@@ -93,6 +93,42 @@ connections (BT SPP), and the module draws its own power from the mount —
 worth confirming before committing to it as the primary link rather than a
 ground-loop workaround.
 
+### Optional: WiFi (SynScan) instead of RJ12/Bluetooth
+
+Mounts whose built-in module exposes Sky-Watcher's SynScan WiFi adapter
+(the same ESP-WROOM-style chip used across Sky-Watcher's WiFi products —
+AZ-GTi, Freedom-Find bases, the standalone SynScan WiFi Adapter) can be
+reached over the network instead of RJ12 or Bluetooth. Unlike Bluetooth,
+this one **is** wired end-to-end at the INDI level: `indi_skywatcherAltAzMount`
+has built-in support for a network connection (the standard INDI
+`Connection::TCP` plugin), and the module itself is just a transparent
+serial↔UDP bridge for the same SynScan protocol RJ12 carries (confirmed
+against independent open-source reimplementations of it, e.g.
+[`emard/esp32synscan`](https://github.com/emard/esp32synscan)) — no custom
+protocol work needed.
+
+1. Find the module's IP: `192.168.4.1` if it's in its own Access Point
+   mode (its default `SynScan_WiFi_xxxx` network), or its DHCP-assigned
+   LAN IP if it's in Station mode joined to your own WiFi (check your
+   router's client list).
+2. Save that IP in the Web UI → System → "Mount WiFi (SynScan)".
+3. Dev Tools code `9600` → WiFi — this runs `indi_setprop` to set the
+   driver's `CONNECTION_MODE`/`DEVICE_ADDRESS` properties to that IP over
+   UDP port 11880 and connects (`firmware/ui/controller.py`'s
+   `_connect_mount_wifi()`).
+
+**Caveat**: the INDI device name and property names
+(`"SkyWatcher Alt-Az"`, `CONNECTION_MODE`/`DEVICE_ADDRESS`) are standard
+INDI `Connection::TCP` naming, but are **unverified against a live
+session with this exact driver/mount** — same spirit as the rest of this
+doc's hardware caveats. Confirm with `indi_getprop -h localhost "SkyWatcher Alt-Az.*"`
+against a running `indiserver` + `indi_skywatcherAltAzMount` session
+before relying on it, and update `INDI_MOUNT_DEVICE` in
+`firmware/ui/controller.py` if the real device name differs.
+
+Never run the SynScan Pro phone app and this at the same time against the
+same mount — they'll fight over the same connection.
+
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
 {: #keypad}
 
