@@ -59,6 +59,25 @@ def _read_update_settings() -> tuple[str, str]:
         return DEFAULT_REPO, DEFAULT_CHANNEL
 
 
+def _write_update_status(**fields: str) -> None:
+    """Best-effort progress for the controller's Menu -> System -> Update
+    screen (`firmware/ui/controller.py` polls these `state.update_*`
+    keys) -- same tolerance as `_read_update_settings` above: a DB hiccup
+    must never fail the update itself, just leave the screen with nothing
+    to show. Keys are prefixed `update_` (e.g. `phase="downloading"` ->
+    `state["update_phase"]`)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from shared.db import StateRepo, db_session
+
+        with db_session() as conn:
+            state = StateRepo(conn)
+            for key, value in fields.items():
+                state.set(f"update_{key}", value)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not write update status to shared.db: %s", exc)
+
+
 def _fetch_json(url: str) -> dict | list:
     request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "japyscope-updater/0"})
     with urlopen(request, timeout=15) as response:
@@ -258,22 +277,31 @@ class Updater:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise UpdateError("another update is already running") from exc
-            release = self.latest()
-            tag = release.get("tag_name", "").strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
-                raise UpdateError("unsafe release tag")
-            if tag == self.current_version(): return tag
-            target = self.releases / tag
-            if target.exists(): raise UpdateError(f"release directory already exists: {target}")
-            asset, expected = _select_asset(release)
-            previous = self.current.resolve() if self.current.is_symlink() else None
-            with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
-                temp = Path(temp_name); archive = temp / asset["name"]
-                _download(asset["browser_download_url"], archive)
-                actual = _sha256(archive)
-                if actual != expected: raise UpdateError("OTA-002 release checksum verification failed")
-                extracted = _safe_extract(archive, temp / "extract")
-                shutil.move(str(extracted), target)
+            _write_update_status(status="running", phase="checking", error="")
+            try:
+                release = self.latest()
+                tag = release.get("tag_name", "").strip()
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+                    raise UpdateError("unsafe release tag")
+                if tag == self.current_version():
+                    _write_update_status(status="idle", phase="up_to_date")
+                    return tag
+                target = self.releases / tag
+                if target.exists(): raise UpdateError(f"release directory already exists: {target}")
+                asset, expected = _select_asset(release)
+                previous = self.current.resolve() if self.current.is_symlink() else None
+                _write_update_status(phase="downloading", tag=tag)
+                with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
+                    temp = Path(temp_name); archive = temp / asset["name"]
+                    _download(asset["browser_download_url"], archive)
+                    actual = _sha256(archive)
+                    if actual != expected: raise UpdateError("OTA-002 release checksum verification failed")
+                    extracted = _safe_extract(archive, temp / "extract")
+                    shutil.move(str(extracted), target)
+            except (UpdateError, OSError, HTTPError, URLError, TimeoutError) as exc:
+                _write_update_status(status="failed", phase="failed", error=str(exc)[:160])
+                raise
+            _write_update_status(phase="installing")
             try:
                 subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
                 subprocess.run(
@@ -310,6 +338,11 @@ class Updater:
                 # that restart still runs under the old unit definitions.
                 self._sync_system_files(target)
                 self._flip(target)
+                # Written before the restart below (which kills this very
+                # process's controller) so the controller that comes back
+                # up actually sees "success" on its first boot-time state
+                # read, instead of racing its own restart to write it.
+                _write_update_status(status="success", phase="done", tag=tag)
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
             except (OSError, subprocess.SubprocessError, UpdateError) as exc:
@@ -322,7 +355,10 @@ class Updater:
                     # new release's sync (which already ran above) is left
                     # in place rather than erroring the rollback over it.
                     self._sync_system_files(previous, required=False)
+                    _write_update_status(status="failed", phase="rolled_back", error=str(exc)[:160])
                     subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
+                else:
+                    _write_update_status(status="failed", phase="failed", error=str(exc)[:160])
                 raise UpdateError("OTA-003 update failed and was rolled back") from exc
             return tag
 

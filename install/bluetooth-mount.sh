@@ -22,11 +22,32 @@ config_file=/etc/japyscope/bluetooth-mount
 service=japyscope-rfcomm-mount.service
 cmd=${1:-}
 
+try_power_on() {
+  # Make the adapter actually usable before asking bluetoothctl to do
+  # anything with it -- on real hardware this used to fail the whole
+  # scan/pair outright (under `set -e`, a single failed `power on` killed
+  # the script before it ever got to scan) whenever the adapter was
+  # rfkill-soft-blocked, `bluetooth.service` hadn't started yet (e.g.
+  # right after boot), or `power on` just needed a moment to take --
+  # all of which are routine, not exceptional. Unblock/start once, then
+  # retry `power on` for a few seconds instead of one shot.
+  rfkill unblock bluetooth >/dev/null 2>&1 || true
+  systemctl start bluetooth.service >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if bluetoothctl power on >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 case $cmd in
   scan)
     duration=${2:-8}
     if [[ ! $duration =~ ^[0-9]+$ ]]; then usage; fi
-    bluetoothctl power on >/dev/null
+    if ! try_power_on; then
+      echo "Could not power on the Bluetooth adapter -- check it isn't rfkill-blocked and bluetooth.service is installed." >&2
+      exit 1
+    fi
     {
       echo "scan on"
       sleep "$duration"
@@ -36,13 +57,19 @@ case $cmd in
     # -- fine for picking the mount out of what's nearby, but a rescan can
     # also show other previously-seen Bluetooth gear. One "MAC|Name" line
     # per device, for the caller (firmware/ui/controller.py) to parse.
-    bluetoothctl devices | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\) \(.*\)$/\1|\2/p'
+    # `|| true`: an empty/transient failure here must surface as "no
+    # devices found" to the caller, not as a scan failure -- the scan
+    # itself already happened above.
+    bluetoothctl devices 2>/dev/null | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\) \(.*\)$/\1|\2/p' || true
     ;;
   pair)
     mac=${2:-}
     if [[ ! $mac =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then usage; fi
     mac=${mac^^}
-    bluetoothctl power on >/dev/null
+    if ! try_power_on; then
+      echo "Could not power on the Bluetooth adapter -- check it isn't rfkill-blocked and bluetooth.service is installed." >&2
+      exit 1
+    fi
     # NoInputNoOutput auto-accepts "Just Works" Secure Simple Pairing,
     # which covers most modern Bluetooth Classic SPP modules -- no PIN
     # prompt at all. A module that still needs a PIN will fail here; pair

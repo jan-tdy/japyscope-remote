@@ -180,6 +180,20 @@ e-ink panel (see their rows below for why).
 | `OTA-001` | update check failed (no internet / GitHub API unreachable) | `japyscope-app` journal, Web UI → System |
 | `OTA-002` | downloaded release failed checksum verification | same |
 | `OTA-003` | new release failed its post-install health check, rolled back | same |
+
+`install/update.py`'s `apply()` also writes live progress to `state`
+(`update_status`/`update_phase`/`update_tag`/`update_error`), which
+`firmware/ui/controller.py` polls (`_poll_update_status()`): a `checking`
+/ `downloading` / `installing` screen appears on the device, but only by
+taking over an already-idle screen — never by interrupting TRACK,
+alignment, or anything else actually in progress, since the scheduled
+daily check (`japyscope-update.timer`) fires at a random hour regardless
+of what's on screen. Press `9`/push to hide it early (the update itself
+keeps running either way). A finished update that restarted
+`japyscope-app.service` (a real install, success or rolled-back failure)
+shows its result once on the next boot, before `BOOT_PARK_CHECK`; one
+that didn't (already up to date, or failed before anything was touched)
+just returns the current process to `IDLE` on its own.
 | `WIFI-001` | Joining a configured Wi-Fi network failed — either the initial AP-mode setup join (`/setup`) or configuring the secondary network (Web UI → System) | `japyscope-webui` journal, Web UI → Diagnostics |
 | `SEARCH-001` | SmartSearch online lookup timed out / no internet — fell back to local catalogs only | `japyscope-app` journal |
 | `SYS-001` | Daily `apt-get update`/`upgrade` step failed (best-effort — never blocks the JapyScope release step) | `japyscope-update` journal |

@@ -338,6 +338,134 @@ def test_custom_catalog_navigation_has_two_levels():
     finally: conn.close(); os.unlink(path)
 
 
+def test_custom_catalog_items_get_a_real_altitude_not_a_placeholder():
+    # Custom catalog items (added through the Web UI) used to always show
+    # "Alt: --" -- nothing ever computed one for them, unlike the
+    # hardcoded demo values on BUILTIN_CATALOGS entries. With a location
+    # configured, opening the catalog should now compute a real altitude
+    # from the item's own RA/Dec.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("latitude", "48.15")
+        SettingsRepo(conn).set("longitude", "17.11")
+        ui.clock = lambda: 1_700_000_000.0
+        repo = CatalogRepo(conn); catalog_id = repo.create_catalog("Variables")
+        repo.add_item(catalog_id, "V445 Her", "18:24:11", "+12:09")
+        ui.state.screen = "CATALOG_MENU"; ui.state.index = 1; ui.handle(ENC_PUSH)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "LIST"
+        item = ui.state.list_items[0]
+        assert item.name == "V445 Her"
+        assert item.alt is not None
+        assert -90.0 <= item.alt <= 90.0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_custom_catalog_item_with_unparseable_coords_keeps_alt_none():
+    ui, conn, path = make_ui()
+    try:
+        repo = CatalogRepo(conn); catalog_id = repo.create_catalog("Scratch")
+        repo.add_item(catalog_id, "No coords yet", "", "")
+        ui.state.screen = "CATALOG_MENU"; ui.state.index = 1; ui.handle(ENC_PUSH)
+        ui.handle(ENC_PUSH)
+        assert ui.state.list_items[0].alt is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_scheduled_update_does_not_interrupt_active_screen():
+    # japyscope-update.timer fires at a random hour, fully independent of
+    # whatever's on screen -- it must never yank the owner out of TRACK
+    # (or any other non-idle screen) just because a routine background
+    # update check happened to start.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        StateRepo(conn).set("update_status", "running")
+        StateRepo(conn).set("update_phase", "downloading")
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_update_in_progress_shows_on_idle_screen_and_tracks_phase():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"
+        state = StateRepo(conn)
+        state.set("update_status", "running"); state.set("update_phase", "checking")
+        ui.tick()
+        assert ui.state.screen == "UPDATE_STATUS"
+        assert ui.display.partial is False  # the screen transition itself is full
+
+        state.set("update_phase", "downloading")
+        ui.tick()
+        assert ui.state.screen == "UPDATE_STATUS"
+        assert ui.display.partial is True  # same screen, just the phase text changed
+    finally: conn.close(); os.unlink(path)
+
+
+def test_hiding_update_status_does_not_immediately_bring_it_back():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"
+        state = StateRepo(conn)
+        state.set("update_status", "running"); state.set("update_phase", "downloading")
+        ui.tick()
+        assert ui.state.screen == "UPDATE_STATUS"
+
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+        ui.tick()  # update is still "running" -- must not pop right back up
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_update_finished_without_restart_returns_to_idle_and_clears_state():
+    # The "already up to date" path (and a failure before anything was
+    # actually touched) never restarts japyscope-app.service, so this
+    # same process has to notice it finished and back out on its own.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"
+        state = StateRepo(conn)
+        state.set("update_status", "running"); state.set("update_phase", "checking")
+        ui.tick()
+        assert ui.state.screen == "UPDATE_STATUS"
+
+        state.set("update_status", "idle"); state.set("update_phase", "up_to_date")
+        ui.tick()
+        assert ui.state.screen == "IDLE"
+        assert state.get("update_status") is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_shows_update_result_then_continues_to_park_check():
+    ui, conn, path = make_ui()
+    try:
+        state = StateRepo(conn)
+        state.set("update_status", "success"); state.set("update_tag", "v9.9.9")
+        ui.start()
+        assert ui.state.screen == "UPDATE_RESULT"
+        assert "v9.9.9" in " ".join(ui.state.dev_message)
+        assert state.get("update_status") is None  # shown once, then cleared
+
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "BOOT_PARK_CHECK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_shows_rolled_back_update_failure():
+    ui, conn, path = make_ui()
+    try:
+        state = StateRepo(conn)
+        state.set("update_status", "failed"); state.set("update_phase", "rolled_back")
+        state.set("update_error", "OTA-003 update failed and was rolled back")
+        ui.start()
+        assert ui.state.screen == "UPDATE_RESULT"
+        assert "Rolled back" in " ".join(ui.state.dev_message)
+    finally: conn.close(); os.unlink(path)
+
+
 def test_smartsearch_network_failure_returns_local_results():
     class Offline:
         def get(self, *args, **kwargs): raise requests.ConnectionError("offline")
@@ -653,6 +781,25 @@ def test_devtools_bluetooth_scan_failure_is_reported(monkeypatch):
         enter_devtools_code(ui, "9601")
         assert ui.state.screen == "DEV_MESSAGE"
         assert ui.state.dev_message[0] == "Bluetooth scan failed"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bluetooth_scan_failure_shows_the_real_reason(monkeypatch):
+    # A failed scan used to show a useless truncated repr of the command
+    # itself ("Command '['sudo', '/usr/local/s") instead of the actual
+    # reason (bluetoothctl's own stderr) — this is what the owner actually
+    # needs to diagnose a real hardware/adapter problem.
+    ui, conn, path = make_ui()
+    try:
+        def fail(cmd, **kw):
+            raise subprocess.CalledProcessError(
+                1, cmd, output="", stderr="No default controller available\n"
+            )
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        enter_devtools_code(ui, "9601")
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Bluetooth scan failed"
+        assert "No default controller available" in ui.state.dev_message[1]
     finally: conn.close(); os.unlink(path)
 
 
