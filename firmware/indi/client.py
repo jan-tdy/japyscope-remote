@@ -218,7 +218,15 @@ class IndiClient:
         self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
 
     def park(self) -> None:
+        """Only issues the park command -- on real hardware the driver's
+        Park() starts an asynchronous slew to the park position, so this
+        returns long before the mount has actually finished moving.
+        Callers must poll get_status().parked for real completion rather
+        than assuming success (see ControllerUI._poll_parking())."""
         self._setprop("TELESCOPE_PARK.PARK=On")
+
+    def unpark(self) -> None:
+        self._setprop("TELESCOPE_PARK.UNPARK=On")
 
     def jog(self, direction: str, speed: int) -> None:
         """Manual nudge in one of the four SynScan-style directions ("N",

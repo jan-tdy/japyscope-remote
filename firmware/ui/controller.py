@@ -47,6 +47,10 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+# How long PARKING waits for the driver to actually confirm parked
+# (polled via runtime["parked"] — see _poll_parking()) before giving up
+# and reporting a timeout instead of assuming the mount finished moving.
+PARK_CONFIRM_TIMEOUT_SECONDS = 60
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -261,10 +265,9 @@ class ControllerUI:
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
-        if s.transition_at and now >= s.transition_at:
+        if s.transition_at and now >= s.transition_at and s.screen != "PARKING":
             s.transition_at = 0
             if s.screen == "SLEW": self._set("TRACK")
-            elif s.screen == "PARKING": self.runtime.set("parked", "true"); self._set("PARKED")
             # Confirmed on hardware as an infinite loop ("Saving…" <->
             # "Looks right?" repeating until the app crashed): this used to
             # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
@@ -281,6 +284,32 @@ class ControllerUI:
                 s.access_last_remaining = remaining
                 self.render(coalesce=True)
         self._poll_update_status()
+        self._poll_parking()
+
+    def _poll_parking(self) -> None:
+        """PARK_CONFIRM's `self.indi.park()` call only issues the park
+        command — on real hardware the driver's `Park()` starts an
+        asynchronous slew to the park position that can take far longer
+        than a fixed timer, so PARKING used to claim "parked" after a
+        blind 1.5s regardless of whether the mount had actually finished
+        moving, letting the owner reach the power-off screen while it was
+        still in motion. Waits instead for `runtime["parked"]` to
+        actually read true — kept fresh by `_refresh_status()`'s own
+        periodic `get_status()` poll — before showing PARKED.
+        `PARK_CONFIRM_TIMEOUT_SECONDS` (set as `transition_at` when
+        parking starts) is a safety net for a status read that never
+        confirms (e.g. a flaky `get_status()`): it reports the timeout
+        rather than silently proceeding as if parked."""
+        s = self.state
+        if s.screen != "PARKING":
+            return
+        if self._truth(self.runtime.get("parked", "false")):
+            s.transition_at = 0
+            self._set("PARKED")
+        elif s.transition_at and self.clock() >= s.transition_at:
+            s.transition_at = 0
+            logger.error("INDI-002 park did not confirm within %ss", PARK_CONFIRM_TIMEOUT_SECONDS)
+            self._devtools_message(["Park did not confirm", "check mount position", "before powering off"])
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
@@ -645,6 +674,20 @@ class ControllerUI:
             logger.error("INDI-004 jog failed: %s", exc)
         return True
 
+    def _unpark(self) -> bool:
+        """Sends the mount's own unpark command before clearing the local
+        `parked` flag — a bare `runtime.set("parked", "false")` used to
+        leave the driver itself still parked, which real drivers reject
+        every subsequent goto/sync/jog against. Returns whether it
+        succeeded, so callers only leave PARKED on success."""
+        try:
+            self.indi.unpark()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 unpark failed: %s", exc)
+            return False
+        self.runtime.set("parked", "false")
+        return True
+
     def _confirm_align_point(self) -> None:
         """Called when the wheel is pushed on ALIGN_JOG: the star picked on
         ALIGN_STAR_PICK is now centered, so tell the mount driver "you are
@@ -830,12 +873,13 @@ class ControllerUI:
                 except (NotImplementedError, ConnectionError) as exc:
                     logger.error("INDI-002 park failed: %s", exc)
                     return
-                s.transition_at = self.clock() + 1.5
+                s.transition_at = self.clock() + PARK_CONFIRM_TIMEOUT_SECONDS
                 self._set("PARKING")
             return
         if s.screen == "PARKED":
             if self._move(key, 2): return
-            if key == ENC_PUSH and s.index == 0: self.runtime.set("parked", "false"); self._set("IDLE")
+            if key == ENC_PUSH and s.index == 0:
+                if self._unpark(): self._set("IDLE")
             elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen == "WIFI_ACCESS":
@@ -956,7 +1000,8 @@ class ControllerUI:
         if s.index == 0: self._set("TIME_SYNC")
         elif s.index == 1: self._set("ALIGN_CHOOSE")
         elif s.index == 2:
-            if self._truth(self.runtime.get("parked", "false")): self.runtime.set("parked", "false"); self._set("IDLE")
+            if self._truth(self.runtime.get("parked", "false")):
+                if self._unpark(): self._set("IDLE")
             else: self._set("PARK_CONFIRM")
         elif s.index == 3:
             # Only mint a fresh code (and restart the 10-minute countdown)

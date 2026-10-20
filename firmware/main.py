@@ -71,6 +71,7 @@ class SimulatedIndiClient:
     def sync(self, ra: str, dec: str) -> None: self.status.aligned = True; self.status.ra = ra; self.status.dec = dec
     def goto(self, ra: str, dec: str) -> None: self.status.ra = ra; self.status.dec = dec; self.status.tracking = True
     def park(self) -> None: self.status.parked = True
+    def unpark(self) -> None: self.status.parked = False
     def get_status(self) -> MountStatus: return self.status
 
     def jog(self, direction: str, speed: int) -> None:

@@ -72,6 +72,16 @@ def test_park_sends_telescope_park_on(monkeypatch):
     assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK.PARK=On"]]
 
 
+def test_unpark_sends_telescope_park_unpark_on(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    make_client().unpark()
+    assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK.UNPARK=On"]]
+
+
 def test_jog_sets_slew_rate_then_pulses_the_motion_switch(monkeypatch):
     calls = []
     slept = []
