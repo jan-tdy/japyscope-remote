@@ -1055,6 +1055,85 @@ def test_devtools_9600_wifi_gives_up_after_repeated_connect_refusal(monkeypatch)
     finally: conn.close(); os.unlink(path)
 
 
+def test_devtools_9600_app_connects_on_first_candidate_port(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        setprop_calls = []
+
+        def fake_run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                setprop_calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="On\n")  # indi_getprop
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # SynScan/Stellarium app (index 3)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connected: SynScan Pro app"
+        assert SettingsRepo(conn).get("mount_interface") == "synscan_app"
+        assert SettingsRepo(conn).get("mount_app_port") == "11881"
+        assert any("DEVICE_ADDRESS.PORT=11881" in c[-1] for c in setprop_calls)
+        # Only the first candidate port was ever tried.
+        assert not any("11882" in c[-1] or "10001" in c[-1] for c in setprop_calls)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_app_falls_through_to_a_later_port(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        # Track which port is currently "active" so the getprop readback
+        # reflects only the most recent DEVICE_ADDRESS.PORT setprop, like
+        # a real driver would -- only the 10001 (Stellarium) attempt
+        # actually comes up.
+        state = {"port": None}
+
+        def run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                spec = cmd[-1]
+                if "DEVICE_ADDRESS.PORT=" in spec:
+                    state["port"] = spec.split("=")[-1]
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            stdout = "On\n" if state["port"] == "10001" else "Off\n"
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout)
+
+        monkeypatch.setattr(controller_module.subprocess, "run", run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connected: Stellarium"
+        assert SettingsRepo(conn).get("mount_app_port") == "10001"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_app_reports_failure_when_no_port_connects(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="Off\n")  # never comes up
+
+        monkeypatch.setattr(controller_module.subprocess, "run", run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount app connect failed"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_bluetooth_scan_pair_persists_and_reopens_selected(monkeypatch):
     ui, conn, path = make_ui()
     try:

@@ -177,7 +177,10 @@ class ControllerUI:
     # here for the first time (or 9601 any time) triggers a scan + pick
     # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
     # recording the choice — there's no module paired yet to talk to.
-    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"))
+    MOUNT_INTERFACES = (
+        ("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"),
+        ("synscan_app", "SynScan/Stellarium app"),
+    )
     # indi_skywatcherAltAzMount's own INDI device name and connection
     # property names used to point it at the mount's SynScan WiFi module
     # over the network (UDP port 11880 — the module is a transparent
@@ -193,6 +196,13 @@ class ControllerUI:
     # connectionplugins/connectiontcp.cpp, libs/indibase/defaultdevice.cpp).
     INDI_MOUNT_DEVICE = "Skywatcher Alt-Az"
     INDI_MOUNT_WIFI_PORT = 11880
+    # Candidate ports for the "SynScan/Stellarium app" interface choice --
+    # unlike INDI_MOUNT_WIFI_PORT above, these are NOT independently
+    # confirmed against this project's own hardware (see
+    # _connect_mount_app()'s docstring): SynScan Pro app (11881),
+    # "SynScan" (11882), and Stellarium's own telescope-server protocol
+    # (10001). Tried in this order until one actually comes up.
+    INDI_MOUNT_APP_PORTS = ((11881, "SynScan Pro app"), (11882, "SynScan"), (10001, "Stellarium"))
 
     def __init__(
         self,
@@ -987,6 +997,8 @@ class ControllerUI:
                     self._start_bluetooth_scan()
                 elif selected == "wifi":
                     self._connect_mount_wifi()
+                elif selected == "synscan_app":
+                    self._connect_mount_app()
                 else:
                     self.settings.set("mount_interface", selected)
                     self._set(s.return_screen)
@@ -1399,6 +1411,48 @@ class ControllerUI:
         self.settings.set("mount_interface", "bluetooth")
         self._devtools_message([f"Paired: {name[:21]}", "Bluetooth is now the", "active mount interface"])
 
+    def _indi_setprop_steps(self, indi_host: str, indi_port: str, steps: list[str]) -> Optional[Exception]:
+        """Runs each `indi_setprop` step in order, returning the first
+        failure (or `None` on full success). Retries briefly, but only
+        on exit code 2 -- per indi_setprop's own source
+        (tools/setINDIproperty.c), that's specifically what
+        openINDIServer() raises on a plain connect() failure to
+        indiserver itself (the local control channel, not the mount),
+        which is exactly the transient case a just-restarted indiserver
+        can hit. Anything else (a malformed/unknown property) won't fix
+        itself on retry."""
+        for step in steps:
+            exc: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    subprocess.run(
+                        ["indi_setprop", "-h", indi_host, "-p", indi_port, step],
+                        capture_output=True, text=True, check=True, timeout=10,
+                    )
+                    exc = None
+                    break
+                except (OSError, subprocess.SubprocessError) as retry_exc:
+                    exc = retry_exc
+                    retryable = isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 2
+                    if attempt < 2 and retryable:
+                        time.sleep(1)
+                    else:
+                        break
+            if exc is not None:
+                return exc
+        return None
+
+    def _indi_getprop(self, indi_host: str, indi_port: str, spec: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["indi_getprop", "-1", "-h", indi_host, "-p", indi_port, spec],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Dev Tools: indi_getprop %s failed: %s", spec, exc)
+            return None
+        return result.stdout.strip()
+
     def _connect_mount_wifi(self) -> None:
         """Dev Tools code 9600's "WiFi" choice. Points the already-running
         indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
@@ -1437,33 +1491,75 @@ class ControllerUI:
             f"{device}.DEVICE_ADDRESS.PORT={self.INDI_MOUNT_WIFI_PORT}",
             f"{device}.CONNECTION.CONNECT=On",
         ]
-        for step in steps:
-            exc = None
-            for attempt in range(3):
-                try:
-                    subprocess.run(
-                        ["indi_setprop", "-h", indi_host, "-p", indi_port, step],
-                        capture_output=True, text=True, check=True, timeout=10,
-                    )
-                    exc = None
-                    break
-                except (OSError, subprocess.SubprocessError) as retry_exc:
-                    exc = retry_exc
-                    # Exit code 2 (setINDIproperty.c's openINDIServer()) is
-                    # specifically "could not connect to indiserver" -- the
-                    # transient case worth a brief retry. Anything else
-                    # (e.g. a malformed/unknown property) won't fix itself.
-                    retryable = isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 2
-                    if attempt < 2 and retryable:
-                        time.sleep(1)
-                    else:
-                        break
-            if exc is not None:
-                logger.error("Dev Tools: mount WiFi connect failed (%s): %s", step, exc)
-                self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
-                return
+        exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+        if exc is not None:
+            logger.error("Dev Tools: mount WiFi connect failed: %s", exc)
+            self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
+            return
         self.settings.set("mount_interface", "wifi")
         self._devtools_message(["Connecting via WiFi", host, "now the active mount interface"])
+
+    def _connect_mount_app(self) -> None:
+        """Dev Tools code 9600's "SynScan/Stellarium app" choice.
+
+        Unlike _connect_mount_wifi() (one fixed port, 11880, for the
+        mount's own SynScan WiFi module), this is for the handful of
+        other ports planetarium/mobile apps are known to use when they
+        expect to be the ones listening, or connecting to a
+        differently-configured relay: SynScan Pro app (11881), "SynScan"
+        (11882), and Stellarium's own telescope-server protocol (10001).
+        None of these three are independently confirmed against this
+        project's actual hardware yet (unlike every other property in
+        this file — see firmware/indi/client.py's module docstring) —
+        this tries each in turn and keeps the first the driver can
+        actually read EQUATORIAL_EOD_COORD back from, rather than assume
+        indi_setprop's success (which only means indiserver accepted the
+        request, not that the driver reached anything at that address —
+        see _indi_setprop_steps' docstring). A real packet capture from
+        Stellarium/SynScan Pro would let this be narrowed to the one
+        port that's actually right instead of a guess-and-check list."""
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            self._devtools_message([
+                "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
+            ])
+            return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
+        device = self.INDI_MOUNT_DEVICE
+        last_exc: Optional[Exception] = None
+        for port, label in self.INDI_MOUNT_APP_PORTS:
+            steps = [
+                f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+                f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+                f"{device}.DEVICE_ADDRESS.PORT={port}",
+                f"{device}.CONNECTION.CONNECT=On",
+            ]
+            exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+            if exc is not None:
+                last_exc = exc
+                logger.error("Dev Tools: mount app connect via %s (%s) failed to set up: %s", label, port, exc)
+                continue
+            # CONNECT=On only means indiserver accepted the request --
+            # the driver's own TCP connect to the mount happens async.
+            # Give it a moment, then check whether it actually came up.
+            connected = False
+            for _ in range(5):
+                time.sleep(1)
+                if self._indi_getprop(indi_host, indi_port, f"{device}.CONNECTION.CONNECT") == "On":
+                    connected = True
+                    break
+            if connected:
+                self.settings.set("mount_interface", "synscan_app")
+                self.settings.set("mount_app_port", str(port))
+                self._devtools_message([f"Connected: {label}", f"{host}:{port}", "now the active mount interface"])
+                return
+            logger.error("Dev Tools: mount app connect via %s (%s) did not come up", label, port)
+            # Best-effort: back out before trying the next port instead
+            # of leaving the driver mid-connect-attempt to this one.
+            self._indi_setprop_steps(indi_host, indi_port, [f"{device}.CONNECTION.DISCONNECT=On"])
+        detail = self._subprocess_failure_detail(last_exc) if last_exc is not None else "no port responded"
+        self._devtools_message(["Mount app connect failed", detail, "tried app/SynScan/Stellarium ports"])
 
     @staticmethod
     def _local_ip() -> str:
