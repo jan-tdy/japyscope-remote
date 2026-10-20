@@ -33,16 +33,19 @@ class Input(InputHAL):
 
 
 class Indi:
-    def __init__(self): self.synced = None; self.goto_target = None; self.parked = False; self.jogs = []
+    def __init__(self):
+        self.synced = None; self.goto_target = None; self.parked = False
+        self.tracking = False; self.aborted = False; self.jogs = []
     def sync(self, ra, dec): self.synced = (ra, dec)
-    def goto(self, ra, dec): self.goto_target = (ra, dec)
+    def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
     def park(self): self.parked = True
     def unpark(self): self.parked = False
+    def abort(self): self.aborted = True; self.tracking = False
     def jog(self, direction, speed): self.jogs.append((direction, speed))
     def get_status(self):
         return MountStatus(
             connected=True, ra="", dec="", alt=0.0, az=0.0,
-            tracking=False, aligned=False, parked=self.parked,
+            tracking=self.tracking, aligned=False, parked=self.parked,
         )
 
 
@@ -282,6 +285,100 @@ def test_park_confirmation_timeout_does_not_silently_claim_parked(monkeypatch):
         assert ui.state.screen == "DEV_MESSAGE"
         assert "did not confirm" in " ".join(ui.state.dev_message).lower()
         assert StateRepo(conn).get("parked") != "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_timeout_message_dismisses_to_idle_not_a_stale_return_screen():
+    # return_screen can still hold "LIST"/"RESULTS" from an earlier
+    # _confirm_slew() call that starting PARKING never touches -- the
+    # timeout message must not dismiss back to a screen that lets the
+    # owner immediately slew again with the park result still unknown.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.return_screen = "LIST"  # stale, from an earlier slew
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKING"
+
+        ui.indi.get_status = lambda: None  # never confirms parked
+        now[0] += controller_module.PARK_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_timeout_message_dismisses_to_idle_not_a_stale_return_screen():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.indi.get_status = lambda: None  # never confirms tracking
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+        assert ui.state.return_screen == "LIST"
+
+        now[0] += controller_module.SLEW_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_does_not_promote_to_track_on_stale_tracking_flag():
+    # runtime["tracking"] is only refreshed by _refresh_status()'s
+    # throttled poll -- if the mount was already tracking a PREVIOUS
+    # target, that stale "true" must not let _poll_slew() promote a
+    # brand-new goto straight to TRACK before any post-goto sample
+    # confirms the new slew actually arrived.
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        StateRepo(conn).set("tracking", "true")  # stale, from a prior target
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]  # as if just refreshed a moment ago
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+
+        # Immediately ticking (as run() does right after handle()), well
+        # within _refresh_status()'s own 2s throttle, must not promote to
+        # TRACK off the stale DB value alone -- _begin_slew() must have
+        # cleared it synchronously.
+        now[0] += 1.0
+        ui.tick()
+        assert ui.state.screen == "SLEW"
+        assert StateRepo(conn).get("tracking") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_parked_screen_can_open_devtools_without_unparking():
+    # Dev Tools used to only be reachable from IDLE, forcing the owner to
+    # unpark (a real mount motion) just to open a settings menu.
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui.state.screen = "PARKED"; ui.state.index = 2  # "Dev Tools"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEVTOOLS"
+        assert ui.indi.parked is True  # not unparked just by opening Dev Tools
+
+        # A code's own cancel ("9") comes back to PARKED, not IDLE --
+        # IDLE would wrongly suggest the mount had been unparked.
+        for digit in "9999":  # the Easter-egg joke code -> DEV_MESSAGE
+            for _ in range(int(digit)):
+                ui.handle(ENC_UP)
+            ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "PARKED"
+        assert ui.indi.parked is True
     finally: conn.close(); os.unlink(path)
 
 
@@ -592,6 +689,64 @@ def test_slew_without_coordinates_shows_error():
     finally: conn.close(); os.unlink(path)
 
 
+def test_slew_waits_for_driver_confirmation_before_showing_track():
+    # goto() only issues the command -- a real driver slews
+    # asynchronously, so SLEW must not claim TRACK until
+    # get_status().tracking actually comes back true (polled via
+    # _refresh_status(), not a blind fixed timer).
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+        assert ui.indi.goto_target == ("1h", "+1d")  # command issued
+
+        # Time passes, but no status poll has happened yet (<2s) --
+        # still SLEW, not optimistically TRACK.
+        now[0] += 1.0
+        ui.tick()
+        assert ui.state.screen == "SLEW"
+
+        # A status poll (>=2s since last) picks up indi.tracking == True
+        # and only then transitions.
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_confirmation_timeout_does_not_silently_claim_tracking(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        # get_status() never reports tracking (e.g. a flaky real driver).
+        monkeypatch.setattr(ui.indi, "get_status", lambda: None)
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+
+        now[0] += controller_module.SLEW_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "did not confirm" in " ".join(ui.state.dev_message).lower()
+    finally: conn.close(); os.unlink(path)
+
+
+def test_abort_on_slew_screen_calls_indi_abort():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SLEW"
+        ui.indi.tracking = True
+        ui.handle("7")
+        assert ui.indi.aborted is True
+        assert ui.state.screen == "SLEW_ABORTED"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_code_enterable_via_keypad_1_7_5_stand_ins():
     # "1"/"7" (ENC_UP/ENC_DOWN) and "5" (ENC_PUSH) should work for entering
     # a Dev Tools code too, not just the real encoder — DEVTOOLS/SUDO_SET
@@ -889,11 +1044,15 @@ def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
         assert ui.state.dev_message[0] == "Connecting via WiFi"
         assert "192.168.4.1" in ui.state.dev_message
         assert SettingsRepo(conn).get("mount_interface") == "wifi"
+        # The fake Indi has no host/port attrs -- _connect_mount_wifi()
+        # falls back to indi_setprop's own defaults (localhost:7624) via
+        # getattr(), same as if a real IndiClient were constructed with
+        # no explicit host/port override.
         assert calls == [
-            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
-            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
-            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
-            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
         ]
     finally: conn.close(); os.unlink(path)
 
@@ -904,6 +1063,8 @@ def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
         SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
 
         def fail(cmd, **kw):
+            # returncode 1, not the retryable 2 (indiserver unreachable) --
+            # a malformed/unknown property won't fix itself on retry.
             raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such property CONNECTION_MODE\n")
 
         monkeypatch.setattr(controller_module.subprocess, "run", fail)
@@ -914,6 +1075,131 @@ def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
         assert ui.state.dev_message[0] == "Mount WiFi connect failed"
         assert "No such property" in ui.state.dev_message[1]
         assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged on failure
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_retries_transient_connect_refusal(monkeypatch):
+    # Exit code 2 from indi_setprop (setINDIproperty.c's openINDIServer())
+    # specifically means it could not connect to indiserver yet -- e.g. a
+    # restart still coming up -- worth one brief retry instead of failing
+    # the whole WiFi switch on the first refusal.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        attempts = {"n": 0}
+
+        def flaky_then_ok(cmd, **kw):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise subprocess.CalledProcessError(2, cmd, output="", stderr="connect: Connection refused\n")
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", flaky_then_ok)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connecting via WiFi"
+        assert SettingsRepo(conn).get("mount_interface") == "wifi"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_gives_up_after_repeated_connect_refusal(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def always_refused(cmd, **kw):
+            raise subprocess.CalledProcessError(2, cmd, output="", stderr="connect: Connection refused\n")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", always_refused)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount WiFi connect failed"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_app_connects_on_first_candidate_port(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        setprop_calls = []
+
+        def fake_run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                setprop_calls.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="On\n")  # indi_getprop
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # SynScan/Stellarium app (index 3)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connected: SynScan Pro app"
+        assert SettingsRepo(conn).get("mount_interface") == "synscan_app"
+        assert SettingsRepo(conn).get("mount_app_port") == "11881"
+        assert any("DEVICE_ADDRESS.PORT=11881" in c[-1] for c in setprop_calls)
+        # Only the first candidate port was ever tried.
+        assert not any("11882" in c[-1] or "10001" in c[-1] for c in setprop_calls)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_app_falls_through_to_a_later_port(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        # Track which port is currently "active" so the getprop readback
+        # reflects only the most recent DEVICE_ADDRESS.PORT setprop, like
+        # a real driver would -- only the 10001 (Stellarium) attempt
+        # actually comes up.
+        state = {"port": None}
+
+        def run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                spec = cmd[-1]
+                if "DEVICE_ADDRESS.PORT=" in spec:
+                    state["port"] = spec.split("=")[-1]
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            stdout = "On\n" if state["port"] == "10001" else "Off\n"
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout)
+
+        monkeypatch.setattr(controller_module.subprocess, "run", run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connected: Stellarium"
+        assert SettingsRepo(conn).get("mount_app_port") == "10001"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_app_reports_failure_when_no_port_connects(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def run(cmd, **kw):
+            if cmd[0] == "indi_setprop":
+                return subprocess.CompletedProcess(cmd, 0, stdout="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="Off\n")  # never comes up
+
+        monkeypatch.setattr(controller_module.subprocess, "run", run)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount app connect failed"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged
     finally: conn.close(); os.unlink(path)
 
 

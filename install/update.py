@@ -303,26 +303,43 @@ class Updater:
                 raise
             _write_update_status(phase="installing")
             try:
-                subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
-                    check=True, timeout=300,
-                )
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
-                    check=True, timeout=900,
-                )
-                # Separate, --no-deps, --no-build-isolation install — see
-                # requirements-pyindi.lock and install.sh for why
-                # pyindi-client can't go through the main hash-locked
-                # install on this hardware (bottle/dbus-python unused and
-                # unbuildable; --no-build-isolation makes its swig build
-                # dependency resolve to the system swig, not a PyPI-bundled
-                # binary that needs a newer glibc than Bullseye has).
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
-                    check=True, timeout=300,
-                )
+                if self._venv_reusable(previous, target):
+                    # Most releases are code-only hotfixes with an
+                    # unchanged requirements.lock/requirements-pyindi.lock
+                    # -- rebuilding the venv from scratch then re-installs
+                    # the exact same pinned versions it already has,
+                    # which on this hardware is most of an update's
+                    # wall-clock time for zero actual change. Copying the
+                    # previous release's already-built venv is safe here
+                    # specifically because every invocation in this
+                    # codebase (this file, firmware/main.py, and the
+                    # systemd units, which always launch via the
+                    # `current` symlink) names the venv's python by an
+                    # explicit absolute path rather than relying on a
+                    # console-script's baked-in shebang.
+                    logger.info("requirements unchanged since %s; reusing its venv", previous.name)
+                    shutil.copytree(previous / ".venv", target / ".venv", symlinks=True)
+                else:
+                    subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+                        check=True, timeout=300,
+                    )
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
+                        check=True, timeout=900,
+                    )
+                    # Separate, --no-deps, --no-build-isolation install — see
+                    # requirements-pyindi.lock and install.sh for why
+                    # pyindi-client can't go through the main hash-locked
+                    # install on this hardware (bottle/dbus-python unused and
+                    # unbuildable; --no-build-isolation makes its swig build
+                    # dependency resolve to the system swig, not a PyPI-bundled
+                    # binary that needs a newer glibc than Bullseye has).
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
+                        check=True, timeout=300,
+                    )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=120)
                 # An OTA update only ever extracts code into releases/<tag>
                 # and flips the `current` symlink — unlike install.sh, it
@@ -361,6 +378,25 @@ class Updater:
                     _write_update_status(status="failed", phase="failed", error=str(exc)[:160])
                 raise UpdateError("OTA-003 update failed and was rolled back") from exc
             return tag
+
+    @staticmethod
+    def _venv_reusable(previous: Optional[Path], target: Path) -> bool:
+        """Whether `target`'s dependencies are byte-identical to
+        `previous`'s already-built venv, so that venv can just be copied
+        instead of rebuilt. Hash-locked requirements files mean "same
+        file contents" really does mean "same resolved, verified
+        dependency set" -- there's nothing a fresh `pip install` would
+        do differently."""
+        if previous is None or not (previous / ".venv").is_dir():
+            return False
+        for name in ("requirements.lock", "requirements-pyindi.lock"):
+            previous_lock = previous / name
+            target_lock = target / name
+            if not previous_lock.is_file() or not target_lock.is_file():
+                return False
+            if previous_lock.read_bytes() != target_lock.read_bytes():
+                return False
+        return True
 
     @staticmethod
     def _sync_system_files(release: Path, required: bool = True) -> None:

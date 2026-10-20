@@ -4,6 +4,7 @@ import pytest
 
 from firmware.indi import client as client_module
 from firmware.indi.client import IndiClient
+from shared import astro
 
 
 def make_client(**kwargs):
@@ -32,11 +33,14 @@ def test_sync_sets_coord_mode_then_sends_converted_ra_dec(monkeypatch):
         client_module.subprocess, "run",
         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
     )
-    c = make_client()
+    epoch = 1700000000.0  # fixed clock -- precession depends on the current date
+    c = make_client(clock=lambda: epoch)
     c.sync("16h41m41s", "+36°28′")
     assert calls[0] == ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.ON_COORD_SET.SYNC=On"]
-    ra_hours = (16 + 41 / 60 + 41 / 3600)
+    ra_deg = (16 + 41 / 60 + 41 / 3600) * 15
     dec_deg = 36 + 28 / 60
+    ra_hours, dec_deg = astro.precess_j2000_to_date(ra_deg, dec_deg, epoch)
+    ra_hours /= 15
     assert calls[1] == [
         "indi_setprop", "-h", "localhost", "-p", "7624",
         f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}",
@@ -44,16 +48,22 @@ def test_sync_sets_coord_mode_then_sends_converted_ra_dec(monkeypatch):
     assert c._aligned is True
 
 
-def test_goto_sets_slew_mode_then_sends_converted_ra_dec(monkeypatch):
+def test_goto_sets_track_mode_then_sends_converted_ra_dec(monkeypatch):
     calls = []
     monkeypatch.setattr(
         client_module.subprocess, "run",
         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
     )
-    c = make_client()
+    epoch = 1700000000.0
+    c = make_client(clock=lambda: epoch)
     c.goto("250.42", "-6.6667")  # decimal-degree RA (Sesame-style) + decimal Dec
-    assert calls[0][-1] == "Skywatcher Alt-Az.ON_COORD_SET.SLEW=On"
-    assert calls[1][-1] == "Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA=16.694667;DEC=-6.666700"
+    # TRACK, not SLEW: per skywatcherAPIMount.cpp's status-polling loop,
+    # selecting SLEW mode leaves the mount idle (not tracking) once it
+    # arrives -- TRACK is what keeps it tracking after the goto completes.
+    assert calls[0][-1] == "Skywatcher Alt-Az.ON_COORD_SET.TRACK=On"
+    ra_hours, dec_deg = astro.precess_j2000_to_date(250.42, -6.6667, epoch)
+    ra_hours /= 15
+    assert calls[1][-1] == f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}"
 
 
 def test_sync_raises_on_unparseable_coordinates():
@@ -80,6 +90,16 @@ def test_unpark_sends_telescope_park_unpark_on(monkeypatch):
     )
     make_client().unpark()
     assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK.UNPARK=On"]]
+
+
+def test_abort_sends_telescope_abort_motion_on(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    make_client().abort()
+    assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_ABORT_MOTION.ABORT=On"]]
 
 
 def test_jog_sets_slew_rate_then_pulses_the_motion_switch(monkeypatch):

@@ -20,10 +20,22 @@ not guessed from naming convention:
 - Device name: ``"Skywatcher Alt-Az"`` (``getDefaultName()``).
 - ``EQUATORIAL_EOD_COORD`` (number): ``RA`` (decimal hours, 0-24),
   ``DEC`` (decimal degrees, -90..90).
-- ``ON_COORD_SET`` (switch): ``SYNC`` to sync, ``SLEW`` to goto --
-  select this *before* sending new ``EQUATORIAL_EOD_COORD`` values; the
-  driver reads which one is on when it receives them
-  (``Telescope::ISNewNumber``, ``libs/indibase/inditelescope.cpp``).
+- ``ON_COORD_SET`` (switch): ``SYNC`` to sync, ``TRACK`` to goto-and-
+  then-track -- select this *before* sending new
+  ``EQUATORIAL_EOD_COORD`` values; the driver reads which one is on
+  when it receives them (``Telescope::ISNewNumber``, ``libs/indibase/
+  inditelescope.cpp``). ``goto()`` deliberately selects ``TRACK``, not
+  ``SLEW``: ``skywatcherAPIMount.cpp``'s own status-polling loop only
+  starts tracking once the slew finishes *if* ``TRACK`` was selected --
+  ``SLEW`` slews and then goes idle, which would silently leave the
+  mount not tracking despite this project's UI calling that screen
+  "TRACK".
+- ``EQUATORIAL_EOD_COORD`` is epoch-of-date ("EOD"/JNow), not J2000 --
+  this project's catalogs and alignment stars are J2000, so
+  ``_ra_dec_to_indi()`` precesses them first (``shared/astro.py``'s
+  ``precess_j2000_to_date()``); skipping this would mispoint by a
+  fraction of a degree and grows every year.
+- ``TELESCOPE_ABORT_MOTION`` (switch): ``ABORT``.
 - ``TELESCOPE_PARK`` (switch): ``PARK``/``UNPARK``.
 - ``TELESCOPE_MOTION_NS``/``TELESCOPE_MOTION_WE`` (switches):
   ``MOTION_NORTH``/``MOTION_SOUTH``, ``MOTION_WEST``/``MOTION_EAST``.
@@ -48,7 +60,7 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from shared import astro
 
@@ -113,6 +125,7 @@ class IndiClient:
         port: int = 7624,
         device: str = "Skywatcher Alt-Az",
         settings: Optional[_SettingsLike] = None,
+        clock: Callable[[], float] = time.time,
     ):
         self.host = host
         self.port = port
@@ -123,6 +136,9 @@ class IndiClient:
         # module ControllerUI already uses for catalog objects. Optional:
         # without it, get_status() just reports alt=az=0.0.
         self.settings = settings
+        # Overridable for tests (deterministic precession/alt-az output);
+        # real callers never need to pass this.
+        self.clock = clock
         self._aligned = False
 
     def connect(self) -> None:
@@ -179,7 +195,7 @@ class IndiClient:
             try:
                 latitude = float(self.settings.get("latitude", "0.0"))
                 longitude = float(self.settings.get("longitude", "0.0"))
-                now = time.time()
+                now = self.clock()
                 ra_deg = ra_hours * 15.0
                 alt = astro.altitude_degrees(ra_deg, dec_deg, latitude, longitude, now)
                 az = astro.azimuth_degrees(ra_deg, dec_deg, latitude, longitude, now)
@@ -193,14 +209,17 @@ class IndiClient:
 
     def _ra_dec_to_indi(self, ra: str, dec: str) -> tuple[float, float]:
         """INDI's EQUATORIAL_EOD_COORD wants RA in decimal hours (0-24)
-        and Dec in decimal degrees (-90..90); this project's own ra/dec
-        strings (sexagesimal with h/m/s or colons, or decimal degrees
-        from an online SmartSearch/Sesame result) are parsed the same
-        way shared/astro.py already does for catalog altitude."""
+        and Dec in decimal degrees (-90..90), precessed to the equinox
+        of date (not J2000, which is what this project's catalogs and
+        alignment stars are stored in -- see the module docstring).
+        ra/dec strings (sexagesimal with h/m/s or colons, or decimal
+        degrees from an online SmartSearch/Sesame result) are parsed the
+        same way shared/astro.py already does for catalog altitude."""
         ra_deg = astro.ra_to_degrees(ra)
         dec_deg = astro.dec_to_degrees(dec)
         if ra_deg is None or dec_deg is None:
             raise ConnectionError(f"could not parse RA/Dec for INDI: {ra!r}/{dec!r}")
+        ra_deg, dec_deg = astro.precess_j2000_to_date(ra_deg, dec_deg, self.clock())
         return ra_deg / 15.0, dec_deg
 
     def sync(self, ra: str, dec: str) -> None:
@@ -213,9 +232,14 @@ class IndiClient:
         self._aligned = True
 
     def goto(self, ra: str, dec: str) -> None:
+        """TRACK, not SLEW -- see the module docstring: SLEW would leave
+        the mount idle (not tracking) once it arrives."""
         ra_hours, dec_deg = self._ra_dec_to_indi(ra, dec)
-        self._setprop("ON_COORD_SET.SLEW=On")
+        self._setprop("ON_COORD_SET.TRACK=On")
         self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
+
+    def abort(self) -> None:
+        self._setprop("TELESCOPE_ABORT_MOTION.ABORT=On")
 
     def park(self) -> None:
         """Only issues the park command -- on real hardware the driver's

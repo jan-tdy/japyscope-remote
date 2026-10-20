@@ -126,3 +126,38 @@ def azimuth_degrees(
         math.cos(lat) * math.tan(dec) - math.sin(lat) * math.cos(hour_angle),
     )
     return math.degrees(az) % 360.0
+
+
+def precess_j2000_to_date(ra_deg: float, dec_deg: float, when_epoch: float) -> tuple[float, float]:
+    """Precess (`ra_deg`, `dec_deg`) from the J2000.0 equinox -- what this
+    project's catalogs and alignment stars are stored in -- to the
+    equinox of `when_epoch`, i.e. "epoch of date"/JNow, which is what
+    INDI's EQUATORIAL_EOD_COORD expects (confirmed against
+    libs/indibase/inditelescope.cpp's own property comment and general
+    INDI convention -- EOD literally stands for that). By 2026 this is
+    already a ~0.37 degree difference, growing ~50"/year -- small next to
+    this project's other low-precision math, but large enough to matter
+    for GOTO accuracy if left uncorrected.
+
+    Standard low-precision precession (Meeus, *Astronomical Algorithms*
+    2nd ed., ch. 21, IAU 1976 model) -- accurate to a few arcseconds over
+    a century, far more than this device needs."""
+    when_utc = datetime.fromtimestamp(when_epoch, tz=timezone.utc)
+    jd = _julian_date(when_utc)
+    t = (jd - 2451545.0) / 36525.0  # Julian centuries since J2000.0
+
+    arcsec = math.pi / (180.0 * 3600.0)
+    zeta = (2306.2181 * t + 0.30188 * t**2 + 0.017998 * t**3) * arcsec
+    z = (2306.2181 * t + 1.09468 * t**2 + 0.018203 * t**3) * arcsec
+    theta = (2004.3109 * t - 0.42665 * t**2 - 0.041833 * t**3) * arcsec
+
+    ra0 = math.radians(ra_deg)
+    dec0 = math.radians(dec_deg)
+
+    a = math.cos(dec0) * math.sin(ra0 + zeta)
+    b = math.cos(theta) * math.cos(dec0) * math.cos(ra0 + zeta) - math.sin(theta) * math.sin(dec0)
+    c = math.sin(theta) * math.cos(dec0) * math.cos(ra0 + zeta) + math.cos(theta) * math.sin(dec0)
+
+    ra = (math.degrees(math.atan2(a, b)) + math.degrees(z)) % 360.0
+    dec = math.degrees(math.asin(max(-1.0, min(1.0, c))))
+    return ra, dec
