@@ -794,10 +794,10 @@ def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
         assert "192.168.4.1" in ui.state.dev_message
         assert SettingsRepo(conn).get("mount_interface") == "wifi"
         assert calls == [
-            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
-            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
-            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
-            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION.CONNECT=On"],
+            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
         ]
     finally: conn.close(); os.unlink(path)
 

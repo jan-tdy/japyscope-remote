@@ -117,14 +117,18 @@ protocol work needed.
    UDP port 11880 and connects (`firmware/ui/controller.py`'s
    `_connect_mount_wifi()`).
 
-**Caveat**: the INDI device name and property names
-(`"SkyWatcher Alt-Az"`, `CONNECTION_MODE`/`DEVICE_ADDRESS`) are standard
-INDI `Connection::TCP` naming, but are **unverified against a live
-session with this exact driver/mount** — same spirit as the rest of this
-doc's hardware caveats. Confirm with `indi_getprop -h localhost "SkyWatcher Alt-Az.*"`
-against a running `indiserver` + `indi_skywatcherAltAzMount` session
-before relying on it, and update `INDI_MOUNT_DEVICE` in
-`firmware/ui/controller.py` if the real device name differs.
+The device name (`"Skywatcher Alt-Az"` — note the lowercase "w", not
+"SkyWatcher") and property names (`CONNECTION_MODE`/`DEVICE_ADDRESS`/
+`CONNECTION`) are confirmed against the driver's actual upstream source
+(`indilib/indi`, `drivers/telescope/skywatcherAPIMount.cpp` — this is
+what the `indi_skywatcherAltAzMount` binary is built from — plus the
+standard `INDI::Connection::TCP` plugin it uses, `libs/indibase/
+connectionplugins/connectiontcp.cpp`), not just guessed from naming
+convention. Still worth a sanity check against a live session before
+relying on it on real hardware —
+`indi_getprop -h localhost "Skywatcher Alt-Az.*"` against a running
+`indiserver` + `indi_skywatcherAltAzMount` session — since upstream could
+change the name in a future driver version.
 
 Never run the SynScan Pro phone app and this at the same time against the
 same mount — they'll fight over the same connection.

@@ -169,15 +169,20 @@ class ControllerUI:
     # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
     # recording the choice — there's no module paired yet to talk to.
     MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"))
-    # indi_skywatcherAltAzMount's own INDI device name and the standard
-    # INDI::Connection::TCP property names used to point it at the
-    # mount's SynScan WiFi module over the network (UDP port 11880 — the
-    # module is a transparent serial<->UDP bridge for the same SynScan
-    # protocol RJ12 carries, confirmed against independent open-source
-    # reimplementations of it) instead of a serial port. UNVERIFIED
-    # against a live session with this exact driver/mount — same caveat
-    # as firmware/indi/manager.py's own docstring.
-    INDI_MOUNT_DEVICE = "SkyWatcher Alt-Az"
+    # indi_skywatcherAltAzMount's own INDI device name and connection
+    # property names used to point it at the mount's SynScan WiFi module
+    # over the network (UDP port 11880 — the module is a transparent
+    # serial<->UDP bridge for the same SynScan protocol RJ12 carries,
+    # confirmed against independent open-source reimplementations of it)
+    # instead of a serial port. Verified against the driver's actual
+    # source (indilib/indi, drivers/telescope/skywatcherAPIMount.cpp,
+    # built as the indi_skywatcherAltAzMount binary): getDefaultName()
+    # returns exactly "Skywatcher Alt-Az" (lowercase "w" — not
+    # "SkyWatcher"), its tcpConnection defaults to 192.168.4.1:11880/UDP,
+    # and CONNECTION_MODE/DEVICE_ADDRESS/CONNECTION are the standard
+    # INDI::Connection::TCP property names (libs/indibase/
+    # connectionplugins/connectiontcp.cpp, libs/indibase/defaultdevice.cpp).
+    INDI_MOUNT_DEVICE = "Skywatcher Alt-Az"
     INDI_MOUNT_WIFI_PORT = 11880
 
     def __init__(
