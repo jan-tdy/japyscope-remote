@@ -324,6 +324,15 @@ class ControllerUI:
         elif s.transition_at and self.clock() >= s.transition_at:
             s.transition_at = 0
             logger.error("INDI-002 park did not confirm within %ss", PARK_CONFIRM_TIMEOUT_SECONDS)
+            # _devtools_message()'s DEV_MESSAGE screen returns to
+            # s.return_screen on dismissal -- fine for an actual Dev
+            # Tools message, but return_screen can still hold whatever
+            # a much earlier _confirm_slew()/_speed() call left there
+            # (e.g. "LIST"), which starting PARKING never touches. Pin
+            # it to a safe screen so dismissing this doesn't drop the
+            # owner back where they could immediately issue another
+            # slew with the park result still unconfirmed.
+            s.return_screen = "IDLE"
             self._devtools_message(["Park did not confirm", "check mount position", "before powering off"])
 
     def _poll_slew(self) -> None:
@@ -349,6 +358,11 @@ class ControllerUI:
         elif s.transition_at and self.clock() >= s.transition_at:
             s.transition_at = 0
             logger.error("INDI-002 slew did not confirm tracking within %ss", SLEW_CONFIRM_TIMEOUT_SECONDS)
+            # Same stale-return_screen risk _poll_parking() has (see its
+            # comment) -- return_screen here is whatever _confirm_slew()
+            # set (e.g. "LIST"), which would let the owner immediately
+            # issue another slew with this one's outcome still unknown.
+            s.return_screen = "IDLE"
             self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
 
     def _poll_update_status(self) -> None:
@@ -1172,6 +1186,16 @@ class ControllerUI:
             logger.error("INDI-002 goto failed: %s", exc)
             self._set(self.state.return_screen)
             return
+        # runtime["tracking"] is only ever refreshed by _refresh_status()'s
+        # periodic get_status() poll (no synchronous reset the way
+        # _unpark() clears "parked" immediately) -- if the mount was
+        # already tracking a previous target, that stale "true" would
+        # otherwise still be sitting there on the very next tick() (run()
+        # calls it right after handle()), letting _poll_slew() promote
+        # straight to TRACK before any post-goto sample confirms the NEW
+        # slew has actually arrived. Clearing it here forces _poll_slew()
+        # to wait for a fresh sample.
+        self.runtime.set("tracking", "false")
         self.state.transition_at = self.clock() + SLEW_CONFIRM_TIMEOUT_SECONDS
         self._set("SLEW")
 

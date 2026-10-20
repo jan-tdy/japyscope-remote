@@ -288,6 +288,75 @@ def test_park_confirmation_timeout_does_not_silently_claim_parked(monkeypatch):
     finally: conn.close(); os.unlink(path)
 
 
+def test_park_timeout_message_dismisses_to_idle_not_a_stale_return_screen():
+    # return_screen can still hold "LIST"/"RESULTS" from an earlier
+    # _confirm_slew() call that starting PARKING never touches -- the
+    # timeout message must not dismiss back to a screen that lets the
+    # owner immediately slew again with the park result still unknown.
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.return_screen = "LIST"  # stale, from an earlier slew
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKING"
+
+        ui.indi.get_status = lambda: None  # never confirms parked
+        now[0] += controller_module.PARK_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_timeout_message_dismisses_to_idle_not_a_stale_return_screen():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.indi.get_status = lambda: None  # never confirms tracking
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+        assert ui.state.return_screen == "LIST"
+
+        now[0] += controller_module.SLEW_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_does_not_promote_to_track_on_stale_tracking_flag():
+    # runtime["tracking"] is only refreshed by _refresh_status()'s
+    # throttled poll -- if the mount was already tracking a PREVIOUS
+    # target, that stale "true" must not let _poll_slew() promote a
+    # brand-new goto straight to TRACK before any post-goto sample
+    # confirms the new slew actually arrived.
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        StateRepo(conn).set("tracking", "true")  # stale, from a prior target
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]  # as if just refreshed a moment ago
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+
+        # Immediately ticking (as run() does right after handle()), well
+        # within _refresh_status()'s own 2s throttle, must not promote to
+        # TRACK off the stale DB value alone -- _begin_slew() must have
+        # cleared it synchronously.
+        now[0] += 1.0
+        ui.tick()
+        assert ui.state.screen == "SLEW"
+        assert StateRepo(conn).get("tracking") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_parked_screen_can_open_devtools_without_unparking():
     # Dev Tools used to only be reachable from IDLE, forcing the owner to
     # unpark (a real mount motion) just to open a settings menu.
