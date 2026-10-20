@@ -574,7 +574,8 @@ class ControllerUI:
             lines = [self._t("park.parking"), "", "", ""]
         elif screen == "PARKED":
             lines = self._visible(
-                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")]
+                self._t("park.parked_title"),
+                [self._t("park.unpark"), self._t("park.power_off"), self._t("home.dev_tools")],
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
@@ -804,6 +805,7 @@ class ControllerUI:
         if s.screen == "IDLE":
             if self._move(key, len(self.HOME)): return
             if key == ENC_PUSH:
+                s.return_screen = "IDLE"
                 self._set(("MENU", "CATALOG_MENU", "DEVTOOLS")[s.index]); s.digits = []
             elif key == "7": self._speed("IDLE")
             elif key == FN2: self._set("FN2_EASTER")
@@ -920,10 +922,20 @@ class ControllerUI:
                 self._set("PARKING")
             return
         if s.screen == "PARKED":
-            if self._move(key, 2): return
+            if self._move(key, 3): return
             if key == ENC_PUSH and s.index == 0:
                 if self._unpark(): self._set("IDLE")
-            elif key == ENC_PUSH: self._shutdown()
+            elif key == ENC_PUSH and s.index == 1: self._shutdown()
+            elif key == ENC_PUSH:
+                # Dev Tools from PARKED without unparking first -- unparking
+                # is a real mount motion the owner shouldn't have to trigger
+                # just to reach a settings menu. s.return_screen (read by
+                # _digits()/_devtools_code()/every Dev Tools subscreen's "9")
+                # makes the whole subtree come back here instead of
+                # defaulting to IDLE, which would wrongly suggest the mount
+                # had been unparked.
+                s.return_screen = "PARKED"
+                self._set("DEVTOOLS"); s.digits = []
             return
         if s.screen == "WIFI_ACCESS":
             if key in ("9", ENC_PUSH): self._set("MENU", 3)
@@ -952,21 +964,21 @@ class ControllerUI:
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
         if s.screen == "DEV_REPO_SELECT":
             if self._move(key, len(self.REPOS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
                 self.settings.set("update_repo", self.REPOS[s.index])
-                self._set("IDLE")
+                self._set(s.return_screen)
             return
         if s.screen == "DEV_CHANNEL_SELECT":
             if self._move(key, len(self.UPDATE_CHANNELS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
                 self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
-                self._set("IDLE")
+                self._set(s.return_screen)
             return
         if s.screen == "IFACE_SELECT":
             if self._move(key, len(self.MOUNT_INTERFACES)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
                 selected = self.MOUNT_INTERFACES[s.index][0]
                 if selected == "bluetooth" and self.settings.get("bluetooth_mount_paired", "0") != "1":
@@ -977,32 +989,32 @@ class ControllerUI:
                     self._connect_mount_wifi()
                 else:
                     self.settings.set("mount_interface", selected)
-                    self._set("IDLE")
+                    self._set(s.return_screen)
             return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
             return
         if s.screen == "DEV_OFFICIAL_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH and s.dev_scripts: self._run_official_script(s.dev_scripts[s.index])
             return
         if s.screen == "WIFI_SWITCH_SELECT":
             if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH: self._devtools_wifi_switch(self.WIFI_SWITCH_SLOTS[s.index])
             return
         if s.screen == "BT_SCAN_SELECT":
             if self._move(key, max(1, len(s.bt_scan_results)), wrap=False): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH and s.bt_scan_results:
                 mac, name = s.bt_scan_results[s.index]
                 self._devtools_bluetooth_pair(mac, name)
             return
         if s.screen == "DEV_MESSAGE":
-            if key in ("9", ENC_PUSH): self._set("IDLE")
+            if key in ("9", ENC_PUSH): self._set(s.return_screen)
             return
         if s.screen == "UPDATE_STATUS":
             # Just hides it -- the update (a separate process,
@@ -1029,8 +1041,10 @@ class ControllerUI:
             self._set(s.return_screen)
             return
         if s.screen in {"WIFI_SETUP", "DRIVER_SELECT"} and key in ("9", ENC_PUSH):
-            # Both are only reachable via Dev Tools codes (5000/5555) — back always goes to IDLE.
-            self._set("IDLE")
+            # Both are only reachable via Dev Tools codes (5000/5555) — back
+            # goes to wherever Dev Tools itself was opened from (IDLE, or
+            # PARKED without having to unpark first).
+            self._set(s.return_screen)
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
             self._set("ALIGN_CHOOSE" if s.screen == "ALIGN_SMART_NA" else "IDLE")
@@ -1158,7 +1172,7 @@ class ControllerUI:
             key = ENC_UP
         elif key == "7":
             key = ENC_DOWN
-        if key == "9": self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU"); return
+        if key == "9": self._set(s.return_screen if s.screen == "DEVTOOLS" else "MENU"); return
         if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
         if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return
         if key == ENC_PUSH:
@@ -1178,7 +1192,7 @@ class ControllerUI:
         """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
         full table, which must stay in sync with this method."""
         if code == "0000":
-            self._set("IDLE")
+            self._set(self.state.return_screen)
         elif code == "0022":
             current = self.settings.get("update_repo", self.REPOS[0])
             self._set("DEV_REPO_SELECT", self.REPOS.index(current) if current in self.REPOS else 0)
@@ -1392,13 +1406,30 @@ class ControllerUI:
         port, using indi_setprop directly (bundled with indi-bin, same
         subprocess style firmware/indi/client.py's IndiClient itself now
         uses for get_status/sync/goto/park/jog) — this is about which
-        transport the driver talks to the mount over, unrelated to that."""
+        transport the driver talks to the mount over, unrelated to that.
+
+        Seen on hardware as "returned non-zero exit status 2" -- per
+        indi_setprop's own source (tools/setINDIproperty.c), exit code 2
+        isn't just a malformed property spec, it's also what
+        openINDIServer() raises on a plain connect() failure to
+        indiserver. Omitting -h/-p (as this used to) makes indi_setprop
+        default to localhost:7624, which happens to match
+        firmware/indi/manager.py's own default -- but any real driver
+        restart (Dev Tools INDI restart, or indiserver just not finished
+        coming up yet after boot) leaves a window where the socket isn't
+        accepting connections yet, so this now (a) targets the same
+        host/port firmware.indi.client.IndiClient itself actually
+        connects to instead of relying on indi_setprop's defaults lining
+        up by coincidence, and (b) retries briefly instead of failing on
+        the first transient refusal."""
         host = self.settings.get("mount_wifi_host", "")
         if not host:
             self._devtools_message([
                 "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
             ])
             return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
         device = self.INDI_MOUNT_DEVICE
         steps = [
             f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
@@ -1407,9 +1438,27 @@ class ControllerUI:
             f"{device}.CONNECTION.CONNECT=On",
         ]
         for step in steps:
-            try:
-                subprocess.run(["indi_setprop", step], capture_output=True, text=True, check=True, timeout=10)
-            except (OSError, subprocess.SubprocessError) as exc:
+            exc = None
+            for attempt in range(3):
+                try:
+                    subprocess.run(
+                        ["indi_setprop", "-h", indi_host, "-p", indi_port, step],
+                        capture_output=True, text=True, check=True, timeout=10,
+                    )
+                    exc = None
+                    break
+                except (OSError, subprocess.SubprocessError) as retry_exc:
+                    exc = retry_exc
+                    # Exit code 2 (setINDIproperty.c's openINDIServer()) is
+                    # specifically "could not connect to indiserver" -- the
+                    # transient case worth a brief retry. Anything else
+                    # (e.g. a malformed/unknown property) won't fix itself.
+                    retryable = isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 2
+                    if attempt < 2 and retryable:
+                        time.sleep(1)
+                    else:
+                        break
+            if exc is not None:
                 logger.error("Dev Tools: mount WiFi connect failed (%s): %s", step, exc)
                 self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
                 return

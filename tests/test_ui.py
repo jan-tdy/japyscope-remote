@@ -288,6 +288,31 @@ def test_park_confirmation_timeout_does_not_silently_claim_parked(monkeypatch):
     finally: conn.close(); os.unlink(path)
 
 
+def test_parked_screen_can_open_devtools_without_unparking():
+    # Dev Tools used to only be reachable from IDLE, forcing the owner to
+    # unpark (a real mount motion) just to open a settings menu.
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui.state.screen = "PARKED"; ui.state.index = 2  # "Dev Tools"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEVTOOLS"
+        assert ui.indi.parked is True  # not unparked just by opening Dev Tools
+
+        # A code's own cancel ("9") comes back to PARKED, not IDLE --
+        # IDLE would wrongly suggest the mount had been unparked.
+        for digit in "9999":  # the Easter-egg joke code -> DEV_MESSAGE
+            for _ in range(int(digit)):
+                ui.handle(ENC_UP)
+            ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle("9")
+        assert ui.state.screen == "PARKED"
+        assert ui.indi.parked is True
+    finally: conn.close(); os.unlink(path)
+
+
 def test_unpark_from_parked_screen_calls_indi_unpark():
     ui, conn, path = make_ui()
     try:
@@ -950,11 +975,15 @@ def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
         assert ui.state.dev_message[0] == "Connecting via WiFi"
         assert "192.168.4.1" in ui.state.dev_message
         assert SettingsRepo(conn).get("mount_interface") == "wifi"
+        # The fake Indi has no host/port attrs -- _connect_mount_wifi()
+        # falls back to indi_setprop's own defaults (localhost:7624) via
+        # getattr(), same as if a real IndiClient were constructed with
+        # no explicit host/port override.
         assert calls == [
-            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
-            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
-            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
-            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
         ]
     finally: conn.close(); os.unlink(path)
 
@@ -965,6 +994,8 @@ def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
         SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
 
         def fail(cmd, **kw):
+            # returncode 1, not the retryable 2 (indiserver unreachable) --
+            # a malformed/unknown property won't fix itself on retry.
             raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such property CONNECTION_MODE\n")
 
         monkeypatch.setattr(controller_module.subprocess, "run", fail)
@@ -975,6 +1006,52 @@ def test_devtools_9600_wifi_reports_real_failure_reason(monkeypatch):
         assert ui.state.dev_message[0] == "Mount WiFi connect failed"
         assert "No such property" in ui.state.dev_message[1]
         assert SettingsRepo(conn).get("mount_interface") == "rj12"  # unchanged on failure
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_retries_transient_connect_refusal(monkeypatch):
+    # Exit code 2 from indi_setprop (setINDIproperty.c's openINDIServer())
+    # specifically means it could not connect to indiserver yet -- e.g. a
+    # restart still coming up -- worth one brief retry instead of failing
+    # the whole WiFi switch on the first refusal.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        attempts = {"n": 0}
+
+        def flaky_then_ok(cmd, **kw):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise subprocess.CalledProcessError(2, cmd, output="", stderr="connect: Connection refused\n")
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", flaky_then_ok)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connecting via WiFi"
+        assert SettingsRepo(conn).get("mount_interface") == "wifi"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_9600_wifi_gives_up_after_repeated_connect_refusal(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+
+        def always_refused(cmd, **kw):
+            raise subprocess.CalledProcessError(2, cmd, output="", stderr="connect: Connection refused\n")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", always_refused)
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        enter_devtools_code(ui, "9600")
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Mount WiFi connect failed"
+        assert SettingsRepo(conn).get("mount_interface") == "rj12"
     finally: conn.close(); os.unlink(path)
 
 
