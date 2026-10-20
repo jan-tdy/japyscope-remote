@@ -51,6 +51,11 @@ SPEEDS = (1, 2, 4, 8, 16, 32, 64)
 # (polled via runtime["parked"] — see _poll_parking()) before giving up
 # and reporting a timeout instead of assuming the mount finished moving.
 PARK_CONFIRM_TIMEOUT_SECONDS = 60
+# How long SLEW waits for the driver to actually confirm tracking
+# (polled via runtime["tracking"] — see _poll_slew()) before giving up.
+# Longer than parking: alt-az GOTO slews across most of the sky can take
+# longer than a return-to-park move.
+SLEW_CONFIRM_TIMEOUT_SECONDS = 120
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -265,9 +270,8 @@ class ControllerUI:
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
-        if s.transition_at and now >= s.transition_at and s.screen != "PARKING":
+        if s.transition_at and now >= s.transition_at and s.screen not in ("PARKING", "SLEW"):
             s.transition_at = 0
-            if s.screen == "SLEW": self._set("TRACK")
             # Confirmed on hardware as an infinite loop ("Saving…" <->
             # "Looks right?" repeating until the app crashed): this used to
             # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
@@ -276,7 +280,7 @@ class ControllerUI:
             # the 1.5s timer fired again, forever. Alignment is actually
             # complete by this point (`aligned` was already set true back
             # in ALIGN_CONFIRM) — go to IDLE instead.
-            elif s.screen == "ALIGN_SAVE": self._set("IDLE")
+            if s.screen == "ALIGN_SAVE": self._set("IDLE")
         if s.screen == "WIFI_ACCESS":
             remaining = max(0, int(s.access_expires - now))
             if now >= s.access_expires: self._set("MENU", 3)
@@ -285,6 +289,7 @@ class ControllerUI:
                 self.render(coalesce=True)
         self._poll_update_status()
         self._poll_parking()
+        self._poll_slew()
 
     def _poll_parking(self) -> None:
         """PARK_CONFIRM's `self.indi.park()` call only issues the park
@@ -310,6 +315,31 @@ class ControllerUI:
             s.transition_at = 0
             logger.error("INDI-002 park did not confirm within %ss", PARK_CONFIRM_TIMEOUT_SECONDS)
             self._devtools_message(["Park did not confirm", "check mount position", "before powering off"])
+
+    def _poll_slew(self) -> None:
+        """`_begin_slew()`'s `self.indi.goto()` call only issues the goto
+        — the driver slews asynchronously and, per
+        `skywatcherAPIMount.cpp`'s own status-polling loop, only starts
+        tracking once the axes report full-stop (confirmed against its
+        source, same place that motivated `goto()` selecting
+        `ON_COORD_SET.TRACK` — see `firmware/indi/client.py`). SLEW used
+        to claim "tracking" after a blind 1.5s regardless of whether the
+        mount had actually arrived, same class of bug `_poll_parking()`
+        fixes for parking. Waits instead for `runtime["tracking"]` to
+        actually read true — kept fresh by `_refresh_status()`'s own
+        periodic `get_status()` poll — before showing TRACK.
+        `SLEW_CONFIRM_TIMEOUT_SECONDS` is the same kind of safety net as
+        `PARK_CONFIRM_TIMEOUT_SECONDS`."""
+        s = self.state
+        if s.screen != "SLEW":
+            return
+        if self._truth(self.runtime.get("tracking", "false")):
+            s.transition_at = 0
+            self._set("TRACK")
+        elif s.transition_at and self.clock() >= s.transition_at:
+            s.transition_at = 0
+            logger.error("INDI-002 slew did not confirm tracking within %ss", SLEW_CONFIRM_TIMEOUT_SECONDS)
+            self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
@@ -688,6 +718,19 @@ class ControllerUI:
         self.runtime.set("parked", "false")
         return True
 
+    def _abort_slew(self) -> None:
+        """Sends the mount's own abort command before leaving the SLEW
+        screen — pressing "7" used to just switch screens without ever
+        telling the driver to stop, leaving a real mount still slewing
+        toward the (possibly wrong, pre-sync) target in the background.
+        Best-effort, same as `_jog()`'s failure handling: still shows
+        SLEW_ABORTED either way, since the UI has no better screen to
+        offer if the abort command itself fails to reach the driver."""
+        try:
+            self.indi.abort()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 abort failed: %s", exc)
+
     def _confirm_align_point(self) -> None:
         """Called when the wheel is pushed on ALIGN_JOG: the star picked on
         ALIGN_STAR_PICK is now centered, so tell the mount driver "you are
@@ -803,7 +846,7 @@ class ControllerUI:
             elif key == "9": self._set(s.return_screen)
             return
         if s.screen == "SLEW":
-            if key == "7": self._set("SLEW_ABORTED")
+            if key == "7": self._abort_slew(); self._set("SLEW_ABORTED")
             return
         if s.screen == "SLEW_ABORTED":
             if key == ENC_PUSH: self._begin_slew()
@@ -1103,7 +1146,7 @@ class ControllerUI:
             logger.error("INDI-002 goto failed: %s", exc)
             self._set(self.state.return_screen)
             return
-        self.state.transition_at = self.clock() + 1.5
+        self.state.transition_at = self.clock() + SLEW_CONFIRM_TIMEOUT_SECONDS
         self._set("SLEW")
 
     def _digits(self, key: str) -> None:

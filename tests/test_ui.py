@@ -33,16 +33,19 @@ class Input(InputHAL):
 
 
 class Indi:
-    def __init__(self): self.synced = None; self.goto_target = None; self.parked = False; self.jogs = []
+    def __init__(self):
+        self.synced = None; self.goto_target = None; self.parked = False
+        self.tracking = False; self.aborted = False; self.jogs = []
     def sync(self, ra, dec): self.synced = (ra, dec)
-    def goto(self, ra, dec): self.goto_target = (ra, dec)
+    def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
     def park(self): self.parked = True
     def unpark(self): self.parked = False
+    def abort(self): self.aborted = True; self.tracking = False
     def jog(self, direction, speed): self.jogs.append((direction, speed))
     def get_status(self):
         return MountStatus(
             connected=True, ra="", dec="", alt=0.0, az=0.0,
-            tracking=False, aligned=False, parked=self.parked,
+            tracking=self.tracking, aligned=False, parked=self.parked,
         )
 
 
@@ -589,6 +592,64 @@ def test_slew_without_coordinates_shows_error():
         assert ui.state.screen == "ERROR"
         assert ui.state.transition_at == 0
         assert ui.indi.goto_target is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_waits_for_driver_confirmation_before_showing_track():
+    # goto() only issues the command -- a real driver slews
+    # asynchronously, so SLEW must not claim TRACK until
+    # get_status().tracking actually comes back true (polled via
+    # _refresh_status(), not a blind fixed timer).
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+        assert ui.indi.goto_target == ("1h", "+1d")  # command issued
+
+        # Time passes, but no status poll has happened yet (<2s) --
+        # still SLEW, not optimistically TRACK.
+        now[0] += 1.0
+        ui.tick()
+        assert ui.state.screen == "SLEW"
+
+        # A status poll (>=2s since last) picks up indi.tracking == True
+        # and only then transitions.
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_slew_confirmation_timeout_does_not_silently_claim_tracking(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        # get_status() never reports tracking (e.g. a flaky real driver).
+        monkeypatch.setattr(ui.indi, "get_status", lambda: None)
+        ui._confirm_slew(SearchResult("Moon", ra="1h", dec="+1d"), "LIST")
+        assert ui.state.screen == "SLEW"
+
+        now[0] += controller_module.SLEW_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "did not confirm" in " ".join(ui.state.dev_message).lower()
+    finally: conn.close(); os.unlink(path)
+
+
+def test_abort_on_slew_screen_calls_indi_abort():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SLEW"
+        ui.indi.tracking = True
+        ui.handle("7")
+        assert ui.indi.aborted is True
+        assert ui.state.screen == "SLEW_ABORTED"
     finally: conn.close(); os.unlink(path)
 
 
