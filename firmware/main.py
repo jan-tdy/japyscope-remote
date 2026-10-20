@@ -135,7 +135,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             input_hal = make_input(flags["keypad"], flags["encoder"], joystick_simulated)
             backlight = make_backlight(flags["backlight"])
             manager = None if flags["mount"] else IndiServerManager(driver_binary=args.driver)
-            indi = SimulatedIndiClient() if flags["mount"] else IndiClient()
+            indi = SimulatedIndiClient() if flags["mount"] else IndiClient(settings=settings)
             if manager is not None:
                 manager.start()
                 connect_indi(indi)

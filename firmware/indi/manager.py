@@ -5,7 +5,10 @@ mockup/plan) — it only reads state the firmware app writes to
 shared.db.StateRepo.
 
 Bullseye's armhf ``indi-bin`` package contains the default driver executable
-used here. Its live property names still need validation against the mount.
+used here. Its property names (used by ``firmware/indi/client.py``'s
+``IndiClient``) are sourced from the driver's own upstream code, not
+guessed, but still want a live sanity check against a real mount before
+trusting them blind -- see that module's docstring.
 """
 from __future__ import annotations
 

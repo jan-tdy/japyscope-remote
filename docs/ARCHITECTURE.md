@@ -118,11 +118,17 @@ real panel (`firmware/hal/display/epaper.py` implements the SSD1680
 reset/init/full-refresh sequence and a dependency-free text rasterizer
 against the datasheet, but the RAM bit polarity, reset timing, and
 partial-refresh LUT are unconfirmed without hardware — see that module's
-docstring), map PyIndi properties against the live Sky-Watcher driver (including
-`IndiClient.jog()`'s `TELESCOPE_MOTION_NS`/`TELESCOPE_MOTION_WE` switches),
-confirm the physical RJ12 pinout, and exercise install/OTA on real Bullseye,
-Bookworm, and Trixie Pi Zero W devices. These are not safely guessable
-without the prototype.
+docstring), confirm the physical RJ12 pinout, and exercise install/OTA on
+real Bullseye, Bookworm, and Trixie Pi Zero W devices. These are not
+safely guessable without the prototype. `IndiClient` (`firmware/indi/
+client.py`) talks to the driver via `indi_setprop`/`indi_getprop` using
+device/property names read straight from the driver's upstream source
+(`indilib/indi`'s `skywatcherAPIMount.cpp` + the base `INDI::Telescope`/
+`Connection::TCP`/`Connection::Serial` classes it inherits from) rather
+than guessed — a meaningfully stronger starting point than a blind
+mapping — but has never run against a live `indiserver` + real mount, so
+still budget time to confirm it on the prototype (`indi_getprop -h
+localhost "Skywatcher Alt-Az.*"` is the fastest way to spot a mismatch).
 
 **Done**: a polished end-user manual as a PDF (`docs/JapyScope_Remote_User_Manual.pdf`,
 linked from the docs site's home page) covering the hand controller, the

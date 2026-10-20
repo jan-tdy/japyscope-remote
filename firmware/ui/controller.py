@@ -24,10 +24,10 @@ from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from shared.version import current_version
 
-from . import astro
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
 from .search import SearchResult, SmartSearch
@@ -633,9 +633,9 @@ class ControllerUI:
         """Manual nudge for screens where the mount can move (see
         JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
         calling convention as `_move`, so callers fall through to their own
-        handling otherwise. Failure (real hardware not wired up yet — see
-        firmware/indi/client.py) just logs, same as `park()`'s failure
-        handling: a single missed nudge isn't worth leaving the jog screen."""
+        handling otherwise. Failure (INDI-004 — see firmware/indi/client.py)
+        just logs, same as `park()`'s failure handling: a single missed
+        nudge isn't worth leaving the jog screen."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
@@ -1301,11 +1301,10 @@ class ControllerUI:
         """Dev Tools code 9600's "WiFi" choice. Points the already-running
         indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
         mount's SynScan WiFi module over the network instead of a serial
-        port, using indi_setprop (bundled with indi-bin, same subprocess
-        style as the other Dev Tools actions) rather than the still-
-        unfinished PyIndi client layer (firmware/indi/client.py) — that
-        layer's get_status/sync/goto/park gap is unrelated to which
-        transport the driver itself talks to the mount over."""
+        port, using indi_setprop directly (bundled with indi-bin, same
+        subprocess style firmware/indi/client.py's IndiClient itself now
+        uses for get_status/sync/goto/park/jog) — this is about which
+        transport the driver talks to the mount over, unrelated to that."""
         host = self.settings.get("mount_wifi_host", "")
         if not host:
             self._devtools_message([

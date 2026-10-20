@@ -1,6 +1,6 @@
 import datetime
 
-from firmware.ui import astro
+from shared import astro
 
 
 def test_ra_parses_hms_and_colon_and_decimal():

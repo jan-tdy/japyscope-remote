@@ -82,11 +82,16 @@ pairs it with BlueZ directly — the script finds it already paired
 afterwards.) `sudo japyscope-bluetooth-mount unpair` reverses either path.
 
 **Not yet wired end-to-end**: picking Bluetooth there only records the
-intent — actually pointing the `indi_skywatcherAltAzMount` driver at
-`/dev/rfcomm0` instead of `/dev/serial0` still needs `firmware/indi/
-client.py`'s property wiring (currently stubbed, same v0 gap as
-`get_status`/`sync`/`goto`/`park`). Until that lands, switch the driver's
-`DEVICE_PORT` manually on this port after pairing.
+intent — unlike WiFi (below), nothing yet points the
+`indi_skywatcherAltAzMount` driver's own connection at `/dev/rfcomm0`
+instead of `/dev/serial0` for it (`firmware/indi/client.py`'s
+`IndiClient` itself — `get_status`/`sync`/`goto`/`park`/`jog` — is wired
+up via `indi_setprop`/`indi_getprop`, but that's the driver's mount-
+control properties, not its own serial-port connection setting). Until a
+`_connect_mount_bluetooth()` equivalent of `_connect_mount_wifi()` below
+lands, switch the driver's `DEVICE_PORT` manually on this port after
+pairing (`indi_setprop "Skywatcher Alt-Az.DEVICE_PORT.PORT=/dev/rfcomm0"`,
+then `CONNECTION_MODE.CONNECTION_SERIAL=On`).
 
 Trade-offs vs. the wired RJ12 link: higher latency, occasional dropped
 connections (BT SPP), and the module draws its own power from the mount —
