@@ -24,10 +24,10 @@ from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from shared.version import current_version
 
-from . import astro
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
 from .i18n import t as translate
 from .search import SearchResult, SmartSearch
@@ -47,6 +47,10 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+# How long PARKING waits for the driver to actually confirm parked
+# (polled via runtime["parked"] — see _poll_parking()) before giving up
+# and reporting a timeout instead of assuming the mount finished moving.
+PARK_CONFIRM_TIMEOUT_SECONDS = 60
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -169,15 +173,20 @@ class ControllerUI:
     # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
     # recording the choice — there's no module paired yet to talk to.
     MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"))
-    # indi_skywatcherAltAzMount's own INDI device name and the standard
-    # INDI::Connection::TCP property names used to point it at the
-    # mount's SynScan WiFi module over the network (UDP port 11880 — the
-    # module is a transparent serial<->UDP bridge for the same SynScan
-    # protocol RJ12 carries, confirmed against independent open-source
-    # reimplementations of it) instead of a serial port. UNVERIFIED
-    # against a live session with this exact driver/mount — same caveat
-    # as firmware/indi/manager.py's own docstring.
-    INDI_MOUNT_DEVICE = "SkyWatcher Alt-Az"
+    # indi_skywatcherAltAzMount's own INDI device name and connection
+    # property names used to point it at the mount's SynScan WiFi module
+    # over the network (UDP port 11880 — the module is a transparent
+    # serial<->UDP bridge for the same SynScan protocol RJ12 carries,
+    # confirmed against independent open-source reimplementations of it)
+    # instead of a serial port. Verified against the driver's actual
+    # source (indilib/indi, drivers/telescope/skywatcherAPIMount.cpp,
+    # built as the indi_skywatcherAltAzMount binary): getDefaultName()
+    # returns exactly "Skywatcher Alt-Az" (lowercase "w" — not
+    # "SkyWatcher"), its tcpConnection defaults to 192.168.4.1:11880/UDP,
+    # and CONNECTION_MODE/DEVICE_ADDRESS/CONNECTION are the standard
+    # INDI::Connection::TCP property names (libs/indibase/
+    # connectionplugins/connectiontcp.cpp, libs/indibase/defaultdevice.cpp).
+    INDI_MOUNT_DEVICE = "Skywatcher Alt-Az"
     INDI_MOUNT_WIFI_PORT = 11880
 
     def __init__(
@@ -256,10 +265,9 @@ class ControllerUI:
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
-        if s.transition_at and now >= s.transition_at:
+        if s.transition_at and now >= s.transition_at and s.screen != "PARKING":
             s.transition_at = 0
             if s.screen == "SLEW": self._set("TRACK")
-            elif s.screen == "PARKING": self.runtime.set("parked", "true"); self._set("PARKED")
             # Confirmed on hardware as an infinite loop ("Saving…" <->
             # "Looks right?" repeating until the app crashed): this used to
             # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
@@ -276,6 +284,32 @@ class ControllerUI:
                 s.access_last_remaining = remaining
                 self.render(coalesce=True)
         self._poll_update_status()
+        self._poll_parking()
+
+    def _poll_parking(self) -> None:
+        """PARK_CONFIRM's `self.indi.park()` call only issues the park
+        command — on real hardware the driver's `Park()` starts an
+        asynchronous slew to the park position that can take far longer
+        than a fixed timer, so PARKING used to claim "parked" after a
+        blind 1.5s regardless of whether the mount had actually finished
+        moving, letting the owner reach the power-off screen while it was
+        still in motion. Waits instead for `runtime["parked"]` to
+        actually read true — kept fresh by `_refresh_status()`'s own
+        periodic `get_status()` poll — before showing PARKED.
+        `PARK_CONFIRM_TIMEOUT_SECONDS` (set as `transition_at` when
+        parking starts) is a safety net for a status read that never
+        confirms (e.g. a flaky `get_status()`): it reports the timeout
+        rather than silently proceeding as if parked."""
+        s = self.state
+        if s.screen != "PARKING":
+            return
+        if self._truth(self.runtime.get("parked", "false")):
+            s.transition_at = 0
+            self._set("PARKED")
+        elif s.transition_at and self.clock() >= s.transition_at:
+            s.transition_at = 0
+            logger.error("INDI-002 park did not confirm within %ss", PARK_CONFIRM_TIMEOUT_SECONDS)
+            self._devtools_message(["Park did not confirm", "check mount position", "before powering off"])
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
@@ -628,9 +662,9 @@ class ControllerUI:
         """Manual nudge for screens where the mount can move (see
         JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
         calling convention as `_move`, so callers fall through to their own
-        handling otherwise. Failure (real hardware not wired up yet — see
-        firmware/indi/client.py) just logs, same as `park()`'s failure
-        handling: a single missed nudge isn't worth leaving the jog screen."""
+        handling otherwise. Failure (INDI-004 — see firmware/indi/client.py)
+        just logs, same as `park()`'s failure handling: a single missed
+        nudge isn't worth leaving the jog screen."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
@@ -638,6 +672,20 @@ class ControllerUI:
             self.indi.jog(direction, self.state.speed)
         except (NotImplementedError, ConnectionError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
+        return True
+
+    def _unpark(self) -> bool:
+        """Sends the mount's own unpark command before clearing the local
+        `parked` flag — a bare `runtime.set("parked", "false")` used to
+        leave the driver itself still parked, which real drivers reject
+        every subsequent goto/sync/jog against. Returns whether it
+        succeeded, so callers only leave PARKED on success."""
+        try:
+            self.indi.unpark()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 unpark failed: %s", exc)
+            return False
+        self.runtime.set("parked", "false")
         return True
 
     def _confirm_align_point(self) -> None:
@@ -825,12 +873,13 @@ class ControllerUI:
                 except (NotImplementedError, ConnectionError) as exc:
                     logger.error("INDI-002 park failed: %s", exc)
                     return
-                s.transition_at = self.clock() + 1.5
+                s.transition_at = self.clock() + PARK_CONFIRM_TIMEOUT_SECONDS
                 self._set("PARKING")
             return
         if s.screen == "PARKED":
             if self._move(key, 2): return
-            if key == ENC_PUSH and s.index == 0: self.runtime.set("parked", "false"); self._set("IDLE")
+            if key == ENC_PUSH and s.index == 0:
+                if self._unpark(): self._set("IDLE")
             elif key == ENC_PUSH: self._shutdown()
             return
         if s.screen == "WIFI_ACCESS":
@@ -951,7 +1000,8 @@ class ControllerUI:
         if s.index == 0: self._set("TIME_SYNC")
         elif s.index == 1: self._set("ALIGN_CHOOSE")
         elif s.index == 2:
-            if self._truth(self.runtime.get("parked", "false")): self.runtime.set("parked", "false"); self._set("IDLE")
+            if self._truth(self.runtime.get("parked", "false")):
+                if self._unpark(): self._set("IDLE")
             else: self._set("PARK_CONFIRM")
         elif s.index == 3:
             # Only mint a fresh code (and restart the 10-minute countdown)
@@ -1296,11 +1346,10 @@ class ControllerUI:
         """Dev Tools code 9600's "WiFi" choice. Points the already-running
         indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
         mount's SynScan WiFi module over the network instead of a serial
-        port, using indi_setprop (bundled with indi-bin, same subprocess
-        style as the other Dev Tools actions) rather than the still-
-        unfinished PyIndi client layer (firmware/indi/client.py) — that
-        layer's get_status/sync/goto/park gap is unrelated to which
-        transport the driver itself talks to the mount over."""
+        port, using indi_setprop directly (bundled with indi-bin, same
+        subprocess style firmware/indi/client.py's IndiClient itself now
+        uses for get_status/sync/goto/park/jog) — this is about which
+        transport the driver talks to the mount over, unrelated to that."""
         host = self.settings.get("mount_wifi_host", "")
         if not host:
             self._devtools_message([

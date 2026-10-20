@@ -84,6 +84,12 @@ def _gmst_degrees(when_utc: datetime) -> float:
     return gmst % 360.0
 
 
+def _hour_angle_radians(ra_deg: float, longitude_deg: float, when_epoch: float) -> float:
+    when_utc = datetime.fromtimestamp(when_epoch, tz=timezone.utc)
+    lst = (_gmst_degrees(when_utc) + longitude_deg) % 360.0
+    return math.radians((lst - ra_deg + 540) % 360 - 180)
+
+
 def altitude_degrees(
     ra_deg: float,
     dec_deg: float,
@@ -94,10 +100,29 @@ def altitude_degrees(
     """Topocentric altitude, in degrees, of (`ra_deg`, `dec_deg`) for an
     observer at (`latitude_deg`, `longitude_deg` east-positive) at
     `when_epoch` (Unix timestamp, i.e. `ControllerUI.clock()`)."""
-    when_utc = datetime.fromtimestamp(when_epoch, tz=timezone.utc)
-    lst = (_gmst_degrees(when_utc) + longitude_deg) % 360.0
-    hour_angle = math.radians((lst - ra_deg + 540) % 360 - 180)
+    hour_angle = _hour_angle_radians(ra_deg, longitude_deg, when_epoch)
     lat = math.radians(latitude_deg)
     dec = math.radians(dec_deg)
     sin_alt = math.sin(lat) * math.sin(dec) + math.cos(lat) * math.cos(dec) * math.cos(hour_angle)
     return math.degrees(math.asin(max(-1.0, min(1.0, sin_alt))))
+
+
+def azimuth_degrees(
+    ra_deg: float,
+    dec_deg: float,
+    latitude_deg: float,
+    longitude_deg: float,
+    when_epoch: float,
+) -> float:
+    """Topocentric azimuth, in degrees (0 = North, 90 = East), of
+    (`ra_deg`, `dec_deg`) for the same observer/time as
+    `altitude_degrees` -- same standard hour-angle-based spherical
+    astronomy conversion."""
+    hour_angle = _hour_angle_radians(ra_deg, longitude_deg, when_epoch)
+    lat = math.radians(latitude_deg)
+    dec = math.radians(dec_deg)
+    az = math.atan2(
+        -math.sin(hour_angle),
+        math.cos(lat) * math.tan(dec) - math.sin(lat) * math.cos(hour_angle),
+    )
+    return math.degrees(az) % 360.0

@@ -37,7 +37,13 @@ class Indi:
     def sync(self, ra, dec): self.synced = (ra, dec)
     def goto(self, ra, dec): self.goto_target = (ra, dec)
     def park(self): self.parked = True
+    def unpark(self): self.parked = False
     def jog(self, direction, speed): self.jogs.append((direction, speed))
+    def get_status(self):
+        return MountStatus(
+            connected=True, ra="", dec="", alt=0.0, az=0.0,
+            tracking=False, aligned=False, parked=self.parked,
+        )
 
 
 def make_ui():
@@ -227,6 +233,96 @@ def test_shutdown_from_parked_screen_also_calls_power_control():
         assert calls == [True]
         assert ui.running is False
         assert ui.state.screen == "SHUTDOWN"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_waits_for_driver_confirmation_before_showing_parked():
+    # park() only issues the command -- a real driver parks
+    # asynchronously, so PARKING must not claim success until
+    # get_status().parked actually comes back true (polled via
+    # _refresh_status(), not a blind fixed timer).
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKING"
+        assert ui.indi.parked is True  # command issued
+
+        # Time passes, but no status poll has happened yet (<2s) --
+        # still PARKING, not optimistically PARKED.
+        now[0] += 1.0
+        ui.tick()
+        assert ui.state.screen == "PARKING"
+
+        # A status poll (>=2s since last) picks up indi.parked == True
+        # and only then transitions.
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "PARKED"
+        assert StateRepo(conn).get("parked") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_confirmation_timeout_does_not_silently_claim_parked(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        # get_status() never reports parked (e.g. a flaky real driver).
+        monkeypatch.setattr(ui.indi, "get_status", lambda: None)
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKING"
+
+        now[0] += controller_module.PARK_CONFIRM_TIMEOUT_SECONDS + 1
+        ui.tick()
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "did not confirm" in " ".join(ui.state.dev_message).lower()
+        assert StateRepo(conn).get("parked") != "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_unpark_from_parked_screen_calls_indi_unpark():
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui.state.screen = "PARKED"; ui.state.index = 0  # "Unpark"
+        ui.handle(ENC_PUSH)
+        assert ui.indi.parked is False
+        assert ui.state.screen == "IDLE"
+        assert StateRepo(conn).get("parked") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_unpark_failure_keeps_parked_screen(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+
+        def fail():
+            raise ConnectionError("driver unreachable")
+        monkeypatch.setattr(ui.indi, "unpark", fail)
+        ui.state.screen = "PARKED"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKED"  # did not leave on failure
+        assert StateRepo(conn).get("parked") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_unpark_from_menu_toggle_calls_indi_unpark():
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui.state.screen = "MENU"; ui.state.index = 2
+        ui.handle(ENC_PUSH)
+        assert ui.indi.parked is False
+        assert ui.state.screen == "IDLE"
     finally: conn.close(); os.unlink(path)
 
 
@@ -794,10 +890,10 @@ def test_devtools_9600_wifi_configures_indi_and_persists(monkeypatch):
         assert "192.168.4.1" in ui.state.dev_message
         assert SettingsRepo(conn).get("mount_interface") == "wifi"
         assert calls == [
-            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
-            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
-            ["indi_setprop", "SkyWatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
-            ["indi_setprop", "SkyWatcher Alt-Az.CONNECTION.CONNECT=On"],
+            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
         ]
     finally: conn.close(); os.unlink(path)
 
