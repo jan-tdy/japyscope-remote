@@ -111,7 +111,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL, key_tap
+from .base import InputHAL, key_tap, key_up
 from .keys import ENC_DOWN, ENC_PUSH, ENC_UP
 
 logger = logging.getLogger(__name__)
