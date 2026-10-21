@@ -49,7 +49,7 @@ T9 = {
 SPEEDS = tuple(range(1, 10))
 SPEED_RATE_LABELS = {
     1: "1x", 2: "2x", 3: "4x", 4: "8x", 5: "16x",
-    6: "32x", 7: "64x", 8: "128x", 9: "800x",
+    6: "32x", 7: "64x", 8: "128x", 9: "Max",
 }
 JOG_HOLD_TIMEOUT_SECONDS = 45
 # How long PARKING waits for the driver to actually confirm parked
