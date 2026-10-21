@@ -54,9 +54,9 @@ JOG_HOLD_TIMEOUT_SECONDS = 45
 PARK_CONFIRM_TIMEOUT_SECONDS = 60
 # How long SLEW waits for the driver to actually confirm tracking
 # (polled via runtime["tracking"] — see _poll_slew()) before giving up.
-# Longer than parking: alt-az GOTO slews across most of the sky can take
-# longer than a return-to-park move.
-SLEW_CONFIRM_TIMEOUT_SECONDS = 120
+# A full-sky alt-az GOTO can take several minutes, so leave a generous
+# window before aborting motion that may still be progressing.
+SLEW_CONFIRM_TIMEOUT_SECONDS = 600
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
