@@ -102,17 +102,21 @@ def test_abort_sends_telescope_abort_motion_on(monkeypatch):
     assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_ABORT_MOTION.ABORT=On"]]
 
 
-def test_jog_starts_motion_until_explicit_stop(monkeypatch):
+@pytest.mark.parametrize("speed,rate_element", [
+    *((speed, f"{speed}x") for speed in range(1, 9)),
+    (9, "SLEW_MAX"),
+])
+def test_jog_maps_each_preset_to_its_driver_element(monkeypatch, speed, rate_element):
     calls = []
     monkeypatch.setattr(
         client_module.subprocess, "run",
         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
     )
     client = make_client()
-    client.jog("N", 8)
+    client.jog("N", speed)
     client.stop_jog("N")
     assert calls == [
-        ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.8x=On"],
+        ["indi_setprop", "-h", "localhost", "-p", "7624", f"Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.{rate_element}=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=Off"],
     ]

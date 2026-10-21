@@ -39,11 +39,9 @@ not guessed from naming convention:
 - ``TELESCOPE_PARK`` (switch): ``PARK``/``UNPARK``.
 - ``TELESCOPE_MOTION_NS``/``TELESCOPE_MOTION_WE`` (switches):
   ``MOTION_NORTH``/``MOTION_SOUTH``, ``MOTION_WEST``/``MOTION_EAST``.
-- ``TELESCOPE_SLEW_RATE`` (switch): elements named ``"{rate}x"`` for
-  each of this driver's preset rates (1/2/4/8/16/32/64/128/600/800 --
-  ``SlewSpeeds`` in ``skywatcherAPIMount.cpp``) -- this project's own
-  ``SPEEDS`` tiers (``firmware/ui/controller.py``) are exactly the first
-  seven of these.
+- ``TELESCOPE_SLEW_RATE`` (switch): numbered preset elements
+  ``1x`` through ``8x``; the driver renames its final maximum
+  element to ``SLEW_MAX``. UI preset 9 selects that maximum element.
 - ``CONNECTION``/``CONNECTION_MODE``/``DEVICE_ADDRESS``: standard INDI
   properties, already used by ``firmware/ui/controller.py``'s
   ``_connect_mount_wifi()``.
@@ -106,6 +104,13 @@ _JOG_PROPERTIES = {
     "S": ("TELESCOPE_MOTION_NS", "MOTION_SOUTH"),
     "E": ("TELESCOPE_MOTION_WE", "MOTION_EAST"),
     "W": ("TELESCOPE_MOTION_WE", "MOTION_WEST"),
+}
+
+# UI presets are ordinal positions in the driver's switch vector. The
+# final driver element is renamed from its numbered name to SLEW_MAX.
+_SLEW_RATE_ELEMENTS = {
+    **{preset: f"{preset}x" for preset in range(1, 9)},
+    9: "SLEW_MAX",
 }
 
 
@@ -248,8 +253,11 @@ class IndiClient:
         jog_property = _JOG_PROPERTIES.get(direction)
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")
+        rate_element = _SLEW_RATE_ELEMENTS.get(speed)
+        if rate_element is None:
+            raise ConnectionError(f"unknown jog speed preset: {speed!r}")
         axis_property, on_element = jog_property
-        self._setprop(f"TELESCOPE_SLEW_RATE.{speed}x=On")
+        self._setprop(f"TELESCOPE_SLEW_RATE.{rate_element}=On")
         self._setprop(f"{axis_property}.{on_element}=On")
 
     def stop_jog(self, direction: str) -> None:
