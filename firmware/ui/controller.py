@@ -170,7 +170,7 @@ class ControllerUI:
     MENU = (
         "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
         "menu.location", "menu.backlight", "menu.language", "menu.theme",
-        "menu.sudo_password", "menu.system", "menu.about",
+        "menu.sudo_password", "menu.system", "menu.about", "menu.connection",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
     # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
@@ -252,6 +252,8 @@ class ControllerUI:
 
     def start(self) -> None:
         self.render()
+        if self.indi_manager is not None:
+            self._reconnect_mount_interface()
         update_status = self.runtime.get("update_status")
         if update_status in ("success", "failed"):
             # A finished OTA update (`install/update.py`'s `apply()`)
@@ -660,6 +662,10 @@ class ControllerUI:
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
             lines = self._visible("Mount interface", [label for _, label in self.MOUNT_INTERFACES])
+        elif screen == "CONNECTION":
+            current = self.settings.get("mount_interface", "rj12")
+            label = dict(self.MOUNT_INTERFACES).get(current, current)
+            lines = self._visible(f"Connection: {label}", [self._t("connection.reconnect")])
         elif screen == "DEV_REPO_SELECT":
             lines = self._visible("Set repo", list(self.REPOS))
         elif screen == "DEV_CHANNEL_SELECT":
@@ -1097,6 +1103,13 @@ class ControllerUI:
                     self.settings.set("mount_interface", selected)
                     self._set(s.return_screen)
             return
+        if s.screen == "CONNECTION":
+            if self._move(key, 1): return
+            if key == "9": self._set("MENU", 11); return
+            if key == ENC_PUSH:
+                s.return_screen = "CONNECTION"
+                self._menu_reconnect()
+            return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
             if key == "9": self._set(s.return_screen); return
@@ -1189,7 +1202,8 @@ class ControllerUI:
             self._set("THEME", keys.index(current) if current in keys else 0)
         elif s.index == 8: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
         elif s.index == 9: self._set("SYSTEM_CONFIRM")
-        else: self._set("ABOUT")
+        elif s.index == 10: self._set("ABOUT")
+        else: self._set("CONNECTION")
 
     def _open_catalog(self) -> None:
         s = self.state
@@ -1557,6 +1571,74 @@ class ControllerUI:
             logger.debug("Dev Tools: indi_getprop %s failed: %s", spec, exc)
             return None
         return result.stdout.strip()
+
+    def _reconnect_mount_interface(self) -> None:
+        """Replays whichever mount interface was last selected via Dev
+        Tools 9600 (`settings["mount_interface"]`) -- the connection
+        setting `indi_skywatcherAltAzMount` actually uses lives on the
+        driver process, not in this app's own SQLite state, so a freshly
+        started indiserver has no memory of a previous boot's choice.
+        Confirmed on hardware: without this, `mount_interface` already
+        says "wifi" and `mount_wifi_host` is already saved, but every
+        status poll fails after a reboot until the owner reopens Dev
+        Tools and picks WiFi again manually.
+
+        RJ12 is left alone -- it's the driver's own default connection,
+        nothing to replay. Bluetooth is intentionally left alone too:
+        unlike WiFi/app (both wired through `CONNECTION::TCP` and
+        verified against the driver's upstream source -- see
+        docs/WIRING.md), there is no confirmed, tested
+        `_connect_mount_bluetooth()` equivalent yet; inventing one here
+        blind would risk silently sending the wrong `indi_setprop`
+        sequence at every boot instead of leaving Bluetooth as the
+        already-documented manual fallback (docs/WIRING.md).
+
+        Logs and gives up quietly on failure -- the owner can still fix
+        it via Dev Tools -- rather than blocking the whole boot on a
+        mount that may simply be off or out of range right now."""
+        interface = self.settings.get("mount_interface", "rj12")
+        if interface not in ("wifi", "synscan_app"):
+            return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
+        device = self.INDI_MOUNT_DEVICE
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            logger.error("Boot: mount_interface is %s but no mount_wifi_host is saved; skipping reconnect", interface)
+            return
+        port = self.INDI_MOUNT_WIFI_PORT if interface == "wifi" else self.settings.get("mount_app_port", "")
+        if not port:
+            logger.error("Boot: mount_interface is synscan_app but no mount_app_port is saved; skipping reconnect")
+            return
+        steps = [
+            f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+            f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+            f"{device}.DEVICE_ADDRESS.PORT={port}",
+            f"{device}.CONNECTION.CONNECT=On",
+        ]
+        exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+        if exc is not None:
+            logger.error("Boot: mount %s reconnect to %s:%s failed: %s", interface, host, port, exc)
+
+    def _menu_reconnect(self) -> None:
+        """Menu -> Connection -> Reconnect: the same WiFi/app reconnect
+        `_reconnect_mount_interface()` already replays silently at boot,
+        but triggerable on demand and with real feedback on the panel --
+        for when the mount was off/out of range at boot and is now back,
+        without waiting for the next reboot or hunting for the Dev Tools
+        9600 code. Reuses `_connect_mount_wifi()`/`_connect_mount_app()`
+        directly: same indi_setprop sequence, same success/failure
+        message, same `mount_interface` persistence on success."""
+        interface = self.settings.get("mount_interface", "rj12")
+        if interface == "wifi":
+            self._connect_mount_wifi()
+        elif interface == "synscan_app":
+            self._connect_mount_app()
+        else:
+            label = dict(self.MOUNT_INTERFACES).get(interface, interface)
+            self._devtools_message([
+                f"{label} has no", "automatic reconnect yet", "see docs/WIRING.md",
+            ])
 
     def _connect_mount_wifi(self) -> None:
         """Dev Tools code 9600's "WiFi" choice. Points the already-running
