@@ -347,6 +347,10 @@ code {
   body.nav-open .nav-backdrop {
     display: block;
   }
+  .nav-backdrop:hover {
+    background: rgba(31, 35, 40, 0.45);
+    border-color: transparent;
+  }
   .layout-container {
     flex-direction: column;
   }
