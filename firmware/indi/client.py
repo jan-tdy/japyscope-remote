@@ -40,8 +40,8 @@ not guessed from naming convention:
 - ``TELESCOPE_MOTION_NS``/``TELESCOPE_MOTION_WE`` (switches):
   ``MOTION_NORTH``/``MOTION_SOUTH``, ``MOTION_WEST``/``MOTION_EAST``.
 - ``TELESCOPE_SLEW_RATE`` (switch): numbered preset elements
-  ``1x`` through ``9x``; the driver renames its final (800x) element
-  to ``SLEW_MAX``. The UI exposes presets 1-8 and the maximum as preset 9.
+  ``1x`` through ``8x``; the driver renames its final maximum
+  element to ``SLEW_MAX``. UI preset 9 selects that maximum element.
 - ``CONNECTION``/``CONNECTION_MODE``/``DEVICE_ADDRESS``: standard INDI
   properties, already used by ``firmware/ui/controller.py``'s
   ``_connect_mount_wifi()``.
