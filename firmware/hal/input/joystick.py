@@ -41,6 +41,7 @@ JOY_Y_CHANNEL = 1  # ADS1115 single-ended input wired to VRy (up/down)
 
 _SCAN_INTERVAL_S = 0.02
 _DEBOUNCE_S = 0.05
+_REPEAT_INTERVAL_S = 0.25
 _CENTER = 32768  # mid-scale of the ADS1115's 16-bit conversion register
 _DEAD_ZONE = 6000  # +/- around center treated as "centered" (rest-position noise margin)
 
@@ -123,6 +124,7 @@ class JoystickInput(InputHAL):
         self._active_direction: Optional[str] = None
         self._direction_candidate: Optional[str] = None
         self._direction_candidate_at = time.monotonic()
+        self._last_repeat_at = 0.0
         self._button_raw = GPIO.input(JOY_SW_PIN)
         self._button_changed_at = time.monotonic()
         self._button_pressed = False
@@ -146,6 +148,10 @@ class JoystickInput(InputHAL):
             self._active_direction = direction
             if direction is not None:
                 self._queue.put(direction)
+                self._last_repeat_at = now
+        elif direction is not None and now - self._last_repeat_at >= _REPEAT_INTERVAL_S:
+            self._queue.put(direction)
+            self._last_repeat_at = now
 
     def _scan_button(self) -> None:
         now = time.monotonic()
