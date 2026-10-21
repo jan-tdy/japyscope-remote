@@ -85,7 +85,7 @@ def parse_journal_entries(log_text: str) -> list[dict[str, str]]:
     return entries
 
 
-def get_system_telemetry() -> dict[str, str]: -> dict[str, str]:
+def get_system_telemetry() -> dict[str, str]:
     telemetry = {
         "cpu_temp": "N/A",
         "cpu_load": "N/A",
