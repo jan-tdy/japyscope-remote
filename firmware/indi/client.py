@@ -58,6 +58,7 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable, Optional, Protocol
 
 from shared import astro
@@ -152,6 +153,34 @@ class IndiClient:
 
     def disconnect(self) -> None:
         pass
+
+    def set_location(self, latitude_deg: float, longitude_deg: float, elevation_m: float = 0.0) -> None:
+        """Writes the mount's own location -- standard INDI::Telescope
+        GEOGRAPHIC_COORD property (LAT/LONG/ELEV). Confirmed on
+        hardware as a real gap: this app's Settings page
+        latitude/longitude were only ever used locally, for this
+        module's own alt/az math (get_status()/sync_alt_az()) -- never
+        actually sent to the driver, which independently needs them
+        for every alt/az<->RA/Dec conversion IT does internally
+        (GEOGRAPHIC_COORD read back as 0/0 on real hardware, the
+        equator/Greenwich default, not the configured site).
+
+        LONG is INDI's 0-360-degrees-east convention, not this
+        project's -180..180 east-positive one (see shared/astro.py's
+        module docstring) -- convert before sending."""
+        indi_longitude = longitude_deg % 360.0
+        self._setprop(f"GEOGRAPHIC_COORD.LAT={latitude_deg:.6f};LONG={indi_longitude:.6f};ELEV={elevation_m:.6f}")
+
+    def set_time(self) -> None:
+        """Writes the mount's own current UTC time -- standard
+        INDI::Telescope TIME_UTC property. Confirmed on hardware as a
+        real gap (TIME_UTC.UTC read back empty): together with
+        GEOGRAPHIC_COORD above, the driver needs this for its own
+        internal alt/az<->RA/Dec conversions -- without it, those
+        conversions are undefined/wrong regardless of what this app's
+        own shared/astro.py computes for display."""
+        now = datetime.fromtimestamp(self.clock(), tz=timezone.utc)
+        self._setprop(f"TIME_UTC.UTC={now.strftime('%Y-%m-%dT%H:%M:%S')};OFFSET=0")
 
     def _setprop(self, spec: str) -> None:
         try:

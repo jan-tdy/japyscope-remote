@@ -269,6 +269,7 @@ class ControllerUI:
         self.render()
         if self.indi_manager is not None:
             self._reconnect_mount_interface()
+            self._sync_indi_location_and_time()
         update_status = self.runtime.get("update_status")
         if update_status in ("success", "failed"):
             # A finished OTA update (`install/update.py`'s `apply()`)
@@ -1748,6 +1749,30 @@ class ControllerUI:
         exc = self._indi_setprop_steps(indi_host, indi_port, steps)
         if exc is not None:
             logger.error("Boot: mount %s reconnect to %s:%s failed: %s", interface, host, port, exc)
+
+    def _sync_indi_location_and_time(self) -> None:
+        """Confirmed on hardware as a real gap: the driver's own
+        GEOGRAPHIC_COORD/TIME_UTC were never actually set (read back
+        as 0/0 and empty respectively) -- the Settings page's
+        latitude/longitude were only ever used locally (this app's own
+        alt/az math in shared/astro.py for the UI's display), never
+        told to the driver itself, which independently needs them for
+        its own internal alt/az<->RA/Dec conversions. A driver with no
+        idea where or "when" it is cannot report a correct position
+        regardless of what this app syncs to it.
+
+        Best-effort, same as _reconnect_mount_interface(): logs and
+        continues on failure rather than blocking boot on it."""
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            return
+        try:
+            self.indi.set_location(latitude, longitude)
+            self.indi.set_time()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 setting location/time failed: %s", exc)
 
     def _menu_reconnect(self) -> None:
         """Menu -> Connection -> Reconnect: the same WiFi/app reconnect
