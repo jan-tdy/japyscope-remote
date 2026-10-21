@@ -59,3 +59,29 @@ def test_precess_j2000_to_date_matches_known_rate_by_2026():
     ra, dec = astro.precess_j2000_to_date(250.42, -6.6667, when_epoch)
     assert 0.2 < abs(ra - 250.42) < 0.6
     assert abs(dec - (-6.6667)) < 0.3
+
+
+def test_ra_dec_from_alt_az_round_trips_with_altitude_azimuth():
+    # Reciprocal pair: converting an RA/Dec to alt/az and back must
+    # return the original RA/Dec (within floating-point noise), across
+    # a spread of latitudes, azimuths, and times.
+    when_epoch = 1_700_000_000.0
+    for latitude in (-60.0, -10.0, 10.0, 60.0):
+        for ra_deg in (12.3, 123.4, 250.7, 340.1):
+            for dec_deg in (-70.0, -5.0, 40.0, 80.0):
+                alt = astro.altitude_degrees(ra_deg, dec_deg, latitude, 17.0, when_epoch)
+                if alt < 0:
+                    continue  # below the horizon -- not a meaningful round trip
+                az = astro.azimuth_degrees(ra_deg, dec_deg, latitude, 17.0, when_epoch)
+                ra2, dec2 = astro.ra_dec_from_alt_az(alt, az, latitude, 17.0, when_epoch)
+                ra_err = min(abs(ra2 - ra_deg), 360 - abs(ra2 - ra_deg))
+                assert ra_err < 0.001
+                assert abs(dec2 - dec_deg) < 0.001
+
+
+def test_ra_dec_from_alt_az_at_zenith_does_not_crash():
+    # At the zenith the hour angle (and so RA) is genuinely undefined --
+    # must return a finite result, not raise or divide by zero.
+    ra_deg, dec_deg = astro.ra_dec_from_alt_az(90.0, 0.0, 48.0, 17.0, 1_700_000_000.0)
+    assert round(dec_deg, 6) == 48.0  # straight up at latitude L has dec == L
+    assert 0.0 <= ra_deg < 360.0

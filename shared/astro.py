@@ -128,6 +128,47 @@ def azimuth_degrees(
     return math.degrees(az) % 360.0
 
 
+def ra_dec_from_alt_az(
+    alt_deg: float,
+    az_deg: float,
+    latitude_deg: float,
+    longitude_deg: float,
+    when_epoch: float,
+) -> tuple[float, float]:
+    """Inverse of `altitude_degrees()`/`azimuth_degrees()`: the RA/Dec
+    (both in degrees, RA in 0-360) currently at horizontal position
+    (`alt_deg`, `az_deg`, same 0=North/90=East convention) for an
+    observer at (`latitude_deg`, `longitude_deg`) at `when_epoch`.
+    Standard reciprocal spherical-astronomy transform to the pair above
+    (round-trip verified to floating-point noise) -- this is already in
+    the equinox of date (uses the current sidereal time directly, not a
+    catalog epoch), so unlike catalog RA/Dec it must NOT be passed through
+    `precess_j2000_to_date()` again."""
+    alt = math.radians(alt_deg)
+    az = math.radians(az_deg)
+    lat = math.radians(latitude_deg)
+
+    sin_dec = math.sin(alt) * math.sin(lat) + math.cos(alt) * math.cos(lat) * math.cos(az)
+    dec = math.asin(max(-1.0, min(1.0, sin_dec)))
+    cos_dec = math.cos(dec)
+    cos_lat = math.cos(lat)
+
+    if abs(cos_dec) < 1e-9 or abs(cos_lat) < 1e-9:
+        # At the celestial pole (alt=90 at this latitude) or an observer
+        # at the geographic pole, the hour angle -- and so RA -- is
+        # genuinely undefined; 0 is as good as any other value.
+        hour_angle = 0.0
+    else:
+        sin_h = -math.sin(az) * math.cos(alt) / cos_dec
+        cos_h = (math.sin(alt) - math.sin(lat) * math.sin(dec)) / (cos_lat * cos_dec)
+        hour_angle = math.atan2(sin_h, cos_h)
+
+    when_utc = datetime.fromtimestamp(when_epoch, tz=timezone.utc)
+    lst_deg = _gmst_degrees(when_utc) + longitude_deg
+    ra_deg_result = (lst_deg - math.degrees(hour_angle)) % 360.0
+    return ra_deg_result, math.degrees(dec)
+
+
 def precess_j2000_to_date(ra_deg: float, dec_deg: float, when_epoch: float) -> tuple[float, float]:
     """Precess (`ra_deg`, `dec_deg`) from the J2000.0 equinox -- what this
     project's catalogs and alignment stars are stored in -- to the

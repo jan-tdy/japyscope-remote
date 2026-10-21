@@ -786,6 +786,52 @@ class ControllerUI:
         self.state.jog_started_at = 0.0
         return True
 
+    def _park_alt_az(self) -> tuple[float, float]:
+        """The configured park position (Settings page's "Park
+        Configuration"), as (alt, az) in degrees.
+
+        "zenith": straight up -- azimuth is meaningless there, any value
+        works. "home": the SynScan Alt-Az GTi's own mechanical home
+        position (tube level, pointing north) -- this specific value is
+        NOT independently confirmed against real hardware (unlike
+        "zenith", which is geometry, not a hardware fact); verify it
+        matches the actual power-on position before relying on it.
+        "custom": the saved `park_alt`/`park_az` settings directly."""
+        mode = self.settings.get("park_mode", "zenith")
+        if mode == "zenith":
+            return 90.0, 0.0
+        if mode == "home":
+            return 0.0, 0.0
+        try:
+            return float(self.settings.get("park_alt", "45")), float(self.settings.get("park_az", "180"))
+        except (TypeError, ValueError):
+            return 45.0, 180.0
+
+    def _sync_park_position(self) -> bool:
+        """BOOT_PARK_CHECK's "Yes — parked": tell the driver it's
+        actually at the configured park position instead of leaving
+        whatever RA/Dec it happened to have before the reboot --
+        confirmed on hardware as a real gap (the driver's own
+        connection setting has no memory of a previous session's
+        position; see `IndiClient.sync_alt_az()`'s docstring). Returns
+        whether it succeeded, so the caller only marks `parked`/advances
+        the screen on success -- same pattern as `_unpark()`."""
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            latitude = longitude = 0.0
+        alt, az = self._park_alt_az()
+        try:
+            self.indi.sync_alt_az(alt, az, latitude, longitude)
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 boot park-position sync failed: %s", exc)
+            s = self.state
+            s.return_screen = "BOOT_PARK_CHECK"
+            self._devtools_message(["Could not sync park", "position with the driver", "Check Diagnostics"])
+            return False
+        return True
+
     def _unpark(self) -> bool:
         """Sends the mount's own unpark command before clearing the local
         `parked` flag — a bare `runtime.set("parked", "false")` used to
@@ -878,6 +924,8 @@ class ControllerUI:
             if self._move(key, 2): return
             if key == ENC_PUSH:
                 if s.index == 0:
+                    if not self._sync_park_position():
+                        return
                     self.runtime.set("parked", "true")
                     self._set("PARKED")
                 else:

@@ -69,6 +69,8 @@ class SimulatedIndiClient:
     def connect(self) -> None: pass
     def disconnect(self) -> None: pass
     def sync(self, ra: str, dec: str) -> None: self.status.aligned = True; self.status.ra = ra; self.status.dec = dec
+    def sync_alt_az(self, alt_deg: float, az_deg: float, latitude_deg: float, longitude_deg: float) -> None:
+        self.status.aligned = True; self.status.alt = alt_deg; self.status.az = az_deg
     def goto(self, ra: str, dec: str) -> None: self.status.ra = ra; self.status.dec = dec; self.status.tracking = True
     def park(self) -> None: self.status.parked = True
     def unpark(self) -> None: self.status.parked = False

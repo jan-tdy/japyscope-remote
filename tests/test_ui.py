@@ -34,9 +34,11 @@ class Input(InputHAL):
 
 class Indi:
     def __init__(self):
-        self.synced = None; self.goto_target = None; self.parked = False
+        self.synced = None; self.synced_alt_az = None; self.goto_target = None; self.parked = False
         self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
     def sync(self, ra, dec): self.synced = (ra, dec)
+    def sync_alt_az(self, alt_deg, az_deg, latitude_deg, longitude_deg):
+        self.synced_alt_az = (alt_deg, az_deg, latitude_deg, longitude_deg)
     def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
     def park(self): self.parked = True
     def unpark(self): self.parked = False
@@ -65,6 +67,56 @@ def enter_devtools_code(ui, code):
         for _ in range(int(digit)):
             ui.handle(ENC_UP)
         ui.handle(ENC_PUSH)
+
+
+def test_boot_parked_syncs_mount_to_configured_zenith_park_position():
+    # Confirmed on hardware as a real gap: confirming "Yes -- parked" at
+    # boot used to just set the local `parked` flag -- the driver's own
+    # idea of where it's pointed (EQUATORIAL_EOD_COORD) was left exactly
+    # as it was before the reboot, not synced to the actual park
+    # position, so a goto right after unparking would be computed from a
+    # wrong starting point.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("latitude", "48.0")
+        SettingsRepo(conn).set("longitude", "17.0")
+        # park_mode defaults to "zenith" (shared/db.py) -- straight up,
+        # azimuth doesn't matter.
+        ui.start()
+        ui.handle(ENC_PUSH)  # "Yes -- parked" (index 0)
+        assert ui.indi.synced_alt_az == (90.0, 0.0, 48.0, 17.0)
+        assert StateRepo(conn).get("parked") == "true"
+        assert ui.state.screen == "PARKED"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_parked_sync_uses_custom_park_alt_az():
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("latitude", "48.0")
+        SettingsRepo(conn).set("longitude", "17.0")
+        SettingsRepo(conn).set("park_mode", "custom")
+        SettingsRepo(conn).set("park_alt", "30")
+        SettingsRepo(conn).set("park_az", "200")
+        ui.start()
+        ui.handle(ENC_PUSH)
+        assert ui.indi.synced_alt_az == (30.0, 200.0, 48.0, 17.0)
+        assert ui.state.screen == "PARKED"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_parked_sync_failure_does_not_mark_parked(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fail(*_args): raise ConnectionError("driver unreachable")
+        ui.indi.sync_alt_az = fail
+        ui.start()
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert StateRepo(conn).get("parked") is None
+        ui.handle(ENC_PUSH)  # dismiss -> back to BOOT_PARK_CHECK, can retry
+        assert ui.state.screen == "BOOT_PARK_CHECK"
+    finally: conn.close(); os.unlink(path)
 
 
 def test_boot_not_parked_walks_a_real_star_sync_before_idle():

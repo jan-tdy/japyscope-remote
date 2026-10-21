@@ -227,6 +227,24 @@ class IndiClient:
         self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
         self._aligned = True
 
+    def sync_alt_az(self, alt_deg: float, az_deg: float, latitude_deg: float, longitude_deg: float) -> None:
+        """INDI Sync from a horizontal (alt/az) position rather than
+        RA/Dec -- used by the boot park-confirmation flow
+        (``ControllerUI``'s ``BOOT_PARK_CHECK`` "Yes — parked") to tell
+        the driver it's actually at the configured park position,
+        instead of leaving whatever RA/Dec the driver happened to have
+        before the reboot. Deliberately does NOT go through
+        ``sync()``/``_ra_dec_to_indi()``: ``shared.astro.ra_dec_from_alt_az``
+        already returns RA/Dec in the equinox of date (it uses the
+        current sidereal time directly, not a catalog epoch), so passing
+        it through the J2000-to-date precession step again would
+        double-apply precession and mispoint by the current ~0.37 degree
+        offset (see the module docstring)."""
+        ra_deg, dec_deg = astro.ra_dec_from_alt_az(alt_deg, az_deg, latitude_deg, longitude_deg, self.clock())
+        self._setprop("ON_COORD_SET.SYNC=On")
+        self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_deg / 15.0:.6f};DEC={dec_deg:.6f}")
+        self._aligned = True
+
     def goto(self, ra: str, dec: str) -> None:
         """TRACK, not SLEW -- see the module docstring: SLEW would leave
         the mount idle (not tracking) once it arrives."""
