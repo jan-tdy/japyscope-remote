@@ -1,0 +1,66 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: '✨ Features'
+    labels:
+      - enhancement
+  - title: '🐛 Fixes'
+    labels:
+      - bug
+  # Docs-only changes (README, docs/*.md, CLAUDE.md, etc.) -- no code, so
+  # neither a fix nor a feature. Without its own category these fall
+  # through to the un-categorized "What's Changed" list above every
+  # section, which reads like an orphaned entry rather than a real one.
+  - title: '📝 Documentation'
+    labels:
+      - documentation
+  - title: '📦 Dependency Updates'
+    labels:
+      - dependencies
+
+exclude-labels:
+  - skip-changelog
+
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&'
+
+version-resolver:
+  minor:
+    labels:
+      - enhancement
+  patch:
+    labels:
+      - bug
+      - dependencies
+      - documentation
+  default: patch
+
+autolabeler:
+  - label: enhancement
+    branch:
+      - '/^feature\/.+/i'
+    title:
+      - '/^feat(ure)?(\(.+\))?!?:/i'
+  - label: bug
+    branch:
+      - '/^(fix|bugfix)\/.+/i'
+    title:
+      - '/^fix(\(.+\))?!?:/i'
+  # Dependabot already labels its own PRs "dependencies"; this also
+  # catches manual version bump PRs ("Bump X to Y") by title/branch.
+  - label: dependencies
+    title:
+      - '/^(chore\(deps\)|bump)/i'
+    branch:
+      - '/^bump\/.+/i'
+  - label: documentation
+    title:
+      - '/^docs(\(.+\))?:/i'
+    branch:
+      - '/^docs\/.+/i'
+
+template: |
+  ## What's Changed
+
+  $CHANGES
