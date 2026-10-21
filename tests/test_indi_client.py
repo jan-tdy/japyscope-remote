@@ -234,3 +234,36 @@ def test_set_park_position_sends_az_then_alt(monkeypatch):
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.PARK_AZ=200.000000"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.PARK_ALT=30.000000"],
     ]
+
+
+def test_set_location_converts_west_negative_longitude_to_indi_east_0_360(monkeypatch):
+    # This project's own longitude convention (shared/astro.py) is
+    # east-positive/west-negative (e.g. Piconcillo: -5.46493); INDI's
+    # GEOGRAPHIC_COORD.LONG is 0-360 degrees east. Confirmed on
+    # hardware: the driver's GEOGRAPHIC_COORD read back as 0/0 because
+    # this was never sent at all, regardless of convention.
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    c = make_client()
+    c.set_location(38.17687, -5.46493)
+    assert calls == [[
+        "indi_setprop", "-h", "localhost", "-p", "7624",
+        "Skywatcher Alt-Az.GEOGRAPHIC_COORD.LAT=38.176870;LONG=354.535070;ELEV=0.000000",
+    ]]
+
+
+def test_set_time_sends_current_utc_with_zero_offset(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    c = make_client(clock=lambda: 1700000000.0)  # 2023-11-14T22:13:20Z
+    c.set_time()
+    assert calls == [[
+        "indi_setprop", "-h", "localhost", "-p", "7624",
+        "Skywatcher Alt-Az.TIME_UTC.UTC=2023-11-14T22:13:20;OFFSET=0",
+    ]]

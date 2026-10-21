@@ -35,13 +35,16 @@ class Input(InputHAL):
 class Indi:
     def __init__(self):
         self.synced = None; self.synced_alt_az = None; self.goto_target = None; self.parked = False
-        self.park_position = None
+        self.park_position = None; self.location = None; self.time_set = False
         self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
     def sync(self, ra, dec): self.synced = (ra, dec)
     def sync_alt_az(self, alt_deg, az_deg, latitude_deg, longitude_deg):
         self.synced_alt_az = (alt_deg, az_deg, latitude_deg, longitude_deg)
     def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
     def set_park_position(self, alt_deg, az_deg): self.park_position = (alt_deg, az_deg)
+    def set_location(self, latitude_deg, longitude_deg, elevation_m=0.0):
+        self.location = (latitude_deg, longitude_deg, elevation_m)
+    def set_time(self): self.time_set = True
     def park(self): self.parked = True
     def unpark(self): self.parked = False
     def abort(self): self.aborted = True; self.tracking = False
@@ -1396,6 +1399,34 @@ def test_boot_logs_but_does_not_raise_on_reconnect_failure(monkeypatch, caplog):
         ui.indi_manager = object()
         ui._reconnect_mount_interface()  # must not raise
         assert any("Boot: mount wifi reconnect" in r.message for r in caplog.records)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_sends_configured_location_and_time_to_driver():
+    # Confirmed on hardware as a real gap: GEOGRAPHIC_COORD/TIME_UTC on
+    # the driver read back as 0/0 and empty -- this app's Settings page
+    # latitude/longitude were only ever used locally, never told to the
+    # driver itself, which independently needs them for its own
+    # internal alt/az<->RA/Dec conversions.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("latitude", "38.17687")
+        SettingsRepo(conn).set("longitude", "-5.46493")
+        ui.indi_manager = object()  # non-None marks this as real hardware, not --simulate
+        ui._sync_indi_location_and_time()
+        assert ui.indi.location == (38.17687, -5.46493, 0.0)
+        assert ui.indi.time_set is True
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_location_sync_failure_is_logged_not_raised(caplog):
+    ui, conn, path = make_ui()
+    try:
+        def fail(*_a, **_kw): raise ConnectionError("driver unreachable")
+        ui.indi.set_location = fail
+        ui.indi_manager = object()
+        ui._sync_indi_location_and_time()  # must not raise
+        assert any("INDI-002 setting location/time failed" in r.message for r in caplog.records)
     finally: conn.close(); os.unlink(path)
 
 
