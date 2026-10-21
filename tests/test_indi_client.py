@@ -202,3 +202,21 @@ def test_get_status_without_settings_reports_zero_alt_az(monkeypatch):
     assert status is not None
     assert status.alt == 0.0 and status.az == 0.0
     assert status.parked is True
+
+
+def test_sync_alt_az_sets_coord_mode_then_sends_eod_ra_dec_without_double_precessing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    epoch = 1700000000.0
+    c = make_client(clock=lambda: epoch)
+    c.sync_alt_az(45.0, 180.0, 48.0, 17.0)
+    assert calls[0] == ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.ON_COORD_SET.SYNC=On"]
+    ra_deg, dec_deg = astro.ra_dec_from_alt_az(45.0, 180.0, 48.0, 17.0, epoch)
+    assert calls[1] == [
+        "indi_setprop", "-h", "localhost", "-p", "7624",
+        f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_deg / 15.0:.6f};DEC={dec_deg:.6f}",
+    ]
+    assert c._aligned is True
