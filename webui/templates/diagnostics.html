@@ -37,7 +37,26 @@
   </div>
 </form>
 
-<pre id="log-output">{{ logs }}</pre>
+<div class="log-toolbar">
+  <button type="button" id="raw-toggle" aria-expanded="false" aria-controls="log-output">Raw log</button>
+</div>
+
+<div id="structured-logs" class="log-list" aria-label="Structured journal entries">
+  {% for entry in entries %}
+  <details class="log-entry log-{{ entry.level }}">
+    <summary>
+      <span class="log-level">{{ entry.level }}</span>
+      {% if entry.timestamp %}<time>{{ entry.timestamp }}</time>{% endif %}
+      <span class="log-unit">{{ entry.unit }}</span>
+      <span class="log-message">{{ entry.message }}</span>
+    </summary>
+    <pre class="log-raw">{{ entry.raw }}</pre>
+  </details>
+  {% else %}
+  <p class="muted">No structured log entries.</p>
+  {% endfor %}
+</div>
+<pre id="log-output" hidden>{{ logs }}</pre>
 
 <section>
   <h3>SSH Command Reference</h3>
@@ -46,8 +65,17 @@
 </section>
 
 <script>
+var rawLog = document.getElementById('log-output');
+var rawToggle = document.getElementById('raw-toggle');
+rawToggle.addEventListener('click', function() {
+  var showRaw = rawLog.hidden;
+  rawLog.hidden = !showRaw;
+  document.getElementById('structured-logs').hidden = showRaw;
+  rawToggle.setAttribute('aria-expanded', String(showRaw));
+});
+
 document.getElementById('copy-btn').addEventListener('click', function() {
-  var text = document.getElementById('log-output').innerText;
+  var text = rawLog.textContent;
   var feedback = document.getElementById('copy-feedback');
 
   function showMsg(msg) {
@@ -66,9 +94,11 @@ document.getElementById('copy-btn').addEventListener('click', function() {
   }
 
   function fallbackCopy() {
+    var wasHidden = rawLog.hidden;
+    if (wasHidden) rawLog.hidden = false;
     try {
       var range = document.createRange();
-      range.selectNodeContents(document.getElementById('log-output'));
+      range.selectNodeContents(rawLog);
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
@@ -77,6 +107,8 @@ document.getElementById('copy-btn').addEventListener('click', function() {
       showMsg(ok ? 'Copied!' : 'Copy failed');
     } catch (e) {
       showMsg('Please select text manually');
+    } finally {
+      rawLog.hidden = wasHidden;
     }
   }
 });

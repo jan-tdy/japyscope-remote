@@ -7,6 +7,7 @@ import io
 import ipaddress
 import logging
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -24,6 +25,65 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 30
+
+_JOURNAL_LINE_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ][^\s]+|"
+    r"[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})"
+    r"\s+\S+\s+(?P<unit>[^:\s]+):\s?(?P<message>.*)$"
+)
+_LEVEL_RE = re.compile(
+    r"^\s*(?:\[(?P<bracket>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)\]"
+    r"|(?P<plain>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)\s*[:\]])"
+    r"|(?:^|[-*:\s])(?P<embedded>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)(?=[-*:\s]|$)",
+    re.IGNORECASE,
+)
+_PRIORITY_RE = re.compile(r"^\s*priority\s*[=:]\s*([0-7])(?:\s|$)", re.IGNORECASE)
+_LEVEL_NAMES = {
+    "emerg": "error", "alert": "error", "crit": "error", "critical": "error",
+    "err": "error", "error": "error", "warning": "warning", "warn": "warning",
+    "notice": "info", "info": "info", "debug": "info",
+}
+_PRIORITY_LEVELS = {"0": "error", "1": "error", "2": "error", "3": "error",
+                    "4": "warning", "5": "info", "6": "info", "7": "info"}
+
+
+def parse_journal_entries(log_text: str) -> list[dict[str, str]]:
+    """Parse journalctl's default short output while retaining each raw entry."""
+    entries: list[dict[str, str]] = []
+    for line in log_text.splitlines():
+        match = _JOURNAL_LINE_RE.match(line)
+        if match:
+            message = match.group("message")
+            level_match = _LEVEL_RE.search(message)
+            priority_match = _PRIORITY_RE.match(message)
+            if level_match:
+                level = _LEVEL_NAMES[(level_match.group("bracket") or level_match.group("plain") or level_match.group("embedded")).lower()]
+                if level_match.start() == 0:
+                    message = message[level_match.end():].lstrip()
+            elif priority_match:
+                level = _PRIORITY_LEVELS[priority_match.group(1)]
+                message = message[priority_match.end():].lstrip()
+            else:
+                level = "info"
+            identifier = match.group("unit")
+            unit = re.sub(r"\[\d+\]$", "", identifier)
+            entries.append({
+                "timestamp": match.group("timestamp"),
+                "unit": unit,
+                "level": level,
+                "message": message,
+                "raw": line,
+                "details": "",
+            })
+        elif entries:
+            entries[-1]["raw"] += "\n" + line
+            entries[-1]["details"] += ("\n" if entries[-1]["details"] else "") + line
+        else:
+            entries.append({
+                "timestamp": "", "unit": "journalctl", "level": "info",
+                "message": line, "raw": line, "details": "",
+            })
+    return entries
 
 
 def get_system_telemetry() -> dict[str, str]:
@@ -485,6 +545,7 @@ def create_app(
         return render_template(
             "diagnostics.html",
             logs=log_text,
+            entries=parse_journal_entries(log_text),
             selected_unit=unit_arg,
             selected_lines=lines,
         )
