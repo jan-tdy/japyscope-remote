@@ -111,7 +111,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, key_up
 from .keys import ENC_DOWN, ENC_PUSH, ENC_UP
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,8 @@ class EncoderInput(InputHAL):
             self._sw_pressed = True
             self._queue.put(ENC_PUSH)
         elif level == GPIO.HIGH:
+            if self._sw_pressed:
+                self._queue.put(key_up(ENC_PUSH))
             self._sw_pressed = False
 
     def _scan_loop(self) -> None:

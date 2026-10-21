@@ -32,7 +32,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, key_up
 from .keys import BKSP, FN2
 
 # 3x4 matrix: rows/cols in BCM numbering — confirm against docs/WIRING.md.
@@ -84,6 +84,8 @@ class KeypadInput(InputHAL):
             self._active[key] = True
             self._queue.put(key)
         elif not pressed:
+            if self._active[key]:
+                self._queue.put(key_up(key))
             self._active[key] = False
 
     def _scan_matrix(self) -> None:
