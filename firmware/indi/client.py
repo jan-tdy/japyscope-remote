@@ -66,15 +66,6 @@ from shared import astro
 
 logger = logging.getLogger(__name__)
 
-# How long one jog "nudge" holds the motion switch on before releasing it
-# -- unlike the property names above, this is a UX tuning choice, not
-# something confirmed from the driver source (it has no notion of a
-# "nudge"; TELESCOPE_MOTION_NS/WE just start/stop continuous motion at
-# whatever TELESCOPE_SLEW_RATE is selected). Adjust to taste once this
-# runs against real hardware.
-JOG_PULSE_SECONDS = 0.15
-
-
 class _SettingsLike(Protocol):
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]: ...
 
@@ -253,15 +244,17 @@ class IndiClient:
         self._setprop("TELESCOPE_PARK.UNPARK=On")
 
     def jog(self, direction: str, speed: int) -> None:
-        """Manual nudge in one of the four SynScan-style directions ("N",
-        "S", "E", or "W" — see docs/CODES.md), at one of the SPEEDS tiers
-        — maps to this driver's TELESCOPE_SLEW_RATE ("{speed}x") plus a
-        brief pulse of TELESCOPE_MOTION_NS/TELESCOPE_MOTION_WE."""
+        """Start continuous motion in one SynScan direction until stop_jog()."""
         jog_property = _JOG_PROPERTIES.get(direction)
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")
         axis_property, on_element = jog_property
         self._setprop(f"TELESCOPE_SLEW_RATE.{speed}x=On")
         self._setprop(f"{axis_property}.{on_element}=On")
-        time.sleep(JOG_PULSE_SECONDS)
+
+    def stop_jog(self, direction: str) -> None:
+        jog_property = _JOG_PROPERTIES.get(direction)
+        if jog_property is None:
+            raise ConnectionError(f"unknown jog direction: {direction!r}")
+        axis_property, on_element = jog_property
         self._setprop(f"{axis_property}.{on_element}=Off")

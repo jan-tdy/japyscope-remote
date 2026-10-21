@@ -7,7 +7,7 @@ import requests
 
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.display.base import DisplayHAL
-from firmware.hal.input.base import InputHAL
+from firmware.hal.input.base import InputHAL, key_up
 from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from firmware.indi.client import MountStatus
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
@@ -35,13 +35,14 @@ class Input(InputHAL):
 class Indi:
     def __init__(self):
         self.synced = None; self.goto_target = None; self.parked = False
-        self.tracking = False; self.aborted = False; self.jogs = []
+        self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
     def sync(self, ra, dec): self.synced = (ra, dec)
     def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
     def park(self): self.parked = True
     def unpark(self): self.parked = False
     def abort(self): self.aborted = True; self.tracking = False
     def jog(self, direction, speed): self.jogs.append((direction, speed))
+    def stop_jog(self, direction): self.jog_stops.append(direction)
     def get_status(self):
         return MountStatus(
             connected=True, ra="", dec="", alt=0.0, az=0.0,
@@ -325,6 +326,7 @@ def test_slew_timeout_message_dismisses_to_idle_not_a_stale_return_screen():
         now[0] += controller_module.SLEW_CONFIRM_TIMEOUT_SECONDS + 1
         ui.tick()
         assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.indi.aborted is True
         ui.handle("9")
         assert ui.state.screen == "IDLE"
     finally: conn.close(); os.unlink(path)
@@ -1511,6 +1513,85 @@ def test_jog_uses_the_current_speed():
         ui.state.screen = "TRACK"; ui.state.speed = 8
         ui.handle("6")
         assert ui.indi.jogs[-1] == ("E", 8)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_jog_stays_on_while_held_and_stops_on_release():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        assert ui.indi.jogs == [("N", 1)]
+        for _ in range(5):
+            ui.tick()
+        assert ui.indi.jog_stops == []
+        ui.handle(key_up("2"))
+        assert ui.indi.jog_stops == ["N"]
+        assert ui.state.jog_direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
+def test_jog_ignores_release_from_a_different_input():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")  # keypad starts north
+        ui.handle(key_up(ENC_UP))  # joystick also maps to north, but did not start it
+        assert ui.indi.jog_stops == []
+        assert ui.state.jog_direction == "N"
+
+        ui.handle(key_up("2"))
+        assert ui.indi.jog_stops == ["N"]
+        assert ui.state.jog_direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
+def test_jog_watchdog_stops_a_stuck_held_key():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("6")
+        ui.state.jog_started_at = ui.clock() - controller_module.JOG_HOLD_TIMEOUT_SECONDS - 1
+        ui.tick()
+        assert ui.indi.jog_stops == ["E"]
+        assert ui.state.jog_direction == ""
+        ui.handle("6")
+        assert len(ui.indi.jogs) == 1
+        ui.handle(key_up("6"))
+        ui.handle("6")
+        assert len(ui.indi.jogs) == 2
+    finally: conn.close(); os.unlink(path)
+
+
+def test_process_teardown_stops_active_jog():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        ui.stop_motion()
+        assert ui.indi.jog_stops == ["N"]
+        assert ui.state.jog_direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
+def test_process_teardown_aborts_active_slew():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SLEW"
+        ui.stop_motion()
+        assert ui.indi.aborted is True
+    finally: conn.close(); os.unlink(path)
+
+
+def test_failed_jog_attempts_safety_abort():
+    ui, conn, path = make_ui()
+    try:
+        def fail(*_args): raise ConnectionError("mount stopped responding")
+        ui.indi.jog = fail
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        assert ui.indi.aborted is True
+        assert ui.state.jog_direction == ""
     finally: conn.close(); os.unlink(path)
 
 

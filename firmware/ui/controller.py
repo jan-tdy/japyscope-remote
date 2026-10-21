@@ -22,7 +22,7 @@ from typing import Callable, Optional, Sequence
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
-from firmware.hal.input.base import InputHAL
+from firmware.hal.input.base import InputHAL, released_key, tapped_key
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
@@ -47,15 +47,16 @@ T9 = {
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
 SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+JOG_HOLD_TIMEOUT_SECONDS = 45
 # How long PARKING waits for the driver to actually confirm parked
 # (polled via runtime["parked"] — see _poll_parking()) before giving up
 # and reporting a timeout instead of assuming the mount finished moving.
 PARK_CONFIRM_TIMEOUT_SECONDS = 60
 # How long SLEW waits for the driver to actually confirm tracking
 # (polled via runtime["tracking"] — see _poll_slew()) before giving up.
-# Longer than parking: alt-az GOTO slews across most of the sky can take
-# longer than a return-to-park move.
-SLEW_CONFIRM_TIMEOUT_SECONDS = 120
+# A full-sky alt-az GOTO can take several minutes, so leave a generous
+# window before aborting motion that may still be progressing.
+SLEW_CONFIRM_TIMEOUT_SECONDS = 600
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -144,6 +145,10 @@ class UIState:
     access_expires: float = 0.0
     access_last_remaining: int = -1
     transition_at: float = 0.0
+    jog_direction: str = ""
+    jog_key: str = ""
+    jog_blocked_key: str = ""
+    jog_started_at: float = 0.0
     last_status_at: float = 0.0
     error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
@@ -274,9 +279,19 @@ class ControllerUI:
                 self.handle(key)
             self.tick()
 
+    def stop_motion(self) -> None:
+        """Best-effort stop for physical motion before process teardown."""
+        if self.state.jog_direction:
+            self._stop_jog("process teardown")
+        elif self.state.screen == "SLEW":
+            self._abort_slew()
+
     def tick(self) -> None:
         now = self.clock()
         s = self.state
+        if s.jog_direction and now - s.jog_started_at >= JOG_HOLD_TIMEOUT_SECONDS:
+            s.jog_blocked_key = s.jog_key
+            self._stop_jog("jog hold timeout")
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
@@ -358,6 +373,7 @@ class ControllerUI:
         elif s.transition_at and self.clock() >= s.transition_at:
             s.transition_at = 0
             logger.error("INDI-002 slew did not confirm tracking within %ss", SLEW_CONFIRM_TIMEOUT_SECONDS)
+            self._abort_slew()
             # Same stale-return_screen risk _poll_parking() has (see its
             # comment) -- return_screen here is whatever _confirm_slew()
             # set (e.g. "LIST"), which would let the owner immediately
@@ -420,6 +436,8 @@ class ControllerUI:
                 continue
 
     def _set(self, screen: str, index: int = 0) -> None:
+        if screen != self.state.screen and self.state.jog_direction:
+            self._stop_jog("screen changed")
         self.state.screen = screen
         self.state.index = index
         self.render()
@@ -713,20 +731,55 @@ class ControllerUI:
         self.render(coalesce=True)
         return True
 
-    def _jog(self, key: str) -> bool:
-        """Manual nudge for screens where the mount can move (see
-        JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
-        calling convention as `_move`, so callers fall through to their own
-        handling otherwise. Failure (INDI-004 — see firmware/indi/client.py)
-        just logs, same as `park()`'s failure handling: a single missed
-        nudge isn't worth leaving the jog screen."""
+    def _jog(self, key: str, momentary: bool = False) -> bool:
+        """Continuous manual motion for held keys, with bounded encoder taps.
+        Returns whether `key` was a jog key at all, same calling convention as
+        `_move`, so callers fall through to their own handling otherwise."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
+        if key == self.state.jog_blocked_key:
+            return True
+        if self.state.jog_direction:
+            # A rotary detent must not stop or replace a jog held by another
+            # input that happens to use the same direction code.
+            if momentary or self.state.jog_direction == direction:
+                return True
+            if not self._stop_jog("direction changed"):
+                return True
         try:
             self.indi.jog(direction, self.state.speed)
-        except (NotImplementedError, ConnectionError) as exc:
+            self.state.jog_direction = direction
+            self.state.jog_key = key
+            self.state.jog_started_at = self.clock()
+            if momentary:
+                self._stop_jog("encoder detent")
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
+            self._best_effort_abort()
+        return True
+
+    def _best_effort_abort(self) -> bool:
+        try:
+            self.indi.abort()
+            return True
+        except Exception as exc:
+            logger.error("INDI-004 jog safety abort failed: %s", exc)
+            return False
+
+    def _stop_jog(self, reason: str = "key released") -> bool:
+        direction = self.state.jog_direction
+        if not direction:
+            return True
+        try:
+            self.indi.stop_jog(direction)
+        except (AttributeError, NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
+            logger.error("INDI-004 jog stop failed (%s): %s", reason, exc)
+            if not self._best_effort_abort():
+                return False
+        self.state.jog_direction = ""
+        self.state.jog_key = ""
+        self.state.jog_started_at = 0.0
         return True
 
     def _unpark(self) -> bool:
@@ -753,7 +806,7 @@ class ControllerUI:
         offer if the abort command itself fails to reach the driver."""
         try:
             self.indi.abort()
-        except (NotImplementedError, ConnectionError) as exc:
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-002 abort failed: %s", exc)
 
     def _confirm_align_point(self) -> None:
@@ -788,6 +841,20 @@ class ControllerUI:
 
     def handle(self, key: str) -> None:
         s = self.state
+        tap_key = tapped_key(key)
+        momentary = tap_key is not None
+        if momentary:
+            key = tap_key
+        up_key = released_key(key)
+        if up_key is not None:
+            # Only the input that started the active hold owns its release.
+            # Different devices can map to the same mount direction (for
+            # example keypad "2" and joystick ENC_UP both mean north).
+            if up_key == s.jog_key:
+                self._stop_jog()
+            if up_key == s.jog_blocked_key:
+                s.jog_blocked_key = ""
+            return
         # Keypad "3" — manual "force a full refresh" on the current
         # screen, no state change. The only way to clear ghosting left
         # over from scrolling's partial refreshes, since nothing does
@@ -879,7 +946,7 @@ class ControllerUI:
             elif key == "9": self._set("IDLE")
             return
         if s.screen == "TRACK":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "9": self._set("IDLE")
             elif key == "7": self._speed("TRACK")
             return
@@ -910,7 +977,7 @@ class ControllerUI:
                 self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "7": self._speed("ALIGN_JOG")
             elif key == "9":
                 if s.boot_sync: self._set("ALIGN_STAR_PICK")
@@ -1182,8 +1249,9 @@ class ControllerUI:
             return
         try:
             self.indi.goto(obj.ra, obj.dec)
-        except (NotImplementedError, ConnectionError) as exc:
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-002 goto failed: %s", exc)
+            self._best_effort_abort()
             self._set(self.state.return_screen)
             return
         # runtime["tracking"] is only ever refreshed by _refresh_status()'s

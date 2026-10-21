@@ -82,6 +82,8 @@ class SimulatedIndiClient:
         elif direction == "E": self.status.az = (self.status.az + step) % 360
         elif direction == "W": self.status.az = (self.status.az - step) % 360
 
+    def stop_jog(self, direction: str) -> None: pass
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="JapyScope Remote hand controller")
@@ -174,6 +176,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         _show_fatal_error(display, "SYS-970", str(exc))
         return 1
     finally:
+        stop_motion = getattr(ui, "stop_motion", None)
+        if stop_motion is not None:
+            stop_motion()
         if input_hal is not None:
             input_hal.close()
         if indi is not None:

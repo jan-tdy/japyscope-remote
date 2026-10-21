@@ -102,21 +102,20 @@ def test_abort_sends_telescope_abort_motion_on(monkeypatch):
     assert calls == [["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_ABORT_MOTION.ABORT=On"]]
 
 
-def test_jog_sets_slew_rate_then_pulses_the_motion_switch(monkeypatch):
+def test_jog_starts_motion_until_explicit_stop(monkeypatch):
     calls = []
-    slept = []
     monkeypatch.setattr(
         client_module.subprocess, "run",
         lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
     )
-    monkeypatch.setattr(client_module.time, "sleep", lambda s: slept.append(s))
-    make_client().jog("N", 8)
+    client = make_client()
+    client.jog("N", 8)
+    client.stop_jog("N")
     assert calls == [
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.8x=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=Off"],
     ]
-    assert slept == [client_module.JOG_PULSE_SECONDS]
 
 
 def test_jog_directions_map_to_the_right_axis_and_element(monkeypatch):
@@ -125,7 +124,6 @@ def test_jog_directions_map_to_the_right_axis_and_element(monkeypatch):
         client_module.subprocess, "run",
         lambda cmd, **kw: calls.append(cmd[-1]) or subprocess.CompletedProcess(cmd, 0, stdout=""),
     )
-    monkeypatch.setattr(client_module.time, "sleep", lambda s: None)
     c = make_client()
     for direction, expected in [
         ("N", "TELESCOPE_MOTION_NS.MOTION_NORTH"),
@@ -135,6 +133,7 @@ def test_jog_directions_map_to_the_right_axis_and_element(monkeypatch):
     ]:
         calls.clear()
         c.jog(direction, 1)
+        c.stop_jog(direction)
         assert calls[1] == f"Skywatcher Alt-Az.{expected}=On"
         assert calls[2] == f"Skywatcher Alt-Az.{expected}=Off"
 
