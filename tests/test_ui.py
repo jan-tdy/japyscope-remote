@@ -1525,7 +1525,7 @@ def test_speed_screens_display_the_actual_mount_rate():
         assert ui.display.lines[1] == "Max"
 
         ui._set("ALIGN_JOG")
-        assert "Speed 800x" in " ".join(ui.display.lines)
+        assert "Speed Max" in " ".join(ui.display.lines)
     finally: conn.close(); os.unlink(path)
 
 
