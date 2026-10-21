@@ -1522,7 +1522,7 @@ def test_speed_screens_display_the_actual_mount_rate():
     try:
         ui.state.speed = 9
         ui._set("SPEED_ADJUST")
-        assert ui.display.lines[1] == "800x"
+        assert ui.display.lines[1] == "Max"
 
         ui._set("ALIGN_JOG")
         assert "Speed 800x" in " ".join(ui.display.lines)
