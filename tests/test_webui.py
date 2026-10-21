@@ -149,8 +149,8 @@ def test_parse_journal_entries_keeps_raw_multiline_text_and_levels():
     from webui.app import parse_journal_entries
 
     sample = (
-        "Sep 20 12:00:01 pi japyscope-app[42]: ERROR: mount disconnected\\n"
-        "  retrying connection\\n"
+        "Sep 20 12:00:01 pi japyscope-app[42]: ERROR: mount disconnected\n"
+        "  retrying connection\n"
         "2026-09-20T12:00:02+00:00 pi japyscope-webui[9]: priority=4 slow request"
     )
     entries = parse_journal_entries(sample)
@@ -159,7 +159,7 @@ def test_parse_journal_entries_keeps_raw_multiline_text_and_levels():
     assert [entry["unit"] for entry in entries] == ["japyscope-app", "japyscope-webui"]
     assert entries[0]["message"] == "mount disconnected"
     assert entries[0]["details"] == "  retrying connection"
-    assert "\\n".join(entry["raw"] for entry in entries) == sample
+    assert "\n".join(entry["raw"] for entry in entries) == sample
 
 
 def test_diagnostics_page_renders_logs_or_fallback(tmp_path, monkeypatch):
