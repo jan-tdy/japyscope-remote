@@ -341,6 +341,9 @@ code {
     border-radius: 0;
     background: rgba(31, 35, 40, 0.45);
   }
+  body.nav-open {
+    overflow: hidden;
+  }
   body.nav-open .nav-backdrop {
     display: block;
   }
