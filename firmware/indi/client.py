@@ -255,12 +255,34 @@ class IndiClient:
     def abort(self) -> None:
         self._setprop("TELESCOPE_ABORT_MOTION.ABORT=On")
 
+    def set_park_position(self, alt_deg: float, az_deg: float) -> None:
+        """Writes the mount's own park position (standard
+        INDI::Telescope TELESCOPE_PARK_POSITION property, PARK_AZ/
+        PARK_ALT elements in degrees -- confirmed via a live device
+        example of exactly this property/element naming on an INDI
+        Alt-Az-capable mount; not yet independently confirmed against
+        this project's own hardware, unlike WiFi's CONNECTION::TCP
+        properties -- worth a sanity check with `indi_getprop -h
+        localhost "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.*"` before
+        relying on it).
+
+        Without this, `park()` below slews to whatever position the
+        driver already has stored (its own default, or a stale one from
+        a previous session) -- not the Settings page's configured Park
+        Configuration, which this app otherwise never tells the driver
+        about. Call this immediately before `park()`."""
+        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_AZ={az_deg:.6f}")
+        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_ALT={alt_deg:.6f}")
+
     def park(self) -> None:
         """Only issues the park command -- on real hardware the driver's
         Park() starts an asynchronous slew to the park position, so this
         returns long before the mount has actually finished moving.
         Callers must poll get_status().parked for real completion rather
-        than assuming success (see ControllerUI._poll_parking())."""
+        than assuming success (see ControllerUI._poll_parking()). Slews
+        to whatever TELESCOPE_PARK_POSITION the driver currently has --
+        call set_park_position() first to point it at this app's
+        configured Park Configuration instead of a stale/default one."""
         self._setprop("TELESCOPE_PARK.PARK=On")
 
     def unpark(self) -> None:
