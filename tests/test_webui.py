@@ -392,3 +392,25 @@ def test_api_telemetry_endpoint(tmp_path):
     assert "disk_usage" in data
     assert "uptime" in data
 
+
+
+def test_service_worker_is_served_from_site_root_not_static(tmp_path):
+    # A service worker's maximum allowed scope defaults to its own
+    # script's directory; base.html registers it with the browser's
+    # default scope (the script's own path), so it must be served from
+    # "/", not "/static/sw.js" -- Flask's static route sends no
+    # Service-Worker-Allowed header to widen that scope.
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/sw.js")
+    assert response.status_code == 200
+    assert b"self.addEventListener" in response.data
+
+
+def test_service_worker_route_needs_no_authentication(tmp_path):
+    # Must be reachable before login too -- the login page itself serves
+    # base.html, which registers the service worker on every page load.
+    app = create_app(str(tmp_path / "sw.db"))
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    response = client.get("/sw.js")
+    assert response.status_code == 200

@@ -17,7 +17,7 @@ import time
 from functools import wraps
 from typing import Callable, Optional
 
-from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
 from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
 
@@ -263,6 +263,18 @@ def create_app(
         with db_session(app.config["DATABASE"]) as conn:
             conn.execute("SELECT 1").fetchone()
         return jsonify(status="ok")
+
+    @app.route("/sw.js")
+    def service_worker():
+        # Served at the site root, not /static/sw.js: a service worker's
+        # maximum allowed scope defaults to its own script's directory,
+        # and Flask's static route sends no Service-Worker-Allowed header
+        # to widen it -- base.html registers this with scope '/', which
+        # the browser rejects outright unless the script itself already
+        # lives at '/'.
+        response = send_from_directory(app.static_folder, "sw.js")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.route("/logout", methods=["POST"])
     @auth_required
