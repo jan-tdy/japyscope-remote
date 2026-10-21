@@ -1,1 +1,73 @@
-bmFtZS10ZW1wbGF0ZTogJ3YkUkVTT0xWRURfVkVSU0lPTicKdGFnLXRlbXBsYXRlOiAndiRSRVNPTFZFRF9WRVJTSU9OJwoKY2F0ZWdvcmllczoKICAtIHRpdGxlOiAn4pyoIEZlYXR1cmVzJwogICAgbGFiZWxzOgogICAgICAtIGVuaGFuY2VtZW50CiAgLSB0aXRsZTogJ/CfkJsgRml4ZXMnCiAgICBsYWJlbHM6CiAgICAgIC0gYnVnCiAgIyBEb2NzLW9ubHkgY2hhbmdlcyAoUkVBRE1FLCBkb2NzLyoubWQsIENMQVVERS5tZCwgZXRjLikgLS0gbm8gY29kZSwgc28KICAjIG5laXRoZXIgYSBmaXggbm9yIGEgZmVhdHVyZS4gV2l0aG91dCBpdHMgb3duIGNhdGVnb3J5IHRoZXNlIGZhbGwKICAjIHRocm91Z2ggdG8gdGhlIHVuLWNhdGVnb3JpemVkICJXaGF0J3MgQ2hhbmdlZCIgbGlzdCBhYm92ZSBldmVyeQogICMgc2VjdGlvbiwgd2hpY2ggcmVhZHMgbGlrZSBhbiBvcnBoYW5lZCBlbnRyeSByYXRoZXIgdGhhbiBhIHJlYWwgb25lLgogIC0gdGl0bGU6ICfwn5OdIERvY3VtZW50YXRpb24nCiAgICBsYWJlbHM6CiAgICAgIC0gZG9jdW1lbnRhdGlvbgogIC0gdGl0bGU6ICfwn5OmIERlcGVuZGVuY3kgVXBkYXRlcycKICAgIGxhYmVsczoKICAgICAgLSBkZXBlbmRlbmNpZXMKCmV4Y2x1ZGUtbGFiZWxzOgogIC0gc2tpcC1jaGFuZ2Vsb2cKCmNoYW5nZS10ZW1wbGF0ZTogJy0gJFRJVExFICgjJE5VTUJFUikgQCRBVVRIT1InCmNoYW5nZS10aXRsZS1lc2NhcGVzOiAnXFw8Kl8mJwoKdmVyc2lvbi1yZXNvbHZlcjoKICBtaW5vcjoKICAgIGxhYmVsczoKICAgICAgLSBlbmhhbmNlbWVudAogIHBhdGNoOgogICAgbGFiZWxzOgogICAgICAtIGJ1ZwogICAgICAtIGRlcGVuZGVuY2llcwogICAgICAtIGRvY3VtZW50YXRpb24KICBkZWZhdWx0OiBwYXRjaAoKIyBUaGlzIHJlcG8ncyBhY3R1YWwgUFIgdGl0bGVzIGFyZSBwbGFpbiBpbXBlcmF0aXZlIHNlbnRlbmNlcyAoIkFkZCBYIiwKIyAiRml4IFgiLCAiQnVtcCBYIikgcmF0aGVyIHRoYW4gY29udmVudGlvbmFsLWNvbW1pdCBwcmVmaXhlcyAtLSBrZWVwIHRoZQojIGZlYXQ6L2ZpeDovZG9jczogcGF0dGVybnMgZm9yIGFueSBQUiB0aGF0IGRvZXMgdXNlIHRoZW0sIGJ1dCBtYXRjaCBvbgojIHRoZSBsZWFkaW5nIHZlcmIgdG9vIHNvIG9yZGluYXJ5IHRpdGxlcyBhY3R1YWxseSBnZXQgbGFiZWxlZC4KYXV0b2xhYmVsZXI6CiAgLSBsYWJlbDogZW5oYW5jZW1lbnQKICAgIGJyYW5jaDoKICAgICAgLSAnL15mZWF0dXJlXC8uKy9pJwogICAgdGl0bGU6CiAgICAgIC0gJy9eZmVhdCh1cmUpPyhcKC4rXCkpPyE/Oi9pJwogICAgICAtICcvXmFkZFxiL2knCiAgLSBsYWJlbDogYnVnCiAgICBicmFuY2g6CiAgICAgIC0gJy9eKGZpeHxidWdmaXgpXC8uKy9pJwogICAgdGl0bGU6CiAgICAgIC0gJy9eZml4KFwoLitcKSk/IT86L2knCiAgICAgIC0gJy9eZml4XGIvaScKICAjIERlcGVuZGFib3QgYWxyZWFkeSBsYWJlbHMgaXRzIG93biBQUnMgImRlcGVuZGVuY2llcyI7IHRoaXMgYWxzbwogICMgY2F0Y2hlcyBtYW51YWwgdmVyc2lvbiBidW1wIFBScyAoIkJ1bXAgWCB0byBZIikgYnkgdGl0bGUvYnJhbmNoLgogIC0gbGFiZWw6IGRlcGVuZGVuY2llcwogICAgdGl0bGU6CiAgICAgIC0gJy9eKGNob3JlXChkZXBzXCl8YnVtcCkvaScKICAgIGJyYW5jaDoKICAgICAgLSAnL15idW1wXC8uKy9pJwogIC0gbGFiZWw6IGRvY3VtZW50YXRpb24KICAgIHRpdGxlOgogICAgICAtICcvXmRvY3MoXCguK1wpKT86L2knCiAgICAgIC0gJy9eKGFkZC4qZG9jdW1lbnRhdGlvbnxhZGQuKmd1aWRhbmNlKS9pJwogICAgYnJhbmNoOgogICAgICAtICcvXmRvY3NcLy4rL2knCgp0ZW1wbGF0ZTogfAogICMjIFdoYXQncyBDaGFuZ2VkCgogICRDSEFOR0VTCg==
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: '✨ Features'
+    labels:
+      - enhancement
+  - title: '🐛 Fixes'
+    labels:
+      - bug
+  # Docs-only changes (README, docs/*.md, CLAUDE.md, etc.) -- no code, so
+  # neither a fix nor a feature. Without its own category these fall
+  # through to the un-categorized "What's Changed" list above every
+  # section, which reads like an orphaned entry rather than a real one.
+  - title: '📝 Documentation'
+    labels:
+      - documentation
+  - title: '📦 Dependency Updates'
+    labels:
+      - dependencies
+
+exclude-labels:
+  - skip-changelog
+
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&'
+
+version-resolver:
+  minor:
+    labels:
+      - enhancement
+  patch:
+    labels:
+      - bug
+      - dependencies
+      - documentation
+  default: patch
+
+# This repo's actual PR titles are plain imperative sentences ("Add X",
+# "Fix X", "Bump X") rather than conventional-commit prefixes -- keep the
+# feat:/fix:/docs: patterns for any PR that does use them, but match on
+# the leading verb too so ordinary titles actually get labeled.
+autolabeler:
+  - label: enhancement
+    branch:
+      - '/^feature\/.+/i'
+    title:
+      - '/^feat(ure)?(\(.+\))?!?:/i'
+      - '/^add\b/i'
+  - label: bug
+    branch:
+      - '/^(fix|bugfix)\/.+/i'
+    title:
+      - '/^fix(\(.+\))?!?:/i'
+      - '/^fix\b/i'
+  # Dependabot already labels its own PRs "dependencies"; this also
+  # catches manual version bump PRs ("Bump X to Y") by title/branch.
+  - label: dependencies
+    title:
+      - '/^(chore\(deps\)|bump)/i'
+    branch:
+      - '/^bump\/.+/i'
+  - label: documentation
+    title:
+      - '/^docs(\(.+\))?:/i'
+      - '/^(add.*documentation|add.*guidance)/i'
+    branch:
+      - '/^docs\/.+/i'
+
+template: |
+  ## What's Changed
+
+  $CHANGES
