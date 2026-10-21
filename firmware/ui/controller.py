@@ -98,6 +98,14 @@ JOG_DIRECTIONS = {
     "4": "W", JOY_LEFT: "W",
     "6": "E", JOY_RIGHT: "E",
 }
+# N/S (TELESCOPE_MOTION_NS) and E/W (TELESCOPE_MOTION_WE) are independent
+# switches on the driver -- both can be On at once for true diagonal
+# motion. Confirmed on hardware as a real bug when jog state only tracked
+# a single active direction: holding a second axis (e.g. the joystick
+# pushed diagonally) stopped the first axis instead of running both.
+# UIState tracks each axis separately (jog_ns/jog_we below) so they can
+# be held independently.
+JOG_AXES = {"N": "ns", "S": "ns", "E": "we", "W": "we"}
 
 BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
     "Basic Objects": (
@@ -121,6 +129,15 @@ BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
         SearchResult("C14 Double Cluster", "02h20m00s", "+57°08′", alt=41, source="caldwell"),
     ),
 }
+
+
+@dataclass
+class JogAxisState:
+    """One jog axis's (NS or WE) currently-held direction, if any."""
+    direction: str = ""
+    key: str = ""
+    blocked_key: str = ""
+    started_at: float = 0.0
 
 
 @dataclass
@@ -149,10 +166,8 @@ class UIState:
     access_expires: float = 0.0
     access_last_remaining: int = -1
     transition_at: float = 0.0
-    jog_direction: str = ""
-    jog_key: str = ""
-    jog_blocked_key: str = ""
-    jog_started_at: float = 0.0
+    jog_ns: "JogAxisState" = field(default_factory=lambda: JogAxisState())
+    jog_we: "JogAxisState" = field(default_factory=lambda: JogAxisState())
     last_status_at: float = 0.0
     error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
@@ -287,7 +302,7 @@ class ControllerUI:
 
     def stop_motion(self) -> None:
         """Best-effort stop for physical motion before process teardown."""
-        if self.state.jog_direction:
+        if self.state.jog_ns.direction or self.state.jog_we.direction:
             self._stop_jog("process teardown")
         elif self.state.screen == "SLEW":
             self._abort_slew()
@@ -295,9 +310,11 @@ class ControllerUI:
     def tick(self) -> None:
         now = self.clock()
         s = self.state
-        if s.jog_direction and now - s.jog_started_at >= JOG_HOLD_TIMEOUT_SECONDS:
-            s.jog_blocked_key = s.jog_key
-            self._stop_jog("jog hold timeout")
+        for axis in ("ns", "we"):
+            axis_state = self._jog_axis_state(axis)
+            if axis_state.direction and now - axis_state.started_at >= JOG_HOLD_TIMEOUT_SECONDS:
+                axis_state.blocked_key = axis_state.key
+                self._stop_jog_axis(axis, "jog hold timeout")
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
@@ -442,7 +459,7 @@ class ControllerUI:
                 continue
 
     def _set(self, screen: str, index: int = 0) -> None:
-        if screen != self.state.screen and self.state.jog_direction:
+        if screen != self.state.screen and (self.state.jog_ns.direction or self.state.jog_we.direction):
             self._stop_jog("screen changed")
         self.state.screen = screen
         self.state.index = index
@@ -741,29 +758,38 @@ class ControllerUI:
         self.render(coalesce=True)
         return True
 
+    def _jog_axis_state(self, axis: str) -> JogAxisState:
+        return self.state.jog_ns if axis == "ns" else self.state.jog_we
+
     def _jog(self, key: str, momentary: bool = False) -> bool:
         """Continuous manual motion for held keys, with bounded encoder taps.
-        Returns whether `key` was a jog key at all, same calling convention as
-        `_move`, so callers fall through to their own handling otherwise."""
+        N/S and E/W are independent axes (see JOG_AXES above) -- holding
+        one doesn't stop or replace the other, so diagonal motion (both
+        held at once, e.g. the joystick pushed diagonally) actually moves
+        both. Returns whether `key` was a jog key at all, same calling
+        convention as `_move`, so callers fall through to their own
+        handling otherwise."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
-        if key == self.state.jog_blocked_key:
+        axis = JOG_AXES[direction]
+        axis_state = self._jog_axis_state(axis)
+        if key == axis_state.blocked_key:
             return True
-        if self.state.jog_direction:
+        if axis_state.direction:
             # A rotary detent must not stop or replace a jog held by another
             # input that happens to use the same direction code.
-            if momentary or self.state.jog_direction == direction:
+            if momentary or axis_state.direction == direction:
                 return True
-            if not self._stop_jog("direction changed"):
+            if not self._stop_jog_axis(axis, "direction changed"):
                 return True
         try:
             self.indi.jog(direction, self.state.speed)
-            self.state.jog_direction = direction
-            self.state.jog_key = key
-            self.state.jog_started_at = self.clock()
+            axis_state.direction = direction
+            axis_state.key = key
+            axis_state.started_at = self.clock()
             if momentary:
-                self._stop_jog("encoder detent")
+                self._stop_jog_axis(axis, "encoder detent")
         except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
             self._best_effort_abort()
@@ -777,8 +803,9 @@ class ControllerUI:
             logger.error("INDI-004 jog safety abort failed: %s", exc)
             return False
 
-    def _stop_jog(self, reason: str = "key released") -> bool:
-        direction = self.state.jog_direction
+    def _stop_jog_axis(self, axis: str, reason: str = "key released") -> bool:
+        axis_state = self._jog_axis_state(axis)
+        direction = axis_state.direction
         if not direction:
             return True
         try:
@@ -787,10 +814,20 @@ class ControllerUI:
             logger.error("INDI-004 jog stop failed (%s): %s", reason, exc)
             if not self._best_effort_abort():
                 return False
-        self.state.jog_direction = ""
-        self.state.jog_key = ""
-        self.state.jog_started_at = 0.0
+        axis_state.direction = ""
+        axis_state.key = ""
+        axis_state.started_at = 0.0
         return True
+
+    def _stop_jog(self, reason: str = "key released") -> bool:
+        """Stops whichever axis/axes are currently held -- for callers
+        that don't know (or don't need to know) which one: process
+        teardown, a screen change, the bare `handle()` release path's
+        key-without-a-matching-axis case. Prefer `_stop_jog_axis()`
+        directly when the axis is already known."""
+        stopped_ns = self._stop_jog_axis("ns", reason)
+        stopped_we = self._stop_jog_axis("we", reason)
+        return stopped_ns and stopped_we
 
     def _park_alt_az(self) -> tuple[float, float]:
         """The configured park position (Settings page's "Park
@@ -903,13 +940,17 @@ class ControllerUI:
             key = tap_key
         up_key = released_key(key)
         if up_key is not None:
-            # Only the input that started the active hold owns its release.
-            # Different devices can map to the same mount direction (for
-            # example keypad "2" and joystick ENC_UP both mean north).
-            if up_key == s.jog_key:
-                self._stop_jog()
-            if up_key == s.jog_blocked_key:
-                s.jog_blocked_key = ""
+            # Only the input that started the active hold owns its
+            # release. Different devices can map to the same mount
+            # direction (for example keypad "2" and joystick ENC_UP both
+            # mean north) -- and each axis (NS/WE) releases independently
+            # of the other.
+            for axis in ("ns", "we"):
+                axis_state = self._jog_axis_state(axis)
+                if up_key == axis_state.key:
+                    self._stop_jog_axis(axis)
+                if up_key == axis_state.blocked_key:
+                    axis_state.blocked_key = ""
             return
         # Keypad "3" — manual "force a full refresh" on the current
         # screen, no state change. The only way to clear ghosting left
