@@ -32,7 +32,8 @@ _JOURNAL_LINE_RE = re.compile(
 )
 _LEVEL_RE = re.compile(
     r"^\s*(?:\[(?P<bracket>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)\]"
-    r"|(?P<plain>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)\s*[:\]])",
+    r"|(?P<plain>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)\s*[:\]])"
+    r"|(?:^|[-*:\s])(?P<embedded>emerg|alert|crit(?:ical)?|err(?:or)?|warning|warn|notice|info|debug)(?=[-*:\s]|$)",
     re.IGNORECASE,
 )
 _PRIORITY_RE = re.compile(r"^\s*priority\s*[=:]\s*([0-7])(?:\s|$)", re.IGNORECASE)
@@ -52,11 +53,12 @@ def parse_journal_entries(log_text: str) -> list[dict[str, str]]:
         match = _JOURNAL_LINE_RE.match(line)
         if match:
             message = match.group("message")
-            level_match = _LEVEL_RE.match(message)
+            level_match = _LEVEL_RE.search(message)
             priority_match = _PRIORITY_RE.match(message)
             if level_match:
-                level = _LEVEL_NAMES[(level_match.group("bracket") or level_match.group("plain")).lower()]
-                message = message[level_match.end():].lstrip()
+                level = _LEVEL_NAMES[(level_match.group("bracket") or level_match.group("plain") or level_match.group("embedded")).lower()]
+                if level_match.start() == 0:
+                    message = message[level_match.end():].lstrip()
             elif priority_match:
                 level = _PRIORITY_LEVELS[priority_match.group(1)]
                 message = message[priority_match.end():].lstrip()
