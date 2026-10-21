@@ -92,6 +92,36 @@ def test_boot_parked_syncs_mount_to_configured_zenith_park_position():
     finally: conn.close(); os.unlink(path)
 
 
+def test_boot_parked_unparks_before_syncing_then_reparks_at_synced_position():
+    # Confirmed on hardware: after a restart the driver already reports
+    # itself parked at its own default position (not the configured
+    # one), and INDI::Telescope rejects sync/goto coordinate writes
+    # while parked -- so syncing without unparking first was silently
+    # a no-op, and the driver kept reporting its own default position
+    # instead of the configured park position.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("latitude", "48.0")
+        SettingsRepo(conn).set("longitude", "17.0")
+        SettingsRepo(conn).set("park_mode", "home")
+        calls = []
+        real_unpark, real_sync, real_set_pos, real_park = (
+            ui.indi.unpark, ui.indi.sync_alt_az, ui.indi.set_park_position, ui.indi.park,
+        )
+        ui.indi.unpark = lambda: (calls.append("unpark"), real_unpark())
+        ui.indi.sync_alt_az = lambda *a: (calls.append("sync"), real_sync(*a))
+        ui.indi.set_park_position = lambda *a: (calls.append("set_park_position"), real_set_pos(*a))
+        ui.indi.park = lambda: (calls.append("park"), real_park())
+        ui.start()
+        ui.handle(ENC_PUSH)  # "Yes -- parked"
+        assert calls == ["unpark", "sync", "set_park_position", "park"]
+        assert ui.indi.synced_alt_az == (0.0, 0.0, 48.0, 17.0)
+        assert ui.indi.park_position == (0.0, 0.0)
+        assert ui.indi.parked is True
+        assert ui.state.screen == "PARKED"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_boot_parked_sync_uses_custom_park_alt_az():
     ui, conn, path = make_ui()
     try:
