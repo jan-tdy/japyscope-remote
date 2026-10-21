@@ -112,7 +112,7 @@ def test_jog_sets_slew_rate_and_starts_motion_until_explicit_stop(monkeypatch):
     client.jog("N", 8)
     client.stop_jog("N")
     assert calls == [
-        ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.8x=On"],
+        ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.4x=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=On"],
         ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_MOTION_NS.MOTION_NORTH=Off"],
     ]
@@ -138,12 +138,16 @@ def test_jog_directions_map_to_the_right_axis_and_element(monkeypatch):
         assert calls[2] == f"Skywatcher Alt-Az.{expected}=Off"
 
 
-@pytest.mark.parametrize("speed", range(1, 10))
-def test_jog_uses_synscan_preset_element_names(monkeypatch, speed):
+@pytest.mark.parametrize(
+    "speed,element",
+    [(1, "1x"), (2, "2x"), (4, "3x"), (8, "4x"), (16, "5x"),
+     (32, "6x"), (64, "7x"), (128, "8x"), (600, "9x"), (800, "SLEW_MAX")],
+)
+def test_jog_maps_displayed_rate_to_driver_element_name(monkeypatch, speed, element):
     calls = []
     monkeypatch.setattr(client_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd[-1]) or subprocess.CompletedProcess(cmd, 0, stdout=""))
     make_client().jog("N", speed)
-    assert calls[0] == f"Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.{speed}x=On"
+    assert calls[0] == f"Skywatcher Alt-Az.TELESCOPE_SLEW_RATE.{element}=On"
 
 
 def test_jog_rejects_unknown_direction():

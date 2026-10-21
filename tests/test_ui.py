@@ -1516,6 +1516,16 @@ def test_jog_uses_the_current_speed():
     finally: conn.close(); os.unlink(path)
 
 
+def test_speed_adjust_displays_actual_mount_rate():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "SPEED_ADJUST"
+        ui.state.speed = 600
+        ui.render()
+        assert ui.display.lines[1] == "600x"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_jog_stays_on_while_held_and_stops_on_release():
     ui, conn, path = make_ui()
     try:
@@ -1545,6 +1555,17 @@ def test_jog_watchdog_stops_a_stuck_held_key():
         ui.handle(key_up("6"))
         ui.handle("6")  # a fresh press after release can jog again
         assert len(ui.indi.jogs) == 2
+    finally: conn.close(); os.unlink(path)
+
+
+def test_process_teardown_stops_active_jog():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        ui.stop_motion()
+        assert ui.indi.jog_stops == ["N"]
+        assert ui.state.jog_direction == ""
     finally: conn.close(); os.unlink(path)
 
 

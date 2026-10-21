@@ -46,7 +46,7 @@ T9 = {
     "8": "wxyz",
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
-SPEEDS = tuple(range(1, 10))
+SPEEDS = (1, 2, 4, 8, 16, 32, 64, 128, 600, 800)
 JOG_HOLD_TIMEOUT_SECONDS = 45
 # How long PARKING waits for the driver to actually confirm parked
 # (polled via runtime["parked"] — see _poll_parking()) before giving up
@@ -278,6 +278,11 @@ class ControllerUI:
             if key:
                 self.handle(key)
             self.tick()
+
+    def stop_motion(self) -> None:
+        """Best-effort stop for physical motion before process teardown."""
+        if self.state.jog_direction:
+            self._stop_jog("process teardown")
 
     def tick(self) -> None:
         now = self.clock()

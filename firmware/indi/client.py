@@ -37,11 +37,11 @@ not guessed from naming convention:
 - ``TELESCOPE_PARK`` (switch): ``PARK``/``UNPARK``.
 - ``TELESCOPE_MOTION_NS``/``TELESCOPE_MOTION_WE`` (switches):
   ``MOTION_NORTH``/``MOTION_SOUTH``, ``MOTION_WEST``/``MOTION_EAST``.
-- ``TELESCOPE_SLEW_RATE`` (switch): elements named ``"{index}x"`` for
-  each of this driver's preset rates (1/2/4/8/16/32/64/128/600/800 --
-  ``SlewSpeeds`` in ``skywatcherAPIMount.cpp``) -- labels show actual
-  rates while names are indices. The UI's 1-9 presets use the first nine
-  element names.
+- ``TELESCOPE_SLEW_RATE`` (switch): numbered elements named ``"1x"`` through
+  ``"9x"`` plus ``"SLEW_MAX"`` for the fastest rate. ``SlewSpeeds`` in
+  ``skywatcherAPIMount.cpp`` labels these elements with rates
+  1/2/4/8/16/32/64/128/600/800. The UI displays the actual rate and
+  selects its corresponding element name.
 - ``CONNECTION``/``CONNECTION_MODE``/``DEVICE_ADDRESS``: standard INDI
   properties, already used by ``firmware/ui/controller.py``'s
   ``_connect_mount_wifi()``.
@@ -104,6 +104,13 @@ _JOG_PROPERTIES = {
     "S": ("TELESCOPE_MOTION_NS", "MOTION_SOUTH"),
     "E": ("TELESCOPE_MOTION_WE", "MOTION_EAST"),
     "W": ("TELESCOPE_MOTION_WE", "MOTION_WEST"),
+}
+
+# The driver labels rates with these values but addresses switch elements
+# by index. Its fastest element has a custom name, SLEW_MAX.
+_SLEW_RATE_ELEMENTS = {
+    1: "1x", 2: "2x", 4: "3x", 8: "4x", 16: "5x",
+    32: "6x", 64: "7x", 128: "8x", 600: "9x", 800: "SLEW_MAX",
 }
 
 
@@ -247,7 +254,10 @@ class IndiClient:
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")
         axis_property, on_element = jog_property
-        self._setprop(f"TELESCOPE_SLEW_RATE.{speed}x=On")
+        rate_element = _SLEW_RATE_ELEMENTS.get(speed)
+        if rate_element is None:
+            raise ConnectionError(f"unknown jog speed: {speed!r}")
+        self._setprop(f"TELESCOPE_SLEW_RATE.{rate_element}=On")
         self._setprop(f"{axis_property}.{on_element}=On")
 
     def stop_jog(self, direction: str) -> None:
