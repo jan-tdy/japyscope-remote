@@ -847,7 +847,10 @@ class ControllerUI:
             key = tap_key
         up_key = released_key(key)
         if up_key is not None:
-            if JOG_DIRECTIONS.get(up_key) == s.jog_direction:
+            # Only the input that started the active hold owns its release.
+            # Different devices can map to the same mount direction (for
+            # example keypad "2" and joystick ENC_UP both mean north).
+            if up_key == s.jog_key:
                 self._stop_jog()
             if up_key == s.jog_blocked_key:
                 s.jog_blocked_key = ""
