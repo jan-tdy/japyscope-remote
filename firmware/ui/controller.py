@@ -856,9 +856,24 @@ class ControllerUI:
         whatever RA/Dec it happened to have before the reboot --
         confirmed on hardware as a real gap (the driver's own
         connection setting has no memory of a previous session's
-        position; see `IndiClient.sync_alt_az()`'s docstring). Returns
-        whether it succeeded, so the caller only marks `parked`/advances
-        the screen on success -- same pattern as `_unpark()`."""
+        position; see `IndiClient.sync_alt_az()`'s docstring).
+
+        Confirmed on hardware: after a restart the driver comes back up
+        already reporting itself parked (``TELESCOPE_PARK.PARK=On``,
+        presumably restored from its own persisted park state) at
+        whatever position it considers its default/last park position
+        -- NOT the Settings page's configured one. `INDI::Telescope`
+        rejects sync/goto coordinate writes while parked, so sending
+        `sync_alt_az()` straight away is silently ignored and the
+        driver keeps reporting its own default position instead of the
+        one this app just "synced". Unparking first makes the sync
+        actually take effect; writing the park position and re-parking
+        afterwards leaves the driver parked at the now-correct
+        position, matching what the mount is physically doing.
+
+        Returns whether it succeeded, so the caller only marks
+        `parked`/advances the screen on success -- same pattern as
+        `_unpark()`."""
         try:
             latitude = float(self.settings.get("latitude", "0.0"))
             longitude = float(self.settings.get("longitude", "0.0"))
@@ -866,7 +881,10 @@ class ControllerUI:
             latitude = longitude = 0.0
         alt, az = self._park_alt_az()
         try:
+            self.indi.unpark()
             self.indi.sync_alt_az(alt, az, latitude, longitude)
+            self.indi.set_park_position(alt, az)
+            self.indi.park()
         except (NotImplementedError, ConnectionError) as exc:
             logger.error("INDI-002 boot park-position sync failed: %s", exc)
             s = self.state
