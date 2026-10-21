@@ -1641,7 +1641,34 @@ def test_idle_jog_stops_on_release_same_as_track():
         assert ui.indi.jogs == [("E", 1)]
         ui.handle(key_up("6"))
         assert ui.indi.jog_stops == ["E"]
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_we.direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
+def test_diagonal_jog_holds_both_axes_independently():
+    # Confirmed on hardware as a real bug: N/S and E/W are independent
+    # switches on the driver (both can be On at once for true diagonal
+    # motion) -- but jog state used to track only one active direction,
+    # so holding a second axis (e.g. the joystick pushed diagonally)
+    # stopped the first axis instead of running both simultaneously.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("6")  # East (WE axis)
+        ui.handle("2")  # North (NS axis), held at the same time
+        assert ui.indi.jogs == [("E", 1), ("N", 1)]
+        assert ui.indi.jog_stops == []  # neither axis was stopped to start the other
+        assert ui.state.jog_we.direction == "E"
+        assert ui.state.jog_ns.direction == "N"
+
+        ui.handle(key_up("6"))
+        assert ui.indi.jog_stops == ["E"]
+        assert ui.state.jog_we.direction == ""
+        assert ui.state.jog_ns.direction == "N"  # the other axis keeps going
+
+        ui.handle(key_up("2"))
+        assert ui.indi.jog_stops == ["E", "N"]
+        assert ui.state.jog_ns.direction == ""
     finally: conn.close(); os.unlink(path)
 
 
@@ -1790,7 +1817,7 @@ def test_jog_stays_on_while_held_and_stops_on_release():
         assert ui.indi.jog_stops == []
         ui.handle(key_up("2"))
         assert ui.indi.jog_stops == ["N"]
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_ns.direction == ""
     finally: conn.close(); os.unlink(path)
 
 
@@ -1801,11 +1828,11 @@ def test_jog_ignores_release_from_a_different_input():
         ui.handle("2")  # keypad starts north
         ui.handle(key_up(ENC_UP))  # joystick also maps to north, but did not start it
         assert ui.indi.jog_stops == []
-        assert ui.state.jog_direction == "N"
+        assert ui.state.jog_ns.direction == "N"
 
         ui.handle(key_up("2"))
         assert ui.indi.jog_stops == ["N"]
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_ns.direction == ""
     finally: conn.close(); os.unlink(path)
 
 
@@ -1814,10 +1841,10 @@ def test_jog_watchdog_stops_a_stuck_held_key():
     try:
         ui.state.screen = "TRACK"
         ui.handle("6")
-        ui.state.jog_started_at = ui.clock() - controller_module.JOG_HOLD_TIMEOUT_SECONDS - 1
+        ui.state.jog_we.started_at = ui.clock() - controller_module.JOG_HOLD_TIMEOUT_SECONDS - 1
         ui.tick()
         assert ui.indi.jog_stops == ["E"]
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_we.direction == ""
         ui.handle("6")
         assert len(ui.indi.jogs) == 1
         ui.handle(key_up("6"))
@@ -1833,7 +1860,7 @@ def test_process_teardown_stops_active_jog():
         ui.handle("2")
         ui.stop_motion()
         assert ui.indi.jog_stops == ["N"]
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_ns.direction == ""
     finally: conn.close(); os.unlink(path)
 
 
@@ -1854,7 +1881,7 @@ def test_failed_jog_attempts_safety_abort():
         ui.state.screen = "TRACK"
         ui.handle("2")
         assert ui.indi.aborted is True
-        assert ui.state.jog_direction == ""
+        assert ui.state.jog_ns.direction == ""
     finally: conn.close(); os.unlink(path)
 
 
