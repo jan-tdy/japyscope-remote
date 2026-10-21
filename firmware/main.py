@@ -63,8 +63,14 @@ def resolve_simulation_flags(simulate_all: bool, settings: SettingsRepo) -> dict
 class SimulatedIndiClient:
     """No-motion INDI stand-in used only by ``--simulate``."""
 
+    _SIMULATED_JOG_DEGREES_PER_SECOND = 0.01
+    _SIMULATED_MAX_RATE = 8
+
     def __init__(self):
         self.status = MountStatus(True, "05h34m32s", "+22°00′52″", 47.3, 132.8, False, False, False)
+        self._jog_direction: Optional[str] = None
+        self._jog_rate = 0.0
+        self._jog_updated_at = time.monotonic()
 
     def connect(self) -> None: pass
     def disconnect(self) -> None: pass
@@ -72,17 +78,38 @@ class SimulatedIndiClient:
     def goto(self, ra: str, dec: str) -> None: self.status.ra = ra; self.status.dec = dec; self.status.tracking = True
     def park(self) -> None: self.status.parked = True
     def unpark(self) -> None: self.status.parked = False
-    def abort(self) -> None: self.status.tracking = False
-    def get_status(self) -> MountStatus: return self.status
+    def abort(self) -> None:
+        self._advance_jog()
+        self.status.tracking = False
+        self._jog_direction = None
+        self._jog_rate = 0.0
+    def get_status(self) -> MountStatus:
+        self._advance_jog()
+        return self.status
 
     def jog(self, direction: str, speed: int) -> None:
-        step = 0.01 * speed  # degrees per nudge — arbitrary, just visibly responsive at every SPEEDS tier
-        if direction == "N": self.status.alt = min(90.0, self.status.alt + step)
-        elif direction == "S": self.status.alt = max(-90.0, self.status.alt - step)
-        elif direction == "E": self.status.az = (self.status.az + step) % 360
-        elif direction == "W": self.status.az = (self.status.az - step) % 360
+        self._advance_jog()
+        # Real driver rates are sidereal multiples up to 800x. Keep a
+        # separate, deliberately gentle scale for simulation rather than
+        # treating those values as degrees per press.
+        self._jog_direction = direction
+        self._jog_rate = self._SIMULATED_JOG_DEGREES_PER_SECOND * min(max(speed, 1), self._SIMULATED_MAX_RATE)
 
-    def stop_jog(self, direction: str) -> None: pass
+    def stop_jog(self, direction: str) -> None:
+        self._advance_jog()
+        if self._jog_direction == direction:
+            self._jog_direction = None
+            self._jog_rate = 0.0
+
+    def _advance_jog(self) -> None:
+        now = time.monotonic()
+        elapsed = max(0.0, now - self._jog_updated_at)
+        self._jog_updated_at = now
+        step = self._jog_rate * elapsed
+        if self._jog_direction == "N": self.status.alt = min(90.0, self.status.alt + step)
+        elif self._jog_direction == "S": self.status.alt = max(-90.0, self.status.alt - step)
+        elif self._jog_direction == "E": self.status.az = (self.status.az + step) % 360
+        elif self._jog_direction == "W": self.status.az = (self.status.az - step) % 360
 
 
 def build_parser() -> argparse.ArgumentParser:
