@@ -22,7 +22,7 @@ from typing import Callable, Optional, Sequence
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
-from firmware.hal.input.base import InputHAL, released_key
+from firmware.hal.input.base import InputHAL, released_key, tapped_key
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
@@ -731,20 +731,20 @@ class ControllerUI:
         self.render(coalesce=True)
         return True
 
-    def _jog(self, key: str) -> bool:
-        """Continuous manual motion for screens where the mount can move (see
-        JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
-        calling convention as `_move`, so callers fall through to their own
-        handling otherwise. Any command failure triggers a best-effort abort
-        because the actual motor state may be unknown."""
+    def _jog(self, key: str, momentary: bool = False) -> bool:
+        """Continuous manual motion for held keys, with bounded encoder taps.
+        Returns whether `key` was a jog key at all, same calling convention as
+        `_move`, so callers fall through to their own handling otherwise."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
         if key == self.state.jog_blocked_key:
             return True
-        if self.state.jog_direction == direction:
-            return True
         if self.state.jog_direction:
+            # A rotary detent must not stop or replace a jog held by another
+            # input that happens to use the same direction code.
+            if momentary or self.state.jog_direction == direction:
+                return True
             if not self._stop_jog("direction changed"):
                 return True
         try:
@@ -752,6 +752,8 @@ class ControllerUI:
             self.state.jog_direction = direction
             self.state.jog_key = key
             self.state.jog_started_at = self.clock()
+            if momentary:
+                self._stop_jog("encoder detent")
         except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
             self._best_effort_abort()
@@ -839,6 +841,10 @@ class ControllerUI:
 
     def handle(self, key: str) -> None:
         s = self.state
+        tap_key = tapped_key(key)
+        momentary = tap_key is not None
+        if momentary:
+            key = tap_key
         up_key = released_key(key)
         if up_key is not None:
             if JOG_DIRECTIONS.get(up_key) == s.jog_direction:
@@ -937,7 +943,7 @@ class ControllerUI:
             elif key == "9": self._set("IDLE")
             return
         if s.screen == "TRACK":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "9": self._set("IDLE")
             elif key == "7": self._speed("TRACK")
             return
@@ -968,7 +974,7 @@ class ControllerUI:
                 self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "7": self._speed("ALIGN_JOG")
             elif key == "9":
                 if s.boot_sync: self._set("ALIGN_STAR_PICK")
