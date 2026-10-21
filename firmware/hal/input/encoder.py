@@ -209,6 +209,11 @@ class EncoderInput(InputHAL):
             emitted = ENC_UP if _CYCLE_FORWARD_IS_UP else ENC_DOWN
             logger.debug("encoder emits %s", emitted)
             self._queue.put(emitted)
+            self._queue.put(key_up(emitted))
+            # A KY-040 rotation is a detent, not a held direction. Pair it
+            # with an immediate release so jog screens stop after a brief
+            # nudge instead of leaving the mount moving until the watchdog.
+            self._queue.put(key_up(emitted))
         elif self._detent_accum <= -_STEPS_PER_DETENT:
             self._detent_accum = 0
             emitted = ENC_DOWN if _CYCLE_FORWARD_IS_UP else ENC_UP
