@@ -94,9 +94,11 @@ document.getElementById('copy-btn').addEventListener('click', function() {
   }
 
   function fallbackCopy() {
+    var wasHidden = rawLog.hidden;
+    if (wasHidden) rawLog.hidden = false;
     try {
       var range = document.createRange();
-      range.selectNodeContents(document.getElementById('log-output'));
+      range.selectNodeContents(rawLog);
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
@@ -105,6 +107,8 @@ document.getElementById('copy-btn').addEventListener('click', function() {
       showMsg(ok ? 'Copied!' : 'Copy failed');
     } catch (e) {
       showMsg('Please select text manually');
+    } finally {
+      rawLog.hidden = wasHidden;
     }
   }
 });
