@@ -13,12 +13,21 @@
   <div class="brand">
     <h1>JapyScope Remote</h1>
   </div>
+  {% if session.get('authenticated') %}
+  <button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-nav">
+    <span></span><span></span><span></span>
+  </button>
+  {% endif %}
 </header>
+
+{% if session.get('authenticated') %}
+<button class="nav-backdrop" type="button" aria-label="Close navigation"></button>
+{% endif %}
 
 <div class="layout-container">
   {% if session.get('authenticated') %}
   <aside class="sidebar">
-    <nav class="nav-menu">
+    <nav class="nav-menu" id="mobile-nav">
       <a class="nav-link {% if request.endpoint == 'status' %}active{% endif %}" href="{{ url_for('status') }}">Status</a>
       <a class="nav-link {% if request.endpoint in ['catalog', 'catalog_create', 'catalog_rename', 'catalog_delete', 'item_add', 'item_delete', 'item_edit', 'catalog_import'] %}active{% endif %}" href="{{ url_for('catalog') }}">Catalogs</a>
       <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
@@ -36,6 +45,45 @@
     {% block content %}{% endblock %}
   </main>
 </div>
+
+<script>
+(function() {
+  var toggle = document.querySelector('.nav-toggle');
+  var backdrop = document.querySelector('.nav-backdrop');
+  var sidebar = document.querySelector('.sidebar');
+  if (!toggle || !backdrop || !sidebar) return;
+
+  function setOpen(open) {
+    document.body.classList.toggle('nav-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    if (open) {
+      var firstLink = sidebar.querySelector('a');
+      if (firstLink) firstLink.focus();
+    } else {
+      toggle.focus();
+    }
+  }
+
+  toggle.addEventListener('click', function() {
+    setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+  });
+  backdrop.addEventListener('click', function() { setOpen(false); });
+  sidebar.addEventListener('click', function(event) {
+    if (event.target.closest('a')) setOpen(false);
+  });
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+      setOpen(false);
+    }
+  });
+  window.addEventListener('resize', function() {
+    if (window.innerWidth > 768 && toggle.getAttribute('aria-expanded') === 'true') {
+      setOpen(false);
+    }
+  });
+})();
+</script>
 
 </body>
 </html>
