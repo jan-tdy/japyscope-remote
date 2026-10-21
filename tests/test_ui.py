@@ -35,11 +35,13 @@ class Input(InputHAL):
 class Indi:
     def __init__(self):
         self.synced = None; self.synced_alt_az = None; self.goto_target = None; self.parked = False
+        self.park_position = None
         self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
     def sync(self, ra, dec): self.synced = (ra, dec)
     def sync_alt_az(self, alt_deg, az_deg, latitude_deg, longitude_deg):
         self.synced_alt_az = (alt_deg, az_deg, latitude_deg, longitude_deg)
     def goto(self, ra, dec): self.goto_target = (ra, dec); self.tracking = True
+    def set_park_position(self, alt_deg, az_deg): self.park_position = (alt_deg, az_deg)
     def park(self): self.parked = True
     def unpark(self): self.parked = False
     def abort(self): self.aborted = True; self.tracking = False
@@ -319,6 +321,47 @@ def test_park_waits_for_driver_confirmation_before_showing_parked():
         ui.tick()
         assert ui.state.screen == "PARKED"
         assert StateRepo(conn).get("parked") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_writes_configured_position_before_parking():
+    # Confirmed as a real gap: park() alone slews to whatever position
+    # the driver already has stored (its own default, or a stale one
+    # from a previous session) -- the Settings page's Park Configuration
+    # was saved but the driver was never actually told about it.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("park_mode", "custom")
+        SettingsRepo(conn).set("park_alt", "30")
+        SettingsRepo(conn).set("park_az", "200")
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.indi.park_position == (30.0, 200.0)
+        assert ui.indi.parked is True
+        assert ui.state.screen == "PARKING"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_uses_zenith_default_position():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.indi.park_position == (90.0, 0.0)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_park_does_not_proceed_if_setting_position_fails(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        def fail(alt, az): raise ConnectionError("driver unreachable")
+        ui.indi.set_park_position = fail
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.indi.parked is False  # park() was never called
+        assert ui.state.screen == "DEV_MESSAGE"
+        ui.handle(ENC_PUSH)  # dismiss -> back to PARK_CONFIRM, can retry
+        assert ui.state.screen == "PARK_CONFIRM"
     finally: conn.close(); os.unlink(path)
 
 

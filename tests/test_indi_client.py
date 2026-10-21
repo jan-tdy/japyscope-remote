@@ -220,3 +220,17 @@ def test_sync_alt_az_sets_coord_mode_then_sends_eod_ra_dec_without_double_preces
         f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_deg / 15.0:.6f};DEC={dec_deg:.6f}",
     ]
     assert c._aligned is True
+
+
+def test_set_park_position_sends_az_then_alt(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client_module.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+    )
+    c = make_client()
+    c.set_park_position(30.0, 200.0)
+    assert calls == [
+        ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.PARK_AZ=200.000000"],
+        ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.PARK_ALT=30.000000"],
+    ]

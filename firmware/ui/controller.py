@@ -875,6 +875,26 @@ class ControllerUI:
             return False
         return True
 
+    def _park_to_configured_position(self) -> bool:
+        """PARK_CONFIRM's "Yes" -- writes the configured Park
+        Configuration (Settings page) to the driver's own park position
+        before commanding `park()`, which otherwise slews to whatever
+        position the driver already has (its own default, or a stale
+        one from a previous session) instead of what's configured here.
+        Returns whether it succeeded, so the caller only proceeds to the
+        actual park command on success -- same pattern as
+        `_sync_park_position()`/`_unpark()`."""
+        alt, az = self._park_alt_az()
+        try:
+            self.indi.set_park_position(alt, az)
+        except (AttributeError, NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 setting park position failed: %s", exc)
+            s = self.state
+            s.return_screen = "PARK_CONFIRM"
+            self._devtools_message(["Could not set park", "position with the driver", "Check Diagnostics"])
+            return False
+        return True
+
     def _unpark(self) -> bool:
         """Sends the mount's own unpark command before clearing the local
         `parked` flag — a bare `runtime.set("parked", "false")` used to
@@ -1112,6 +1132,8 @@ class ControllerUI:
             if self._move(key, 2): return
             if key == "9" or (key == ENC_PUSH and s.index == 1): self._set("MENU", 2)
             elif key == ENC_PUSH:
+                if not self._park_to_configured_position():
+                    return
                 try:
                     self.indi.park()
                 except (NotImplementedError, ConnectionError) as exc:
