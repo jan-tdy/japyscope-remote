@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .base import InputHAL, released_key
+from .base import InputHAL, released_key, tapped_key
 from .keys import is_encoder_key, is_joystick_key, is_keypad_key
 
 
@@ -55,7 +55,7 @@ class CompositeInput(InputHAL):
         budget = max(timeout / len(self._groups), 0.01)
         for source, predicates in self._groups:
             key = source.poll(budget)
-            physical_key = released_key(key) if key is not None else None
+            physical_key = released_key(key) or tapped_key(key) if key is not None else None
             routed_key = physical_key or key
             if key is not None and any(predicate(routed_key) for predicate in predicates):
                 return key
