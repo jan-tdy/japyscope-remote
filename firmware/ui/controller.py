@@ -46,7 +46,11 @@ T9 = {
     "8": "wxyz",
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
-SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+SPEEDS = tuple(range(1, 10))
+SPEED_RATE_LABELS = {
+    1: "1x", 2: "2x", 3: "4x", 4: "8x", 5: "16x",
+    6: "32x", 7: "64x", 8: "128x", 9: "800x",
+}
 JOG_HOLD_TIMEOUT_SECONDS = 45
 # How long PARKING waits for the driver to actually confirm parked
 # (polled via runtime["parked"] — see _poll_parking()) before giving up
@@ -599,7 +603,7 @@ class ControllerUI:
         elif screen == "ALIGN_STAR_PICK":
             lines = self._visible(f"Point {s.align_points + 1}", [star.name for star in STARS])
         elif screen == "ALIGN_JOG":
-            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
+            lines = [f"Point to {s.jog_target}", f"Speed {SPEED_RATE_LABELS.get(s.speed, '—')}", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
         elif screen == "ALIGN_MORE":
             lines = self._visible(f"Points: {s.align_points}", ["Add another point", "Finish alignment"])
         elif screen == "ALIGN_CONFIRM":
@@ -607,7 +611,7 @@ class ControllerUI:
         elif screen == "ALIGN_SAVE":
             lines = ["ALIGNED", "Saving alignment…", "", ""]
         elif screen == "SPEED_ADJUST":
-            lines = ["Jog speed", f"{s.speed}x", "rotate=change", "push/9=back"]
+            lines = ["Jog speed", SPEED_RATE_LABELS.get(s.speed, "—"), "rotate=change", "push/9=back"]
         elif screen == "PARK_CONFIRM":
             lines = self._visible(
                 self._t("park.confirm_question"), [self._t("park.confirm_yes"), self._t("park.confirm_cancel")]

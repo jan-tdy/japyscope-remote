@@ -1510,9 +1510,22 @@ def test_track_screen_jogs_and_keeps_its_own_keys_working():
 def test_jog_uses_the_current_speed():
     ui, conn, path = make_ui()
     try:
+        assert controller_module.SPEEDS == tuple(range(1, 10))
         ui.state.screen = "TRACK"; ui.state.speed = 8
         ui.handle("6")
         assert ui.indi.jogs[-1] == ("E", 8)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_speed_screens_display_the_actual_mount_rate():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.speed = 9
+        ui._set("SPEED_ADJUST")
+        assert ui.display.lines[1] == "800x"
+
+        ui._set("ALIGN_JOG")
+        assert "Speed 800x" in " ".join(ui.display.lines)
     finally: conn.close(); os.unlink(path)
 
 
