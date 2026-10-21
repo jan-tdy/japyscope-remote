@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 KEY_UP_PREFIX = "KEY_UP:"
+KEY_TAP_PREFIX = "KEY_TAP:"
 
 
 def key_up(key: str) -> str:
@@ -16,6 +17,15 @@ def key_up(key: str) -> str:
 
 def released_key(event: str) -> Optional[str]:
     return event[len(KEY_UP_PREFIX):] if event.startswith(KEY_UP_PREFIX) else None
+
+
+def key_tap(key: str) -> str:
+    """Encode a momentary detent event in the poll() event stream."""
+    return KEY_TAP_PREFIX + key
+
+
+def tapped_key(event: str) -> Optional[str]:
+    return event[len(KEY_TAP_PREFIX):] if event.startswith(KEY_TAP_PREFIX) else None
 
 
 class InputHAL(ABC):
