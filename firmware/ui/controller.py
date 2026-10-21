@@ -745,7 +745,8 @@ class ControllerUI:
         if self.state.jog_direction == direction:
             return True
         if self.state.jog_direction:
-            self._stop_jog("direction changed")
+            if not self._stop_jog("direction changed"):
+                return True
         try:
             self.indi.jog(direction, self.state.speed)
             self.state.jog_direction = direction
@@ -756,24 +757,28 @@ class ControllerUI:
             self._best_effort_abort()
         return True
 
-    def _best_effort_abort(self) -> None:
+    def _best_effort_abort(self) -> bool:
         try:
             self.indi.abort()
+            return True
         except Exception as exc:
             logger.error("INDI-004 jog safety abort failed: %s", exc)
+            return False
 
-    def _stop_jog(self, reason: str = "key released") -> None:
+    def _stop_jog(self, reason: str = "key released") -> bool:
         direction = self.state.jog_direction
         if not direction:
-            return
-        self.state.jog_direction = ""
-        self.state.jog_key = ""
-        self.state.jog_started_at = 0.0
+            return True
         try:
             self.indi.stop_jog(direction)
         except (AttributeError, NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog stop failed (%s): %s", reason, exc)
-            self._best_effort_abort()
+            if not self._best_effort_abort():
+                return False
+        self.state.jog_direction = ""
+        self.state.jog_key = ""
+        self.state.jog_started_at = 0.0
+        return True
 
     def _unpark(self) -> bool:
         """Sends the mount's own unpark command before clearing the local
