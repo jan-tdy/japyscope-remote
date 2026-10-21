@@ -1531,6 +1531,21 @@ def test_jog_stays_on_while_held_and_stops_on_release():
     finally: conn.close(); os.unlink(path)
 
 
+def test_jog_ignores_release_from_a_different_input():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")  # keypad starts north
+        ui.handle(key_up(ENC_UP))  # joystick also maps to north, but did not start it
+        assert ui.indi.jog_stops == []
+        assert ui.state.jog_direction == "N"
+
+        ui.handle(key_up("2"))
+        assert ui.indi.jog_stops == ["N"]
+        assert ui.state.jog_direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
 def test_jog_watchdog_stops_a_stuck_held_key():
     ui, conn, path = make_ui()
     try:
