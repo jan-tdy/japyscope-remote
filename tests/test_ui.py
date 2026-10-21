@@ -1395,6 +1395,43 @@ def test_devtools_easter_eggs_show_and_dismiss():
     finally: conn.close(); os.unlink(path)
 
 
+def test_idle_jogs_with_keypad_and_joystick_without_breaking_menu_nav():
+    # Requested so the mount can be manually nudged from the home screen,
+    # not just while already in TRACK/ALIGN_JOG. Keypad 2/4/6/8 and the
+    # joystick's X-axis (JOY_LEFT/JOY_RIGHT) weren't claimed by anything
+    # on IDLE before -- they must not disturb the rotary encoder's own
+    # HOME menu scrolling (ENC_UP/ENC_DOWN), which _move() still owns.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"
+        ui.handle("2"); assert ui.indi.jogs[-1] == ("N", 1)
+        ui.handle("8"); assert ui.indi.jogs[-1] == ("S", 1)
+        ui.handle("4"); assert ui.indi.jogs[-1] == ("W", 1)
+        ui.handle("6"); assert ui.indi.jogs[-1] == ("E", 1)
+        ui.handle(JOY_LEFT); assert ui.indi.jogs[-1] == ("W", 1)
+        ui.handle(JOY_RIGHT); assert ui.indi.jogs[-1] == ("E", 1)
+        assert ui.state.screen == "IDLE"  # jogging doesn't change screen
+        assert len(ui.indi.jogs) == 6
+
+        # The encoder still scrolls the HOME menu, not jog N/S.
+        ui.handle(ENC_DOWN)
+        assert ui.state.index == 1
+        assert len(ui.indi.jogs) == 6  # unchanged -- not reinterpreted as jog
+    finally: conn.close(); os.unlink(path)
+
+
+def test_idle_jog_stops_on_release_same_as_track():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "IDLE"
+        ui.handle("6")
+        assert ui.indi.jogs == [("E", 1)]
+        ui.handle(key_up("6"))
+        assert ui.indi.jog_stops == ["E"]
+        assert ui.state.jog_direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
 def test_align_jog_screen_jogs_with_keypad_encoder_and_joystick():
     ui, conn, path = make_ui()
     try:
