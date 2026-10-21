@@ -1126,6 +1126,115 @@ def test_devtools_9600_wifi_gives_up_after_repeated_connect_refusal(monkeypatch)
     finally: conn.close(); os.unlink(path)
 
 
+def test_boot_reconnects_saved_wifi_interface(monkeypatch):
+    # Confirmed on hardware: mount_interface already says "wifi" and
+    # mount_wifi_host is already saved from a previous Dev Tools 9600
+    # session, but indi_skywatcherAltAzMount's own connection setting
+    # lives on the driver process, not in our SQLite state -- a freshly
+    # started indiserver has no memory of it, so every status poll fails
+    # until this replays the same indi_setprop sequence Dev Tools 9600
+    # itself runs.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        ui.indi_manager = object()  # non-None marks this as real hardware, not --simulate
+        ui._reconnect_mount_interface()
+        assert calls == [
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION_MODE.CONNECTION_TCP=On"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.ADDRESS=192.168.4.1"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11880"],
+            ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION.CONNECT=On"],
+        ]
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_reconnects_saved_synscan_app_interface(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "synscan_app")
+        SettingsRepo(conn).set("mount_app_port", "11882")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        ui.indi_manager = object()
+        ui._reconnect_mount_interface()
+        assert calls[-1] == [
+            "indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.CONNECTION.CONNECT=On",
+        ]
+        assert ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.DEVICE_ADDRESS.PORT=11882"] in calls
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_skips_reconnect_for_default_rj12(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        ui.indi_manager = object()
+        ui._reconnect_mount_interface()  # mount_interface defaults to "rj12"
+        assert calls == []
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_skips_reconnect_for_bluetooth(monkeypatch):
+    # No confirmed/tested _connect_mount_bluetooth() equivalent exists yet
+    # (see docs/WIRING.md) -- reconnect must not invent one blind.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_interface", "bluetooth")
+        SettingsRepo(conn).set("bluetooth_mount_paired", "1")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        ui.indi_manager = object()
+        ui._reconnect_mount_interface()
+        assert calls == []
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_logs_but_does_not_raise_on_reconnect_failure(monkeypatch, caplog):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+
+        def fail(cmd, **kw):
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="No such property\n")
+
+        monkeypatch.setattr(controller_module.subprocess, "run", fail)
+        ui.indi_manager = object()
+        ui._reconnect_mount_interface()  # must not raise
+        assert any("Boot: mount wifi reconnect" in r.message for r in caplog.records)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_does_not_attempt_reconnect_in_simulate_mode():
+    # indi_manager is None in --simulate (firmware/main.py) -- there's no
+    # real indiserver/driver to point anywhere.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        assert ui.indi_manager is None
+        ui.start()  # must not touch subprocess at all; absence of a crash is the assertion
+        assert ui.state.screen == "BOOT_PARK_CHECK"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_devtools_9600_app_connects_on_first_candidate_port(monkeypatch):
     ui, conn, path = make_ui()
     try:
