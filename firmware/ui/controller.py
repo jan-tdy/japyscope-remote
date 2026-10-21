@@ -899,6 +899,15 @@ class ControllerUI:
             return
         if s.screen == "IDLE":
             if self._move(key, len(self.HOME)): return
+            # Manual jog from the home screen, not just TRACK/ALIGN_JOG --
+            # requested so the mount can be nudged without first starting
+            # a slew or alignment. _move() above already claims
+            # ENC_UP/ENC_DOWN/"1"/"7" for Home menu navigation and
+            # returns early for them, so only the keys it doesn't use
+            # (keypad 2/4/6/8, and the external joystick's X-axis) ever
+            # reach _jog() here -- the rotary encoder still scrolls HOME
+            # exactly as before.
+            if self._jog(key, momentary=momentary): return
             if key == ENC_PUSH:
                 s.return_screen = "IDLE"
                 self._set(("MENU", "CATALOG_MENU", "DEVTOOLS")[s.index]); s.digits = []

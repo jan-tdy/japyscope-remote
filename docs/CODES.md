@@ -16,7 +16,7 @@ error/status code list for support and troubleshooting.
 |---|---|
 | 1 | **Encoder-up stand-in** (`ENC_UP`) wherever `_move()` is used — see below; also T9 letter entry ("abc") in SmartSearch, where `_move()` isn't in play |
 | 3 | **Force a full refresh** of the current screen (no state change) — see below; also T9 letter entry ("ghi") in SmartSearch, where it's excluded |
-| 2 | Jog Up — only handled on `ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
+| 2 | Jog Up — handled on `IDLE`/`ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
 | 4 | Jog Left — same screens |
 | 6 | Jog Right — same screens |
 | 8 | Jog Down — same screens |
