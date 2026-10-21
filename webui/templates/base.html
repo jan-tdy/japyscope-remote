@@ -97,7 +97,7 @@
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
-    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}', { scope: '/' });
+    navigator.serviceWorker.register('{{ url_for("service_worker") }}');
   });
 }
 </script>
