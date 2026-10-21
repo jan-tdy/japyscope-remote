@@ -6,6 +6,17 @@
   {% block head %}{% endblock %}
   <title>{% block title %}JapyScope Remote{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <meta name="theme-color" content="#0969da">
+
+  <!-- iOS Safari ignores the manifest above entirely; it needs its own
+       meta tags to behave like an installed app instead of a bookmark
+       that opens inside Safari's chrome. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="JapyScope">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon.svg') }}">
 </head>
 <body>
 
@@ -83,6 +94,12 @@
     }
   });
 })();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('{{ url_for("static", filename="sw.js") }}', { scope: '/' });
+  });
+}
 </script>
 
 </body>
