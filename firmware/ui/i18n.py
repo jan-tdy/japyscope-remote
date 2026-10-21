@@ -33,6 +33,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu.sudo_password": {"en": "Sudo Password", "sk": "Heslo sudo"},
     "menu.system": {"en": "System", "sk": "Systém"},
     "menu.about": {"en": "About", "sk": "O aplikácii"},
+    "menu.connection": {"en": "Connection", "sk": "Pripojenie"},
+    "connection.reconnect": {"en": "Reconnect", "sk": "Pripojiť znova"},
     "language.title": {"en": "Language", "sk": "Jazyk"},
     "theme.title": {"en": "Interface Theme", "sk": "Téma rozhrania"},
     "boot.park_question": {"en": "In park position?", "sk": "Je v parkovacej polohe?"},

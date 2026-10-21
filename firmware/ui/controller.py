@@ -170,7 +170,7 @@ class ControllerUI:
     MENU = (
         "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
         "menu.location", "menu.backlight", "menu.language", "menu.theme",
-        "menu.sudo_password", "menu.system", "menu.about",
+        "menu.sudo_password", "menu.system", "menu.about", "menu.connection",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
     # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
@@ -662,6 +662,10 @@ class ControllerUI:
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
             lines = self._visible("Mount interface", [label for _, label in self.MOUNT_INTERFACES])
+        elif screen == "CONNECTION":
+            current = self.settings.get("mount_interface", "rj12")
+            label = dict(self.MOUNT_INTERFACES).get(current, current)
+            lines = self._visible(f"Connection: {label}", [self._t("connection.reconnect")])
         elif screen == "DEV_REPO_SELECT":
             lines = self._visible("Set repo", list(self.REPOS))
         elif screen == "DEV_CHANNEL_SELECT":
@@ -1090,6 +1094,13 @@ class ControllerUI:
                     self.settings.set("mount_interface", selected)
                     self._set(s.return_screen)
             return
+        if s.screen == "CONNECTION":
+            if self._move(key, 1): return
+            if key == "9": self._set("MENU", 11); return
+            if key == ENC_PUSH:
+                s.return_screen = "CONNECTION"
+                self._menu_reconnect()
+            return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
             if key == "9": self._set(s.return_screen); return
@@ -1182,7 +1193,8 @@ class ControllerUI:
             self._set("THEME", keys.index(current) if current in keys else 0)
         elif s.index == 8: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
         elif s.index == 9: self._set("SYSTEM_CONFIRM")
-        else: self._set("ABOUT")
+        elif s.index == 10: self._set("ABOUT")
+        else: self._set("CONNECTION")
 
     def _open_catalog(self) -> None:
         s = self.state
@@ -1598,6 +1610,26 @@ class ControllerUI:
         exc = self._indi_setprop_steps(indi_host, indi_port, steps)
         if exc is not None:
             logger.error("Boot: mount %s reconnect to %s:%s failed: %s", interface, host, port, exc)
+
+    def _menu_reconnect(self) -> None:
+        """Menu -> Connection -> Reconnect: the same WiFi/app reconnect
+        `_reconnect_mount_interface()` already replays silently at boot,
+        but triggerable on demand and with real feedback on the panel --
+        for when the mount was off/out of range at boot and is now back,
+        without waiting for the next reboot or hunting for the Dev Tools
+        9600 code. Reuses `_connect_mount_wifi()`/`_connect_mount_app()`
+        directly: same indi_setprop sequence, same success/failure
+        message, same `mount_interface` persistence on success."""
+        interface = self.settings.get("mount_interface", "rj12")
+        if interface == "wifi":
+            self._connect_mount_wifi()
+        elif interface == "synscan_app":
+            self._connect_mount_app()
+        else:
+            label = dict(self.MOUNT_INTERFACES).get(interface, interface)
+            self._devtools_message([
+                f"{label} has no", "automatic reconnect yet", "see docs/WIRING.md",
+            ])
 
     def _connect_mount_wifi(self) -> None:
         """Dev Tools code 9600's "WiFi" choice. Points the already-running

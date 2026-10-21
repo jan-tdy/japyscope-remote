@@ -1126,6 +1126,58 @@ def test_devtools_9600_wifi_gives_up_after_repeated_connect_refusal(monkeypatch)
     finally: conn.close(); os.unlink(path)
 
 
+def test_menu_connection_shows_current_interface_and_reconnects(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        ui.state.screen = "MENU"; ui.state.index = 11; ui.handle(ENC_PUSH)
+        assert ui.state.screen == "CONNECTION"
+        assert ui.display.lines[0] == "Connection: WiFi (SynScan)"
+        ui.handle(ENC_PUSH)  # "Reconnect"
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.dev_message[0] == "Connecting via WiFi"
+        assert len(calls) == 4  # same indi_setprop sequence as Dev Tools 9600
+
+        # Returns to CONNECTION (not all the way back to IDLE), so the
+        # owner sees the result land right where they triggered it.
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "CONNECTION"
+        ui.handle("9")
+        assert ui.state.screen == "MENU" and ui.state.index == 11
+    finally: conn.close(); os.unlink(path)
+
+
+def test_menu_connection_rj12_has_no_reconnect_action():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 11; ui.handle(ENC_PUSH)
+        assert ui.display.lines[0] == "Connection: RJ12 serial"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "no" in ui.state.dev_message[0].lower()
+    finally: conn.close(); os.unlink(path)
+
+
+def test_menu_connection_bluetooth_explains_no_automated_reconnect_yet():
+    # No confirmed/tested _connect_mount_bluetooth() equivalent exists yet
+    # (see docs/WIRING.md) -- same reasoning as the boot-time reconnect.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_interface", "bluetooth")
+        ui.state.screen = "MENU"; ui.state.index = 11; ui.handle(ENC_PUSH)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert "no" in ui.state.dev_message[0].lower()
+        assert "WIRING.md" in " ".join(ui.state.dev_message)
+    finally: conn.close(); os.unlink(path)
+
+
 def test_boot_reconnects_saved_wifi_interface(monkeypatch):
     # Confirmed on hardware: mount_interface already says "wifi" and
     # mount_wifi_host is already saved from a previous Dev Tools 9600
@@ -1870,7 +1922,7 @@ def test_screen_transitions_are_always_a_full_refresh():
 
 
 def test_scroll_indicator_set_when_a_menu_does_not_fit_at_a_glance():
-    # MENU has 11 entries but only 5 rows are available for them (6
+    # MENU has 12 entries but only 5 rows are available for them (6
     # visible_rows minus 1 for the title, no footer) — it doesn't fit at
     # a glance, so render() should hand the display a scrollbar (see
     # ControllerUI._visible()'s docstring): (row_start=1, rows, start,
@@ -1878,7 +1930,7 @@ def test_scroll_indicator_set_when_a_menu_does_not_fit_at_a_glance():
     ui, conn, path = make_ui()
     try:
         ui._set("MENU", 0)
-        assert ui.display.scroll == (1, 5, 0, 11)
+        assert ui.display.scroll == (1, 5, 0, 12)
     finally: conn.close(); os.unlink(path)
 
 
@@ -1897,12 +1949,12 @@ def test_scroll_indicator_tracks_the_current_position_while_scrolling():
     ui, conn, path = make_ui()
     try:
         ui._set("MENU", 0)
-        assert ui.display.scroll == (1, 5, 0, 11)
+        assert ui.display.scroll == (1, 5, 0, 12)
 
         for _ in range(6):
             ui.handle(ENC_DOWN)
         assert ui.state.index == 6
-        assert ui.display.scroll == (1, 5, 6, 11)  # window scrolled to keep index 6 visible
+        assert ui.display.scroll == (1, 5, 6, 12)  # window scrolled to keep index 6 visible
     finally: conn.close(); os.unlink(path)
 
 
