@@ -557,7 +557,12 @@ def create_app(
         return render_template(
             "diagnostics.html",
             logs=log_text,
-            entries=parse_journal_entries(log_text),
+            # Newest-first for the structured list -- the raw log above
+            # stays oldest-on-top (the usual journalctl reading order);
+            # parsing first and reversing the resulting entries (rather
+            # than the raw lines) keeps each multi-line entry's own
+            # internal line order intact.
+            entries=list(reversed(parse_journal_entries(log_text))),
             selected_unit=unit_arg,
             selected_lines=lines,
         )

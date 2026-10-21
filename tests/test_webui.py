@@ -211,7 +211,35 @@ def test_diagnostics_requests_reverse_order_and_displays_oldest_first(tmp_path, 
     client, _ = authenticated_client(tmp_path)
     response = client.get("/diagnostics?unit=app&lines=50")
     body = response.data.decode("utf-8")
-    assert body.index("first") < body.index("second") < body.index("third")
+    # The raw log (id="log-output") keeps the usual oldest-on-top order.
+    raw_log = body[body.index('id="log-output"'):]
+    assert raw_log.index("first") < raw_log.index("second") < raw_log.index("third")
+
+
+def test_diagnostics_structured_entries_show_newest_first(tmp_path, monkeypatch):
+    # Unlike the raw log above, the structured/clickable entry list reads
+    # newest-first -- the most recent event is what someone checking
+    # Diagnostics almost always wants first, without scrolling.
+    from webui import app as app_module
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout=(
+                "Sep 20 12:00:03 pi japyscope-app[1]: third\n"
+                "Sep 20 12:00:02 pi japyscope-app[1]: second\n"
+                "Sep 20 12:00:01 pi japyscope-app[1]: first\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/diagnostics?unit=app&lines=50")
+    body = response.data.decode("utf-8")
+    structured = body[body.index('id="structured-logs"'):body.index('id="log-output"')]
+    assert structured.index("third") < structured.index("second") < structured.index("first")
 
 
 def test_diagnostics_uses_sudo_fallback_output(tmp_path, monkeypatch):
