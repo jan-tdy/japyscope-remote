@@ -82,6 +82,8 @@ class SimulatedIndiClient:
         elif direction == "E": self.status.az = (self.status.az + step) % 360
         elif direction == "W": self.status.az = (self.status.az - step) % 360
 
+    def stop_jog(self, direction: str) -> None: pass
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="JapyScope Remote hand controller")

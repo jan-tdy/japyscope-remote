@@ -18,10 +18,11 @@ import select
 import sys
 import termios
 import threading
+import time
 import tty
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, key_up
 from .keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,10 @@ _ESCAPE_RIGHT = "\x1b[C"
 _ESCAPE_LEFT = "\x1b[D"
 _POLL_TIMEOUT_S = 0.2
 _ESCAPE_FOLLOWUP_TIMEOUT_S = 0.01
+# Terminal input has no key-up event; infer release after auto-repeat would
+# normally have started and then gone quiet for a short interval.
+_SIMULATED_RELEASE_S = 0.65
+_JOG_KEYS = {"2", "4", "6", "8", ENC_UP, ENC_DOWN, JOY_LEFT, JOY_RIGHT}
 
 
 class SimulatorInput(InputHAL):
@@ -40,6 +45,8 @@ class SimulatorInput(InputHAL):
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
         self._old_settings = None
+        self._held_jog_key: Optional[str] = None
+        self._last_jog_event = 0.0
         try:
             self._fd = sys.stdin.fileno()
         except (OSError, ValueError, io.UnsupportedOperation):
@@ -114,9 +121,26 @@ class SimulatorInput(InputHAL):
 
     def poll(self, timeout: float = 0.1) -> Optional[str]:
         try:
-            key = self._queue.get(timeout=timeout)
+            key = self._queue.get(timeout=min(timeout, _SIMULATED_RELEASE_S))
         except queue.Empty:
-            return None
+            key = None
+        now = time.monotonic()
+        if self._held_jog_key is not None and now - self._last_jog_event >= _SIMULATED_RELEASE_S:
+            released = self._held_jog_key
+            self._held_jog_key = None
+            if key is not None:
+                self._queue.put(key)
+            return key_up(released)
+        if key in _JOG_KEYS:
+            if self._held_jog_key is not None and key != self._held_jog_key:
+                previous = key_up(self._held_jog_key)
+                self._held_jog_key = key
+                self._last_jog_event = now
+                # Return the prior release; the press remains queued for the next poll.
+                self._queue.put(key)
+                return previous
+            self._held_jog_key = key
+            self._last_jog_event = now
         return key
 
     def close(self) -> None:

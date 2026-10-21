@@ -3,10 +3,8 @@
 ``firmware/indi/manager.py``) via the ``indi_setprop``/``indi_getprop``
 command-line tools (part of the same ``indi-bin`` package as
 ``indiserver`` itself) rather than the ``PyIndi`` Python bindings --
-discrete, one-shot commands (sync once, goto once, park once, a single
-jog nudge) don't need a persistent event-driven client connection, and
-this avoids depending on PyIndi's async property-discovery callbacks and
-its API differences across versions. ``pyindi-client`` is still installed
+this avoids depending on PyIndi's async property-discovery callbacks
+and its API differences across versions. ``pyindi-client`` is installed
 (see ``install.sh``/``requirements-pyindi.lock``) but nothing in this
 module uses it.
 
@@ -39,11 +37,11 @@ not guessed from naming convention:
 - ``TELESCOPE_PARK`` (switch): ``PARK``/``UNPARK``.
 - ``TELESCOPE_MOTION_NS``/``TELESCOPE_MOTION_WE`` (switches):
   ``MOTION_NORTH``/``MOTION_SOUTH``, ``MOTION_WEST``/``MOTION_EAST``.
-- ``TELESCOPE_SLEW_RATE`` (switch): elements named ``"{rate}x"`` for
+- ``TELESCOPE_SLEW_RATE`` (switch): elements named ``"{index}x"`` for
   each of this driver's preset rates (1/2/4/8/16/32/64/128/600/800 --
-  ``SlewSpeeds`` in ``skywatcherAPIMount.cpp``) -- this project's own
-  ``SPEEDS`` tiers (``firmware/ui/controller.py``) are exactly the first
-  seven of these.
+  ``SlewSpeeds`` in ``skywatcherAPIMount.cpp``) -- labels show actual
+  rates while names are indices. The UI's 1-9 presets use the first nine
+  element names.
 - ``CONNECTION``/``CONNECTION_MODE``/``DEVICE_ADDRESS``: standard INDI
   properties, already used by ``firmware/ui/controller.py``'s
   ``_connect_mount_wifi()``.
@@ -65,15 +63,6 @@ from typing import Callable, Optional, Protocol
 from shared import astro
 
 logger = logging.getLogger(__name__)
-
-# How long one jog "nudge" holds the motion switch on before releasing it
-# -- unlike the property names above, this is a UX tuning choice, not
-# something confirmed from the driver source (it has no notion of a
-# "nudge"; TELESCOPE_MOTION_NS/WE just start/stop continuous motion at
-# whatever TELESCOPE_SLEW_RATE is selected). Adjust to taste once this
-# runs against real hardware.
-JOG_PULSE_SECONDS = 0.15
-
 
 class _SettingsLike(Protocol):
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]: ...
@@ -253,15 +242,17 @@ class IndiClient:
         self._setprop("TELESCOPE_PARK.UNPARK=On")
 
     def jog(self, direction: str, speed: int) -> None:
-        """Manual nudge in one of the four SynScan-style directions ("N",
-        "S", "E", or "W" — see docs/CODES.md), at one of the SPEEDS tiers
-        — maps to this driver's TELESCOPE_SLEW_RATE ("{speed}x") plus a
-        brief pulse of TELESCOPE_MOTION_NS/TELESCOPE_MOTION_WE."""
+        """Start continuous motion in one SynScan direction until stop_jog()."""
         jog_property = _JOG_PROPERTIES.get(direction)
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")
         axis_property, on_element = jog_property
         self._setprop(f"TELESCOPE_SLEW_RATE.{speed}x=On")
         self._setprop(f"{axis_property}.{on_element}=On")
-        time.sleep(JOG_PULSE_SECONDS)
+
+    def stop_jog(self, direction: str) -> None:
+        jog_property = _JOG_PROPERTIES.get(direction)
+        if jog_property is None:
+            raise ConnectionError(f"unknown jog direction: {direction!r}")
+        axis_property, on_element = jog_property
         self._setprop(f"{axis_property}.{on_element}=Off")
