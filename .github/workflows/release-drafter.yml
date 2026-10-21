@@ -1,0 +1,33 @@
+name: Release Drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
+  # Lets the draft be regenerated on demand — e.g. after relabeling an
+  # already-merged PR, which doesn't itself produce a push or pull_request
+  # event on main.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  update_release_draft:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      # release-drafter reads .github/release-drafter.yml from the PR's
+      # base branch, not its head branch, so on a `pull_request` event it
+      # 404s (and this step fails) until that file has landed on main at
+      # least once — including on the PR that first adds it. Non-blocking
+      # so that bootstrap run doesn't sit red forever; once main has the
+      # config, autolabeling on later PRs just works.
+      - uses: release-drafter/release-drafter@v7
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
