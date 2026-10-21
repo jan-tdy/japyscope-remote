@@ -111,7 +111,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL, key_up
+from .base import InputHAL, key_tap
 from .keys import ENC_DOWN, ENC_PUSH, ENC_UP
 
 logger = logging.getLogger(__name__)
@@ -208,14 +208,12 @@ class EncoderInput(InputHAL):
             self._detent_accum = 0
             emitted = ENC_UP if _CYCLE_FORWARD_IS_UP else ENC_DOWN
             logger.debug("encoder emits %s", emitted)
-            self._queue.put(emitted)
-            self._queue.put(key_up(emitted))
+            self._queue.put(key_tap(emitted))
         elif self._detent_accum <= -_STEPS_PER_DETENT:
             self._detent_accum = 0
             emitted = ENC_DOWN if _CYCLE_FORWARD_IS_UP else ENC_UP
             logger.debug("encoder emits %s", emitted)
-            self._queue.put(emitted)
-            self._queue.put(key_up(emitted))
+            self._queue.put(key_tap(emitted))
 
     def _scan_switch(self) -> None:
         GPIO = self._gpio
