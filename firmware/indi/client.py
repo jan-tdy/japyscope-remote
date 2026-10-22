@@ -30,6 +30,13 @@ not guessed from naming convention:
   ``SLEW`` slews and then goes idle, which would silently leave the
   mount not tracking despite this project's UI calling that screen
   "TRACK".
+- Sync points use ``ALIGNMENT_POINT_MANDATORY_NUMBERS``,
+  ``ALIGNMENT_POINTSET_ACTION`` and ``ALIGNMENT_POINTSET_COMMIT`` because
+  this driver forces its Alignment Subsystem active. The encoder direction
+  vector follows ``TelescopeDirectionVectorFromAltitudeAzimuth``; the
+  pointset size is read back after commit to confirm driver acceptance.
+  While parked, standard ``Sync()`` is used to preserve the driver's
+  encoder-zero calibration path rather than creating an alignment point.
 - ``EQUATORIAL_EOD_COORD`` is epoch-of-date ("EOD"/JNow), not J2000 --
   this project's catalogs and alignment stars are J2000, so
   ``_ra_dec_to_indi()`` precesses them first (``shared/astro.py``'s
@@ -54,6 +61,7 @@ guessed.
 from __future__ import annotations
 
 import logging
+import math
 import socket
 import subprocess
 import time
@@ -250,10 +258,12 @@ class IndiClient:
     def sync(self, ra: str, dec: str) -> None:
         """INDI Sync: tell the mount 'you are currently pointed at ra/dec'
         without moving — used for the startup park-confirmation flow (see
-        docs/ARCHITECTURE.md: 'No' -> sync) and manual alignment."""
+        docs/ARCHITECTURE.md: 'No' -> sync) and manual alignment. The
+        Skywatcher Alt-Az driver uses INDI's Alignment Subsystem, so an
+        unparked sync must append an encoder direction and sky coordinate
+        pair instead of only replacing EQUATORIAL_EOD_COORD."""
         ra_hours, dec_deg = self._ra_dec_to_indi(ra, dec)
-        self._setprop("ON_COORD_SET.SYNC=On")
-        self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
+        self._sync_eod(ra_hours, dec_deg)
         self._aligned = True
 
     def sync_alt_az(self, alt_deg: float, az_deg: float, latitude_deg: float, longitude_deg: float) -> None:
@@ -270,9 +280,77 @@ class IndiClient:
         double-apply precession and mispoint by the current ~0.37 degree
         offset (see the module docstring)."""
         ra_deg, dec_deg = astro.ra_dec_from_alt_az(alt_deg, az_deg, latitude_deg, longitude_deg, self.clock())
-        self._setprop("ON_COORD_SET.SYNC=On")
-        self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_deg / 15.0:.6f};DEC={dec_deg:.6f}")
+        self._sync_eod(ra_deg / 15.0, dec_deg)
         self._aligned = True
+
+    def _sync_eod(self, ra_hours: float, dec_deg: float) -> None:
+        """Record the current encoder direction against an EOD sky point.
+
+        The upstream Skywatcher driver uses a special Sync() path while
+        parked to calibrate its encoder zero and clear the alignment
+        database. Preserve that behavior through the standard telescope
+        sync properties; otherwise append a point using the same encoder
+        offsets and direction-vector convention as the driver."""
+        if self._getprop("TELESCOPE_PARK.PARK") == "On":
+            self._setprop("ON_COORD_SET.SYNC=On")
+            self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
+            return
+
+        try:
+            pointset_size = int(float(self._getprop("ALIGNMENT_POINTSET_SIZE.ALIGNMENT_POINTSET_SIZE")))
+        except ValueError as exc:
+            raise ConnectionError(f"could not read INDI alignment pointset size: {exc}") from exc
+
+        try:
+            # skywatcherAPIMount::Sync derives these angles from current
+            # encoder microsteps minus its configured axis and zero offsets.
+            az_steps = float(self._getprop("AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
+            alt_steps = float(self._getprop("AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
+            az_offset = float(self._getprop("AXIS_OFFSET.AZSteps"))
+            alt_offset = float(self._getprop("AXIS_OFFSET.ALSteps"))
+            az_scale = float(self._getprop("AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC"))
+            alt_scale = float(self._getprop("AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC"))
+            if az_scale <= 0 or alt_scale <= 0:
+                raise ValueError("encoder scale must be positive")
+            az_deg = ((az_steps - az_offset) / az_scale) / 3600.0 % 360.0
+            alt_deg = ((alt_steps - alt_offset) / alt_scale) / 3600.0
+        except (ValueError, ZeroDivisionError) as exc:
+            raise ConnectionError(f"could not read Skywatcher encoder direction for sync: {exc}") from exc
+
+        # INDI's TelescopeDirectionVectorFromAltitudeAzimuth uses a
+        # clockwise azimuth in a right-handed frame: x=cos(alt)cos(az),
+        # y=-cos(alt)sin(az), z=sin(alt).
+        az_rad = math.radians(az_deg)
+        alt_rad = math.radians(alt_deg)
+        vector_x = math.cos(alt_rad) * math.cos(az_rad)
+        vector_y = -math.cos(alt_rad) * math.sin(az_rad)
+        vector_z = math.sin(alt_rad)
+        julian_date = self.clock() / 86400.0 + 2440587.5
+        self._setprop(
+            "ALIGNMENT_POINT_MANDATORY_NUMBERS."
+            f"ALIGNMENT_POINT_ENTRY_OBSERVATION_JULIAN_DATE={julian_date:.8f};"
+            f"ALIGNMENT_POINT_ENTRY_RA={ra_hours:.8f};"
+            f"ALIGNMENT_POINT_ENTRY_DEC={dec_deg:.8f};"
+            f"ALIGNMENT_POINT_ENTRY_VECTOR_X={vector_x:.12f};"
+            f"ALIGNMENT_POINT_ENTRY_VECTOR_Y={vector_y:.12f};"
+            f"ALIGNMENT_POINT_ENTRY_VECTOR_Z={vector_z:.12f}"
+        )
+        self._setprop("ALIGNMENT_POINTSET_ACTION.APPEND=On")
+        self._setprop("ALIGNMENT_POINTSET_COMMIT.ALIGNMENT_POINTSET_COMMIT=On")
+
+        # indi_setprop only confirms that indiserver received the request.
+        # Confirm that the driver actually accepted and appended the point.
+        for _ in range(10):
+            try:
+                updated_size = int(float(self._getprop("ALIGNMENT_POINTSET_SIZE.ALIGNMENT_POINTSET_SIZE")))
+            except ValueError as exc:
+                raise ConnectionError(f"could not read INDI alignment pointset size after sync: {exc}") from exc
+            if updated_size > pointset_size:
+                return
+            time.sleep(0.2)
+        raise ConnectionError(
+            f"INDI driver did not append an alignment point (size remained {pointset_size})"
+        )
 
     def goto(self, ra: str, dec: str) -> None:
         """TRACK, not SLEW -- see the module docstring: SLEW would leave

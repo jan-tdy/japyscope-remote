@@ -27,24 +27,48 @@ def test_connect_raises_connection_error_when_refused(monkeypatch):
         make_client().connect()
 
 
-def test_sync_sets_coord_mode_then_sends_converted_ra_dec(monkeypatch):
+def test_sync_appends_alignment_point_for_converted_ra_dec(monkeypatch):
     calls = []
+    responses = {
+        "Skywatcher Alt-Az.TELESCOPE_PARK.PARK": "Off",
+        "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "324000",
+        "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "108000",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "0",
+        "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
+        "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
+    }
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "indi_setprop":
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_SIZE.ALIGNMENT_POINTSET_SIZE":
+            value = "1" if sum(c[0] == "indi_setprop" and "ALIGNMENT_POINTSET_COMMIT" in c[-1] for c in calls) == 0 else "2"
+            return subprocess.CompletedProcess(cmd, 0, stdout=value)
+        return subprocess.CompletedProcess(cmd, 0, stdout=responses[cmd[-1]])
+
     monkeypatch.setattr(
-        client_module.subprocess, "run",
-        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        client_module.subprocess, "run", fake_run,
     )
     epoch = 1700000000.0  # fixed clock -- precession depends on the current date
     c = make_client(clock=lambda: epoch)
     c.sync("16h41m41s", "+36°28′")
-    assert calls[0] == ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.ON_COORD_SET.SYNC=On"]
     ra_deg = (16 + 41 / 60 + 41 / 3600) * 15
     dec_deg = 36 + 28 / 60
     ra_hours, dec_deg = astro.precess_j2000_to_date(ra_deg, dec_deg, epoch)
     ra_hours /= 15
-    assert calls[1] == [
+    assert calls[0] == [
         "indi_setprop", "-h", "localhost", "-p", "7624",
-        f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}",
+        "Skywatcher Alt-Az.ALIGNMENT_POINT_MANDATORY_NUMBERS."
+        f"ALIGNMENT_POINT_ENTRY_OBSERVATION_JULIAN_DATE={1700000000.0 / 86400.0 + 2440587.5:.8f};"
+        f"ALIGNMENT_POINT_ENTRY_RA={ra_hours:.8f};ALIGNMENT_POINT_ENTRY_DEC={dec_deg:.8f};"
+        "ALIGNMENT_POINT_ENTRY_VECTOR_X=0.000000000000;"
+        "ALIGNMENT_POINT_ENTRY_VECTOR_Y=-0.866025403784;"
+        "ALIGNMENT_POINT_ENTRY_VECTOR_Z=0.500000000000",
     ]
+    assert calls[1][-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_ACTION.APPEND=On"
+    assert calls[2][-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_COMMIT.ALIGNMENT_POINTSET_COMMIT=On"
     assert c._aligned is True
 
 
@@ -204,22 +228,56 @@ def test_get_status_without_settings_reports_zero_alt_az(monkeypatch):
     assert status.parked is True
 
 
-def test_sync_alt_az_sets_coord_mode_then_sends_eod_ra_dec_without_double_precessing(monkeypatch):
+def test_sync_alt_az_appends_eod_point_without_double_precessing(monkeypatch):
     calls = []
+    responses = {
+        "Skywatcher Alt-Az.TELESCOPE_PARK.PARK": "Off",
+        "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "0",
+        "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "0",
+        "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
+        "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
+    }
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "indi_setprop":
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd[-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_SIZE.ALIGNMENT_POINTSET_SIZE":
+            value = "1" if sum(c[0] == "indi_setprop" and "ALIGNMENT_POINTSET_COMMIT" in c[-1] for c in calls) == 0 else "2"
+            return subprocess.CompletedProcess(cmd, 0, stdout=value)
+        return subprocess.CompletedProcess(cmd, 0, stdout=responses[cmd[-1]])
+
     monkeypatch.setattr(
-        client_module.subprocess, "run",
-        lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        client_module.subprocess, "run", fake_run,
     )
     epoch = 1700000000.0
     c = make_client(clock=lambda: epoch)
     c.sync_alt_az(45.0, 180.0, 48.0, 17.0)
-    assert calls[0] == ["indi_setprop", "-h", "localhost", "-p", "7624", "Skywatcher Alt-Az.ON_COORD_SET.SYNC=On"]
     ra_deg, dec_deg = astro.ra_dec_from_alt_az(45.0, 180.0, 48.0, 17.0, epoch)
-    assert calls[1] == [
-        "indi_setprop", "-h", "localhost", "-p", "7624",
-        f"Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA={ra_deg / 15.0:.6f};DEC={dec_deg:.6f}",
-    ]
-    assert c._aligned is True
+    assert calls[0][-1].startswith(
+        "Skywatcher Alt-Az.ALIGNMENT_POINT_MANDATORY_NUMBERS."
+        f"ALIGNMENT_POINT_ENTRY_OBSERVATION_JULIAN_DATE={epoch / 86400.0 + 2440587.5:.8f};"
+        f"ALIGNMENT_POINT_ENTRY_RA={ra_deg / 15.0:.8f};ALIGNMENT_POINT_ENTRY_DEC={dec_deg:.8f};"
+    )
+    assert calls[1][-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_ACTION.APPEND=On"
+    assert calls[2][-1] == "Skywatcher Alt-Az.ALIGNMENT_POINTSET_COMMIT.ALIGNMENT_POINTSET_COMMIT=On"
+
+
+def test_sync_while_parked_uses_driver_parked_sync_path(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "indi_setprop":
+            calls.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="On")
+
+    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
+    make_client(clock=lambda: 1700000000.0).sync("12", "+10")
+    assert calls[0] == "Skywatcher Alt-Az.ON_COORD_SET.SYNC=On"
+    assert calls[1].startswith("Skywatcher Alt-Az.EQUATORIAL_EOD_COORD.RA=")
 
 
 def test_set_park_position_sends_az_then_alt(monkeypatch):
