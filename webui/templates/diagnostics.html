@@ -99,9 +99,10 @@ function filterLogs() {
   logEntries.forEach(function(entry) {
     var unit = entry.querySelector('.log-unit').textContent;
     var message = entry.querySelector('.log-message').textContent;
+    var fullEntry = entry.querySelector('.log-raw').textContent;
     var level = entry.className.match(/\blog-(error|warning|info)\b/);
     var matches = level && selectedLevels.indexOf(level[1]) !== -1 &&
-      (unit + ' ' + message).toLocaleLowerCase().indexOf(query) !== -1;
+      (unit + ' ' + message + ' ' + fullEntry).toLocaleLowerCase().indexOf(query) !== -1;
     entry.hidden = !matches;
     if (matches) visibleCount += 1;
   });
