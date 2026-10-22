@@ -11,8 +11,8 @@ permalink: /architecture/
 | Area | Decision |
 |---|---|
 | Target HW | Raspberry Pi Zero W (armv6 — supports Raspberry Pi OS Lite **Bullseye, Bookworm, or Trixie, 32-bit/armhf**. Bullseye uses the legacy `wpa_supplicant`/hostapd path; Bookworm and Trixie both use NetworkManager profiles. `install.sh --no-ap` disables the setup hotspot's automatic boot-time fallback on any release, for a Pi whose Wi-Fi is already configured — the hotspot itself stays installed and can still be triggered manually.) |
-| Mount connector | **RJ12** (not RJ45) |
-| Display | **Confirmed: 2.13" e-paper** (250×122, SSD1680-family) — sized against the enclosure CAD (`japyscope_lid_3.step`, 20.9.2026). Firmware never hardcodes a resolution — see `firmware/hal/display/profiles.py`; 4.26" stays available as a fallback profile |
+| Mount connector | **RJ12**  |
+| Display | **2.13" e-paper**, OLED in future |
 | Input | 3×4 matrix keypad (stock SparkFun COM-14662, sticker legends only) + KY-040 rotary encoder, plus an **optional** external KY-023-style dual-axis joystick (`shared.db`'s `joystick_enabled`, off by default — see `docs/WIRING.md`/`docs/CODES.md`) as a drop-in alternative to the encoder plus manual N/S/E/W jogging |
 | Per-component dev/bring-up overrides | Keypad, encoder, display, backlight, mount, and (when enabled) joystick can each independently be real hardware or simulated (Web UI Settings page, `shared.db`'s `hw_sim_*` keys, read by `firmware/main.py`'s `resolve_simulation_flags()`) — e.g. keypad on real GPIO while the encoder isn't soldered yet. `--simulate` still forces everything simulated regardless (joystick included), for laptop-only dev. Requires restarting `japyscope-app.service` to take effect. |
 | Install | `install/install.sh` bootstraps a clean Raspberry Pi OS Bullseye, Bookworm, or Trixie Lite image — not a prebuilt SD image, Docker, or desktop installer |
