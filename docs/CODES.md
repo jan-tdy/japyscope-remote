@@ -4,88 +4,33 @@ title: On-device codes
 permalink: /codes/
 ---
 
-# JapyScope Remote — Codes Reference
-
-Living document — extend freely as new codes/diagnostics are introduced.
-Covers every "enter a code" flow on the device plus a maintainer-facing
-error/status code list for support and troubleshooting.
+# DevTools codes, Key Map, etc.
 
 ## Key map (physical 3×4 keypad + KY-040 encoder + optional external joystick)
 
 | Key | Meaning |
 |---|---|
-| 1 | **Encoder-up stand-in** (`ENC_UP`) wherever `_move()` is used — see below; also T9 letter entry ("abc") in SmartSearch, where `_move()` isn't in play |
-| 3 | **Force a full refresh** of the current screen (no state change) — see below; also T9 letter entry ("ghi") in SmartSearch, where it's excluded |
-| 2 | Jog Up — handled on `IDLE`/`ALIGN_JOG`/`TRACK` (see `firmware/ui/controller.py`'s `JOG_DIRECTIONS`/`_jog()`); a plain digit everywhere else |
-| 4 | Jog Left — same screens |
-| 6 | Jog Right — same screens |
-| 8 | Jog Down — same screens |
-| 7 | Jog speed (opens speed adjust) on IDLE/TRACK/ALIGN_JOG; **encoder-down stand-in** (`ENC_DOWN`) everywhere else `_move()` is used |
-| 5 | **Encoder-push stand-in** (`ENC_PUSH`) everywhere — see below; also T9 letter entry ("mno") in SmartSearch, where it's excluded |
-| 9 | **Back, one level — everywhere except inside SmartSearch text entry** (see below) |
-| 0 | digit "0" / T9 letter entry |
-| FN2 | reserved outside SmartSearch (home-screen easter egg); **inside SmartSearch: cancel/back out** |
-| BKSP | delete last character (text entry) |
+| 1 | Menu Up, "abc" in SmartSearch
+| 3 | Force full refresh, "ghi" in SmartSearch |
+| 2 | Jog Up, "def" in SmartSearch |
+| 4 | Jog Left, "jkl" in SmartSearch |
+| 6 | Jog Right, "pqrs" in SmartSearch |
+| 8 | Jog Down, "wxyz" in SmartSearch |
+| 7 | Menu Down, Jog speed, "tuv" in SmartSearch |
+| 5 | OK, "mno" in SmartSearch |
+| 9 | Back, "wxyz" in SmartSearch |
+| 0 | digit "0" |
+| FN2 | inside SmartSearch: cancel/back out |
+| BKSP | delete last character in SmartSearch |
 | Encoder rotate | scroll (menus, lists) |
 | Encoder push | open / select / confirm |
 
-Keypad "1"/"7"/"5" as encoder stand-ins ("1"/"7" in
-`ControllerUI._move()`, "5" at the top of `handle()`) are a temporary
-stopgap for the KY-040 rotary encoder's unreliable rotation decode (see
-`firmware/hal/input/encoder.py`'s module docstring) — "1"/"7" are a
-vertical pair on the keypad's left column (up/down), "5" is the center
-"OK" key below the 2/4/6/8 jog directions (select/confirm), together
-usable for full menu/list navigation whenever the real encoder
-misbehaves. "7" only falls back to `ENC_DOWN` outside IDLE, where it's
-already bound to opening speed adjust; "5" falls back to `ENC_PUSH`
-everywhere except TYPE (SmartSearch), where it's still a T9 letter key.
-
-Keypad "3" (`handle()`, top of the method) redraws the current screen
-with a forced full refresh — the only way to clear any ghosting left
-over from partial refreshes, since nothing clears it automatically.
-Excluded on TYPE, where it's still a T9 letter key ("ghi").
-
-Scrolling (`_move()`) always draws a fast partial refresh, never a
-forced full one, however many consecutive scrolls happen — only keypad
-"3" clears accumulated ghosting. A fixed "every Nth scroll is full"
-cadence, and later an idle flush shortly after scrolling stopped, both
-used to force one automatically; both were reported on hardware as an
-unwanted interruption to otherwise-smooth scrolling and were removed.
-
-### External joystick (optional — `docs/WIRING.md`)
-
-A KY-023-style dual-axis joystick module, if connected (`shared.db`'s
-`joystick_enabled`), is a second, independent source of the very same
-events above — see `firmware/hal/input/joystick.py` and `keys.py`:
-
-| Joystick input | Reuses / adds |
-|---|---|
-| Y-axis up/down | `ENC_UP`/`ENC_DOWN` — same as rotating the encoder (scroll menus/lists) |
-| Push button | `ENC_PUSH` — same as pressing the encoder (select/confirm) |
-| X-axis left/right | `JOY_LEFT`/`JOY_RIGHT` (new, joystick-only) — Jog Left/Right on `ALIGN_JOG`/`TRACK`, same as keypad 4/6 |
-
-It's a drop-in alternative to the encoder for navigation, and the more
-natural way to do the 4-directional jog above (keypad 2/4/6/8 double as
-digit-entry T9 keys everywhere else; the joystick's axes never do).
-
-**No diagonal jog**: a push deflected on both axes at once (e.g. up-and-right)
-is deliberately treated as no input rather than snapped to one axis — the
-mount only jogs one cardinal direction (N/S/E/W) at a time. Push the stick
-cleanly toward one direction (see `firmware/hal/input/joystick.py`'s
-`_direction_from_axes()`).
-
 ### SmartSearch T9 exception
 
-Everywhere else in the system, "9" always means "back, never an action" —
-this is a deliberate, load-bearing rule (state machine code in
-`firmware/ui/` relies on it). **Inside the SmartSearch/TYPE screen only**,
-this is flipped: "9" is a normal T9 letter key (classic-phone layout —
-`w/x/y/z/9`), and **FN2** becomes "cancel out of SmartSearch" instead. This
-was a deliberate v0 decision (16.9) to match old-phone muscle memory,
-overriding the original mockup's design. Do not "fix" this back without
-re-confirming with Ján — it looks inconsistent but is intentional.
+**Inside the SmartSearch/TYPE screen only**, this is flipped: "9" is a normal T9 letter key (classic-phone layout —
+`w/x/y/z/9`), and **FN2** becomes "cancel out of SmartSearch" instead. 
 
-Full T9 map (`firmware/hal/input/keys.py` order, letters per digit):
+## Full SmartSearch map
 
 | Key | Letters |
 |---|---|
@@ -97,50 +42,28 @@ Full T9 map (`firmware/hal/input/keys.py` order, letters per digit):
 | 6 | p q r s |
 | 7 | t u v |
 | 8 | w x y z |
-| 9 | w x y z — **SmartSearch-only exception** (everywhere else, 9 = back); yes, this duplicates key 8's letters, so w/x/y/z can be typed via either key — that's intentional, the point is giving 9 the "old phone" wxyz muscle memory without disturbing keys 1–8 |
+| 9 | w x y z |
 | 0 | 0 (digit only, no letters) |
 
 ## Dev Tools codes
 
-4-digit code entered via rotate-per-digit (Home → Dev Tools). The real
-implementation lives in `firmware/ui/controller.py` (`ControllerUI._devtools_code()`)
-— that's what runs on the device. `docs/mockup.html`'s `handleDevtools()`
-is a browser-only prototype of the same behavior, kept in sync for
-prototyping/demo purposes, but it is **not** a substitute for the firmware
-implementation and a code must not be marked functional in this table
-until it actually works in `firmware/ui/`. **Add new Dev Tools codes
-here as they're introduced**, and wire them into both
-`firmware/ui/controller.py` and the mockup — don't scatter magic numbers
-in `firmware/ui/` without a matching entry in this table.
-
 | Code | Action | Notes |
 |---|---|---|
 | `0000` | Exit Dev Tools | |
-| `0022` | Set repo | functional — opens repo selection (currently one option: `jan-tdy/japyscope-remote`); persists to `settings.update_repo`, read by `install/update.py` |
-| `0033` | Set update channel | functional — opens channel selection, Stable only / Stable + prereleases; persists to `settings.update_channel`, read by `install/update.py` (prerelease channel lists `/releases` and skips drafts instead of hitting `/releases/latest`) |
-| `0044` | SSH | functional — runs `systemctl enable --now ssh`, then shows the result plus IP/hostname and login user |
-| `1001` | Enable more INDI drivers (camera, focuser, etc.) | **coming soon** — placeholder message only, no drivers selectable yet |
-| `1111` | Restart INDI server | functional — calls `IndiServerManager.restart()` (via `ControllerUI.indi_manager`, wired from `firmware/main.py`); shows "unavailable" in `--simulate` mode, which has no managed indiserver |
-| `1234` | Show system info | functional — IP/hostname, uptime (`/proc/uptime`), INDI connection status (no fake version string — nothing exposes a real INDI version yet) |
-| `5000` | Launch Wi-Fi setup wizard | functional — same flow as a factory-reset Wi-Fi join |
-| `5001` | Switch Wi-Fi network | functional — picks between the Primary and Secondary Wi-Fi slots, runs `install/wifi-switch.sh` via sudo, and persists `settings.wifi_active_slot`. Configuring each slot's SSID/password is done in the Web UI's System page, not here — saving Secondary there only stores it, it never connects on its own, since it's often set up somewhere its network isn't in range yet; switching to it here is the explicit step that actually activates it, and selecting it before it's configured shows an error instead of attempting the switch. "Primary" shown as "(unknown)" is normal, not broken — it's only ever a known SSID if this device's Wi-Fi was configured through `/setup`; switching back to it never depends on knowing that, since it just means "stop overriding with Secondary" (see `install/wifi-switch.sh`'s own comment) |
-| `5555` | Select mount driver | functional — opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
-| `9600` | Select communication interface | functional — opens interface selection: RJ12 direct to mount, Bluetooth (SynScan), WiFi (SynScan), or SynScan/Stellarium app; persists to `settings.mount_interface`. Picking Bluetooth for the first time (nothing paired yet) instead scans and lets you pick the module off a list — see `9601` below. Picking WiFi or SynScan/Stellarium app needs a mount WiFi IP saved first (Web UI → System → "Mount WiFi (SynScan)" — `192.168.4.1` if the mount's module is in its own Access Point mode, its LAN IP if in Station mode); WiFi then points the already-running `indi_skywatcherAltAzMount` driver at that IP over UDP port 11880 via `indi_setprop` (the module is a transparent serial↔UDP bridge for the same SynScan protocol RJ12 carries) — confirmed against the driver's own upstream source. SynScan/Stellarium app instead tries, in order, the ports those apps are known to use (11881 SynScan Pro app, 11882 SynScan, 10001 Stellarium) and keeps the first one the driver actually connects on (checked via `indi_getprop` read-back, since a successful `indi_setprop CONNECTION.CONNECT=On` only means indiserver accepted the request, not that the driver reached anything) — **unlike every other property documented here, these three ports are not independently confirmed against this project's own hardware**, only tried in a reasonable order; a real protocol capture from one of those apps would let this be narrowed to the one that's actually right. RJ12/Bluetooth still need `/dev/serial0`/`/dev/rfcomm0` set on the driver manually (`docs/WIRING.md` has the exact `indi_setprop` commands) — there's no `_connect_mount_wifi()` equivalent for them yet. `firmware/indi/client.py`'s `IndiClient` (`get_status`/`sync`/`goto`/`park`/`jog`) is wired up via `indi_setprop`/`indi_getprop` and works the same regardless of which transport is active — that's the driver's mount-control properties, separate from its own connection setting. All of this (device/property names, including WiFi's `"Skywatcher Alt-Az"`/`CONNECTION_MODE`/`DEVICE_ADDRESS`/`CONNECTION`) is confirmed against the driver's upstream source (`indilib/indi`'s `skywatcherAPIMount.cpp` + the standard `Connection::TCP`/`Connection::Serial` plugins it uses), not guessed — still worth a live sanity check (`indi_getprop -h localhost "Skywatcher Alt-Az.*"`) on real hardware since a future driver version could rename something |
-| `9601` | Re-pair Bluetooth mount | functional — scans for nearby Bluetooth devices (~8s, `install/bluetooth-mount.sh scan` via sudo) and shows them on a pick list; selecting one pairs/trusts it and binds it to a persistent `/dev/rfcomm0` (`japyscope-rfcomm-mount.service`), then sets `settings.mount_interface` to `bluetooth`. Covers both the first pairing (also reachable via `9600`) and re-pairing a different/replaced module later. If pairing fails — most likely a module that needs a PIN this flow can't supply — it says so and falls back to pairing once manually over SSH (`sudo japyscope-bluetooth-mount pair <MAC>`), after which `9600`/`9601` find it already paired |
-| `9955` | Run custom script | functional — lists `.sh` scripts found in `{homepath}/custom` (`JAPYSCOPE_CUSTOM_SCRIPTS_DIR` env var overrides the directory) and runs the selected one via `/bin/sh`, fire-and-forget |
-| `9956` | Run official script | functional — lists and runs scripts published at [`github.com/japyscope/scripts`](https://github.com/japyscope/scripts) via `install/official-script-runner.sh` (`sudo japyscope-run-official-script list`/`run NAME`), fire-and-forget. **Not the same trust level as `9955`**: this fetches code from the internet and runs it as root, so every script is verified against that repo's own `SHA256SUMS` (fetched in the same request) before it's allowed to run — same trust model `install/update.py` already uses for OTA updates (checksum published alongside the artifact in the same repo), which protects against corruption/a MITM over the wire, not a compromised maintainer account. First script: `cleanup-old-rollbacks.sh`, prunes old release directories under `/opt/japyscope/releases`, keeping the two newest plus the single oldest (a known-good fallback floor) and never touching whatever `current` points at |
-| `9999` | Easter egg (astronomer/Moon joke) | functional, cosmetic only |
-| `4200` | Easter egg ("42.") | functional, cosmetic only |
-| `1957` | Easter egg (Sputnik) | functional, cosmetic only |
-| `0905` | Easter egg ("Protocol 09: the code stays free — JapySoft") | functional, cosmetic only |
-| anything else | Shows "Invalid code." | |
+| `0022` | Set repo | opens repo selection |
+| `0033` | Set update channel | opens channel selection, Stable only / Stable + prereleases |
+| `0044` | SSH | runs `systemctl enable --now ssh`, then shows the result plus IP/hostname and login user |
+| `1001` | Enable more INDI drivers (camera, focuser, etc.) | **coming soon** |
+| `1111` | Restart INDI server | |
+| `1234` | Show system info | IP/hostname, uptime (`/proc/uptime`), INDI connection status  |
+| `5000` | Launch Wi-Fi setup wizard | same flow as a factory-reset Wi-Fi join |
+| `5001` | Switch Wi-Fi network |  picks between the Primary and Secondary Wi-Fi slots |
+| `5555` | Select mount driver | opens driver selection (currently one option: Sky-Watcher Alt-Az GTi) |
+| `9600` | Select communication interface | opens interface selection: RJ12 direct to mount, Bluetooth (SynScan), WiFi (SynScan), or SynScan/Stellarium app |
+| `9601` | Re-pair Bluetooth mount | scans for nearby Bluetooth devices (~8s) and shows them on a pick list |
+| `9955` | Run custom script | lists `.sh` scripts found in `{homepath}/custom` |
+| `9956` | Run official script | lists and runs scripts published at [`github.com/japyscope/scripts`](https://github.com/japyscope/scripts) |
 
-None of the above currently require the sudo password — add the
-requirement here (and enforce it in `firmware/ui/`) the day a Dev Tools
-code becomes genuinely destructive (e.g. a future factory-reset code).
-`9955` runs arbitrary local `.sh` files, but only ones the device owner
-already placed in `{homepath}/custom` themselves — same trust level as
-having a shell on the device, not a remote-execution surface.
 
 ## Sudo password
 
@@ -164,13 +87,7 @@ having a shell on the device, not a remote-execution surface.
 - 5 wrong attempts → 30s lockout (see mockup `login-msg` flow, to be ported to `webui/app.py`).
 - Deliberately not high-security — same LAN-only, deterrent-level design as the sudo password.
 
-## Maintainer-facing status / error codes (new, beyond the mockup)
-
-These don't exist in the HTML mockup — added here for `docs/TROUBLESHOOTING.md`
-and systemd journal greps once the firmware app has real logging. Extend as
-new failure modes are found during bring-up. All of these are journal-only
-except `SYS-980` and `SYS-970`, which also get painted straight to the
-e-ink panel (see their rows below for why).
+## Maintainer-facing status / error codes
 
 | Code | Meaning | Where logged |
 |---|---|---|
