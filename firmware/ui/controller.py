@@ -928,6 +928,27 @@ class ControllerUI:
         self.runtime.set("parked", "false")
         return True
 
+    def _unpark_for_alignment(self, return_screen: str) -> bool:
+        """Entry gate for the two flows that move the mount and then teach
+        it where it is: the boot question's "No — sync now" and Menu ->
+        Alignment. `INDI::Telescope` rejects `TELESCOPE_MOTION_*` (jog) and
+        `EQUATORIAL_EOD_COORD` writes while parked, and the driver comes back
+        up parked after every restart — so from park every input in those
+        flows was dropped by the driver while this app happily carried on,
+        leaving a position nothing had actually confirmed.
+
+        Sent unconditionally rather than when this app's own `parked` flag
+        says so: the flag is stale at boot, and `unpark()` is a no-op on a
+        driver that is already unparked (it just logs "Telescope already
+        unparked"). Returns whether the driver took it; on failure the flow
+        stops here with a message instead of running where nothing works."""
+        if self._unpark():
+            return True
+        s = self.state
+        s.return_screen = return_screen
+        self._devtools_message(["Could not unpark mount", "check INDI connection", "before aligning"])
+        return False
+
     def _abort_slew(self) -> None:
         """Sends the mount's own abort command before leaving the SLEW
         screen — pressing "7" used to just switch screens without ever
@@ -1019,7 +1040,12 @@ class ControllerUI:
                     # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
                     # below, entered here with boot_sync set so confirming
                     # the point returns to IDLE instead of looping into the
-                    # full Manual (2 stars) menu flow.
+                    # full Manual (2 stars) menu flow. Unpark first: the
+                    # driver comes back up parked after every restart, and
+                    # both the jog below and the sync at the end of it are
+                    # rejected while parked.
+                    if not self._unpark_for_alignment("BOOT_PARK_CHECK"):
+                        return
                     s.boot_sync = True
                     s.align_points = 0
                     self._set("ALIGN_STAR_PICK")
@@ -1304,7 +1330,13 @@ class ControllerUI:
     def _select_menu(self) -> None:
         s = self.state
         if s.index == 0: self._set("TIME_SYNC")
-        elif s.index == 1: self._set("ALIGN_CHOOSE")
+        elif s.index == 1:
+            # Alignment jogs the mount to center each star and then syncs
+            # it; the driver rejects both while parked (see BOOT_PARK_CHECK's
+            # "No — sync now").
+            if not self._unpark_for_alignment("MENU"):
+                return
+            self._set("ALIGN_CHOOSE")
         elif s.index == 2:
             if self._truth(self.runtime.get("parked", "false")):
                 if self._unpark(): self._set("IDLE")
