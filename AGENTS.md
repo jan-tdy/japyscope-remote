@@ -43,3 +43,6 @@ Never leave a merged PR unlabeled; it silently drops out of the changelog sectio
 - Do not run all cca 2000 tests 2 times when not nesessary.
 - Review the final diff for correctness, unintended changes, and whitespace errors.
 - Report what was checked and any checks that could not be run.
+
+## Other instructions
+When you spot e.g. some TODO in code, file an ithub issue for it immediantely.
