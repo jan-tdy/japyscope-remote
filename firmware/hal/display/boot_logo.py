@@ -1,6 +1,6 @@
 """The JapyScope boot splash: an orbiting-planet mark over the "JapyScope"
 wordmark and a small caption, composed as a 1bpp bitmap. The orbit/planet/
-moon are plain pixel math (plotted directly, no image library — a one-time
+moon are plain pixel math (plotted directly, no image library, a one-time
 ~250x122 boot image has no performance budget to justify a fancier
 scanline-fill approach); the wordmark and caption are rendered through
 `rasterizer.py`'s shared TTF text helpers (see its module docstring for why
@@ -11,13 +11,6 @@ screens'. Drawn once at boot by `firmware/splash.py` via
 below), so the panel's last image doesn't read as a hung boot screen: e-ink
 holds whatever was drawn last with no power, so the two moments need to look
 distinguishable at a glance.
-
-Picked from 4 black-and-white concepts drawn up as an artifact (orbit
-wordmark, scope badge, telescope icon, dot-matrix "J") — this is variant 1.
-Sized and positioned against the confirmed 2.13" 250x122 canvas
-(`profiles.PROFILE_2_13`); re-check proportions if drawn against a very
-different profile (e.g. 4.26"), since the constants below are absolute
-pixels, not scaled from `profile.width`/`height`.
 
 Both bitmaps are fixed (no clock, no dynamic state), so neither
 `firmware/splash.py` nor `firmware/shutdown_splash.py` calls `render()`/
