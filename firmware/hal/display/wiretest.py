@@ -1,4 +1,4 @@
-"""Drives each e-paper control/SPI line from the Pi one at a time, so every
+"""UNMAINTAINED UNUSED CODE PLANNED FOR DEPRECATIONDrives each e-paper control/SPI line from the Pi one at a time, so every
 wire can be checked end to end with a multimeter at the driver board.
 
     sudo systemctl stop japyscope-app
