@@ -1,12 +1,12 @@
-"""Merges up to three independent input sources — keypad, KY-040 rotary
-encoder, and an optional external joystick — into the single InputHAL
+"""Merges up to three independent input sources (keypad, KY-040 rotary
+encoder, and an optional external joystick) into the single InputHAL
 stream firmware/ui/ consumes. Lets each be real or simulated on its own
-during hardware bring-up (see shared.db's hw_sim_keypad/hw_sim_encoder/
+during hardware assembly (see shared.db's hw_sim_keypad/hw_sim_encoder/
 hw_sim_joystick), rather than only supporting an all-or-nothing --simulate.
 
 joystick_source is optional (None) because, unlike the keypad and encoder,
 the joystick is an external accessory that may not be connected at all (see
-shared.db's joystick_enabled and firmware/hal/input/joystick.py) — when it's
+shared.db's joystick_enabled and firmware/hal/input/joystick.py) - when it's
 None, this behaves exactly as it did before the joystick existed.
 """
 from __future__ import annotations
