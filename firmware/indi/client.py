@@ -34,9 +34,8 @@ not guessed from naming convention:
   ``ALIGNMENT_POINTSET_ACTION`` and ``ALIGNMENT_POINTSET_COMMIT`` because
   this driver forces its Alignment Subsystem active. The encoder direction
   vector follows ``TelescopeDirectionVectorFromAltitudeAzimuth``; the
-  pointset size is read back after commit to confirm driver acceptance.
-  While parked, standard ``Sync()`` is used to preserve the driver's
-  encoder-zero calibration path rather than creating an alignment point.
+  pointset size is read back after commit to confirm driver acceptance,
+  whatever ``TELESCOPE_PARK`` says.
 - ``EQUATORIAL_EOD_COORD`` is epoch-of-date ("EOD"/JNow), not J2000 --
   this project's catalogs and alignment stars are J2000, so
   ``_ra_dec_to_indi()`` precesses them first (``shared/astro.py``'s
@@ -259,9 +258,9 @@ class IndiClient:
         """INDI Sync: tell the mount 'you are currently pointed at ra/dec'
         without moving — used for the startup park-confirmation flow (see
         docs/ARCHITECTURE.md: 'No' -> sync) and manual alignment. The
-        Skywatcher Alt-Az driver uses INDI's Alignment Subsystem, so an
-        unparked sync must append an encoder direction and sky coordinate
-        pair instead of only replacing EQUATORIAL_EOD_COORD."""
+        Skywatcher Alt-Az driver uses INDI's Alignment Subsystem, so a sync
+        appends an encoder direction and sky coordinate pair instead of only
+        replacing EQUATORIAL_EOD_COORD."""
         ra_hours, dec_deg = self._ra_dec_to_indi(ra, dec)
         self._sync_eod(ra_hours, dec_deg)
         self._aligned = True
@@ -286,16 +285,15 @@ class IndiClient:
     def _sync_eod(self, ra_hours: float, dec_deg: float) -> None:
         """Record the current encoder direction against an EOD sky point.
 
-        The upstream Skywatcher driver uses a special Sync() path while
-        parked to calibrate its encoder zero and clear the alignment
-        database. Preserve that behavior through the standard telescope
-        sync properties; otherwise append a point using the same encoder
-        offsets and direction-vector convention as the driver."""
-        if self._getprop("TELESCOPE_PARK.PARK") == "On":
-            self._setprop("ON_COORD_SET.SYNC=On")
-            self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
-            return
-
+        Always the same path, including when the driver reports parked. The
+        special case that wrote ``EQUATORIAL_EOD_COORD`` while parked (the
+        driver's own Sync, which recalibrates encoder zero and clears its
+        alignment database) returned without any read-back -- nothing proved
+        the driver had accepted it, so a sync from park could be reported as
+        done while the position was never confirmed. Appending a point is
+        confirmed by reading the pointset size back instead, parked or not.
+        Callers unpark first anyway: the mount can't jog while parked (see
+        ControllerUI._unpark_for_alignment())."""
         try:
             pointset_size = int(float(self._getprop("ALIGNMENT_POINTSET_SIZE.ALIGNMENT_POINTSET_SIZE")))
         except ValueError as exc:

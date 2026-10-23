@@ -181,7 +181,10 @@ def test_boot_sync_failure_does_not_continue():
         ui.handle(ENC_PUSH)  # pick a star
         ui.handle(ENC_PUSH)  # confirm it's centered -> sync fails
         assert ui.state.screen == "BOOT_SYNC_FAILED"
-        assert StateRepo(conn).get("parked") is None
+        # The flow unparks the driver up front (UnPark causes no motion), so
+        # `parked` is now honestly false -- but nothing synced, so `aligned`
+        # must stay unset: the position is still not trusted.
+        assert StateRepo(conn).get("parked") == "false"
         assert StateRepo(conn).get("aligned") is None
     finally: conn.close(); os.unlink(path)
 
@@ -198,6 +201,74 @@ def test_boot_sync_failure_retry_returns_to_star_pick():
         assert ui.state.screen == "ALIGN_STAR_PICK" and ui.state.boot_sync is True
         ui.handle("9")
         assert ui.state.screen == "BOOT_PARK_CHECK" and ui.state.boot_sync is False
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_sync_now_unparks_before_the_star_flow():
+    # The driver comes back up parked after every restart, and rejects both
+    # TELESCOPE_MOTION_* (the jog used to center the star) and coordinate
+    # writes while parked -- so from park this flow moved nothing and synced
+    # nothing while the app carried on as if it had. Unpark first; UnPark
+    # itself causes no motion.
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        real_unpark, real_jog = ui.indi.unpark, ui.indi.jog
+        ui.indi.unpark = lambda: (calls.append("unpark"), real_unpark())
+        ui.indi.jog = lambda *a: (calls.append("jog"), real_jog(*a))
+        ui.indi.parked = True
+        ui.start()
+        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # "No — sync now"
+        assert ui.state.screen == "ALIGN_STAR_PICK"
+        assert ui.indi.parked is False
+        assert StateRepo(conn).get("parked") == "false"
+        ui.handle(ENC_PUSH)  # pick a star
+        assert ui.state.screen == "ALIGN_JOG"
+        ui.handle("2")       # jog north to center it
+        assert calls == ["unpark", "jog"]  # the jog reaches an unparked driver
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_sync_now_stops_when_the_driver_cannot_be_unparked():
+    ui, conn, path = make_ui()
+    try:
+        def fail(): raise ConnectionError("driver unreachable")
+        ui.indi.unpark = fail
+        ui.start()
+        ui.handle(ENC_DOWN); ui.handle(ENC_PUSH)  # "No — sync now"
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.boot_sync is False
+        assert StateRepo(conn).get("parked") is None
+        ui.handle(ENC_PUSH)  # dismiss -> back to the boot question, can retry
+        assert ui.state.screen == "BOOT_PARK_CHECK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_menu_alignment_unparks_before_offering_stars():
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui._set("MENU", 1)  # Alignment's slot in ControllerUI.MENU
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "ALIGN_CHOOSE"
+        assert ui.indi.parked is False
+        assert StateRepo(conn).get("parked") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_menu_alignment_reports_a_failed_unpark():
+    ui, conn, path = make_ui()
+    try:
+        def fail(): raise ConnectionError("driver unreachable")
+        ui.indi.unpark = fail
+        StateRepo(conn).set("parked", "true")
+        ui._set("MENU", 1)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "DEV_MESSAGE"
+        assert ui.state.return_screen == "MENU"
+        ui.handle("9")  # dismiss -> back where the owner started
+        assert ui.state.screen == "MENU"
     finally: conn.close(); os.unlink(path)
 
 
