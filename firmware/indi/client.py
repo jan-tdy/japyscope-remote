@@ -363,23 +363,51 @@ class IndiClient:
         self._setprop("TELESCOPE_ABORT_MOTION.ABORT=On")
 
     def set_park_position(self, alt_deg: float, az_deg: float) -> None:
-        """Writes the mount's own park position (standard
-        INDI::Telescope TELESCOPE_PARK_POSITION property, PARK_AZ/
-        PARK_ALT elements in degrees -- confirmed via a live device
-        example of exactly this property/element naming on an INDI
-        Alt-Az-capable mount; not yet independently confirmed against
-        this project's own hardware, unlike WiFi's CONNECTION::TCP
-        properties -- worth a sanity check with `indi_getprop -h
-        localhost "Skywatcher Alt-Az.TELESCOPE_PARK_POSITION.*"` before
-        relying on it).
+        """Writes the mount's own park position (standard INDI::Telescope
+        TELESCOPE_PARK_POSITION property, PARK_AZ/PARK_ALT).
 
-        Without this, `park()` below slews to whatever position the
-        driver already has stored (its own default, or a stale one from
-        a previous session) -- not the Settings page's configured Park
-        Configuration, which this app otherwise never tells the driver
-        about. Call this immediately before `park()`."""
-        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_AZ={az_deg:.6f}")
-        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_ALT={alt_deg:.6f}")
+        Both elements are raw encoder counts for this driver, not degrees:
+        skywatcherAPIMount.cpp calls SetParkDataType(PARK_AZ_ALT_ENCODER)
+        (the property's "AZ Encoder"/"ALT Encoder" labels) and Park() slews
+        by ``GetAxis1Park() - CurrentEncoders``. Degrees were written
+        straight in until now, so a zenith park sent PARK_ALT=90 -- read as
+        90 counts, an arbitrary position rather than straight up.
+
+        Counts invert the driver's own current-position report
+        (skywatcherAPIMount::ReadScopeStatus):
+
+            degrees = (raw - axis_offset - zero) / microsteps_per_degree
+
+        with ``zero = RAW_MICROSTEPS - OFFSET_FROM_INITIAL`` per axis, both
+        read live here, so this assumes nothing about whether the mount's
+        position is trusted. Without a correct value, `park()` below slews
+        to whatever the driver already has stored (its own default, or a
+        stale one from a previous session) -- not the Settings page's
+        configured Park Configuration. Call this immediately before
+        `park()`; counts wrap in the hardware's 24-bit counter."""
+        try:
+            # skywatcherAPI's scale is per arcsecond; the conversion wants
+            # microsteps per degree.
+            az_zero = (
+                float(self._getprop("AXIS1_ENCODER_VALUES.RAW_MICROSTEPS"))
+                - float(self._getprop("AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
+            )
+            alt_zero = (
+                float(self._getprop("AXIS2_ENCODER_VALUES.RAW_MICROSTEPS"))
+                - float(self._getprop("AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
+            )
+            az_offset = float(self._getprop("AXIS_OFFSET.AZSteps"))
+            alt_offset = float(self._getprop("AXIS_OFFSET.ALSteps"))
+            az_scale = float(self._getprop("AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC")) * 3600.0
+            alt_scale = float(self._getprop("AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC")) * 3600.0
+            if az_scale <= 0 or alt_scale <= 0:
+                raise ValueError("encoder scale must be positive")
+            az_counts = int(round(az_zero + az_offset + az_deg * az_scale)) % 0x1000000
+            alt_counts = int(round(alt_zero + alt_offset + alt_deg * alt_scale)) % 0x1000000
+        except ValueError as exc:
+            raise ConnectionError(f"could not read Skywatcher encoder calibration for park: {exc}") from exc
+        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_AZ={az_counts}")
+        self._setprop(f"TELESCOPE_PARK_POSITION.PARK_ALT={alt_counts}")
 
     def park(self) -> None:
         """Only issues the park command -- on real hardware the driver's
