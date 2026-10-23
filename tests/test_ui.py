@@ -541,6 +541,44 @@ def test_unpark_failure_keeps_parked_screen(monkeypatch):
     finally: conn.close(); os.unlink(path)
 
 
+def test_home_from_parked_screen_leaves_the_mount_parked():
+    # Reaching the home screen from PARKED (to get Menu -> Wi-Fi / Web
+    # access, say) must not cost a motion command: nothing is sent to the
+    # mount, and this app's own `parked` flag stays true so unparking is
+    # still an explicit choice.
+    ui, conn, path = make_ui()
+    try:
+        sent = []
+        ui.indi.parked = True
+        ui.indi.unpark = lambda: sent.append("unpark")
+        StateRepo(conn).set("parked", "true")
+        ui._set("PARKED")
+        assert any("Home" in line for line in ui.display.lines)
+        for _ in range(3):  # Unpark -> Power off -> Dev Tools -> Home
+            ui.handle(ENC_DOWN)
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert sent == []
+        assert ui.indi.parked is True
+        assert StateRepo(conn).get("parked") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_back_key_from_parked_screen_goes_home():
+    # PARKED handled no keys at all besides the wheel, so the owner was
+    # stuck there -- every other screen treats "9" as its way out.
+    ui, conn, path = make_ui()
+    try:
+        ui.indi.parked = True
+        StateRepo(conn).set("parked", "true")
+        ui._set("PARKED")
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+        assert ui.indi.parked is True
+        assert StateRepo(conn).get("parked") == "true"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_unpark_from_menu_toggle_calls_indi_unpark():
     ui, conn, path = make_ui()
     try:
