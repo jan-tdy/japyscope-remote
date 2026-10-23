@@ -13,12 +13,6 @@ Waveshare's epd2in13_V3 driver and ESPHome's `2.13inv3` model (confirmed
 working on this exact board), the driver loads the waveform and drive
 voltages into registers at init and refreshes with 0x22=0xC7. Profiles
 without an entry in `_REGISTER_WAVEFORMS` keep the OTP refresh.
-
-Still unconfirmed on hardware: which way `_ROTATE_CLOCKWISE` should turn the
-logical canvas to reach the 2.13" profile's native portrait RAM axes
-(profiles.py). Kept import-safe (spidev/RPi.GPIO imported lazily) so the
-rest of the firmware can be developed and tested with --simulate on any
-machine.
 """
 from __future__ import annotations
 
