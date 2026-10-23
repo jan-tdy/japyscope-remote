@@ -7,8 +7,9 @@ shared.db.StateRepo.
 Bullseye's armhf ``indi-bin`` package contains the default driver executable
 used here. Its property names (used by ``firmware/indi/client.py``'s
 ``IndiClient``) are sourced from the driver's own upstream code, not
-guessed, but still want a live sanity check against a real mount before
-trusting them blind -- see that module's docstring.
+guessed.
+
+TODO: Add Indi restart option to WebUI
 """
 from __future__ import annotations
 
