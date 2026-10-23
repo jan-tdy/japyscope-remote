@@ -641,7 +641,7 @@ class ControllerUI:
         elif screen == "PARKED":
             lines = self._visible(
                 self._t("park.parked_title"),
-                [self._t("park.unpark"), self._t("park.power_off"), self._t("home.dev_tools")],
+                [self._t("park.unpark"), self._t("park.power_off"), self._t("home.dev_tools"), self._t("park.home")],
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
@@ -1162,10 +1162,24 @@ class ControllerUI:
                 self._set("PARKING")
             return
         if s.screen == "PARKED":
-            if self._move(key, 3): return
-            if key == ENC_PUSH and s.index == 0:
+            if self._move(key, 4): return
+            if key == "9":
+                # Same destination as the Home option below -- PARKED handled
+                # no keys at all apart from the wheel, so the owner was stuck
+                # here until they unparked or powered off.
+                self._set("IDLE")
+            elif key == ENC_PUSH and s.index == 0:
                 if self._unpark(): self._set("IDLE")
             elif key == ENC_PUSH and s.index == 1: self._shutdown()
+            elif key == ENC_PUSH and s.index == 3:
+                # Home while staying parked, with nothing sent to the mount:
+                # getting at the home screen (and through it Menu -> Wi-Fi /
+                # Web access for the Web UI code) must not cost a motion
+                # command. The driver keeps its own parked state and this
+                # app's `parked` flag stays true, so unparking is still an
+                # explicit choice -- Unpark above, or Menu -> Park / Unpark
+                # once on Home.
+                self._set("IDLE")
             elif key == ENC_PUSH:
                 # Dev Tools from PARKED without unparking first -- unparking
                 # is a real mount motion the owner shouldn't have to trigger
