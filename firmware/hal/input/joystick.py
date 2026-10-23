@@ -15,13 +15,7 @@ rotary encoder for menu navigation. Only the X-axis is unique to it
 (JOY_LEFT/JOY_RIGHT), used for manual N/S/E/W jogging (see
 firmware/ui/controller.py's ALIGN_JOG/TRACK handling).
 
-Pin numbers, the I2C address, and axis polarity below are placeholders —
-cross-check/update against docs/WIRING.md, the single source of truth, once
-wiring is finalized. As with encoder.py's quadrature decoding, converting
-continuous X/Y readings into discrete direction events (with a dead zone
-and hold-to-repeat, since jogging means holding the stick over rather than
-a single detent click) is a standard technique implemented for real here,
-even though it hasn't been exercised against physical hardware yet.
+HRRRRR STUP DETECTED!!!
 """
 from __future__ import annotations
 
