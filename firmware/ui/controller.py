@@ -1,9 +1,4 @@
 """Display-independent controller state machine.
-
-The screen names mirror the interactive mockup in ``docs/mockup.html``.  The
-state machine owns navigation and persistence; concrete display, input and
-INDI implementations are injected so the same code runs on a Pi or in
-``--simulate`` mode.
 """
 from __future__ import annotations
 
@@ -321,14 +316,6 @@ class ControllerUI:
             self._refresh_status()
         if s.transition_at and now >= s.transition_at and s.screen not in ("PARKING", "SLEW"):
             s.transition_at = 0
-            # Confirmed on hardware as an infinite loop ("Saving…" <->
-            # "Looks right?" repeating until the app crashed): this used to
-            # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
-            # enters ALIGN_SAVE on "Yes, done" — any further input (a
-            # queued ENC_PUSH, encoder noise) re-entered ALIGN_SAVE and
-            # the 1.5s timer fired again, forever. Alignment is actually
-            # complete by this point (`aligned` was already set true back
-            # in ALIGN_CONFIRM) — go to IDLE instead.
             if s.screen == "ALIGN_SAVE": self._set("IDLE")
         if s.screen == "WIFI_ACCESS":
             remaining = max(0, int(s.access_expires - now))
@@ -735,18 +722,6 @@ class ControllerUI:
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         """Scroll the current list/menu by one item on ENC_UP/ENC_DOWN.
-
-        Temporary stopgap while the physical KY-040 rotary encoder is
-        unreliable (see firmware/hal/input/encoder.py's debounce-tuning
-        saga): the matrix keypad's "1" and "7" — a vertical pair on its
-        left column — also act as ENC_UP/ENC_DOWN here, so menus stay
-        navigable by hand regardless of how the encoder is behaving.
-        Remove this once the encoder is replaced/fixed (an Adafruit
-        STEMMA QT I2C encoder is the planned hardware fix) or keep it as
-        a permanent secondary input if it proves useful either way.
-        "7" is excluded on IDLE, where it already opens SPEED_ADJUST (see
-        handle()'s IDLE case) — that binding wins there instead; "1" has
-        no such conflict anywhere and always works.
         """
         if key == "1":
             key = ENC_UP
@@ -858,19 +833,6 @@ class ControllerUI:
         confirmed on hardware as a real gap (the driver's own
         connection setting has no memory of a previous session's
         position; see `IndiClient.sync_alt_az()`'s docstring).
-
-        Confirmed on hardware: after a restart the driver comes back up
-        already reporting itself parked (``TELESCOPE_PARK.PARK=On``,
-        presumably restored from its own persisted park state) at
-        whatever position it considers its default/last park position
-        -- NOT the Settings page's configured one. `INDI::Telescope`
-        rejects sync/goto coordinate writes while parked, so sending
-        `sync_alt_az()` straight away is silently ignored and the
-        driver keeps reporting its own default position instead of the
-        one this app just "synced". Unparking first makes the sync
-        actually take effect; writing the park position and re-parking
-        afterwards leaves the driver parked at the now-correct
-        position, matching what the mount is physically doing.
 
         Returns whether it succeeded, so the caller only marks
         `parked`/advances the screen on success -- same pattern as
@@ -1713,16 +1675,6 @@ class ControllerUI:
         status poll fails after a reboot until the owner reopens Dev
         Tools and picks WiFi again manually.
 
-        RJ12 is left alone -- it's the driver's own default connection,
-        nothing to replay. Bluetooth is intentionally left alone too:
-        unlike WiFi/app (both wired through `CONNECTION::TCP` and
-        verified against the driver's upstream source -- see
-        docs/WIRING.md), there is no confirmed, tested
-        `_connect_mount_bluetooth()` equivalent yet; inventing one here
-        blind would risk silently sending the wrong `indi_setprop`
-        sequence at every boot instead of leaving Bluetooth as the
-        already-documented manual fallback (docs/WIRING.md).
-
         Logs and gives up quietly on failure -- the owner can still fix
         it via Dev Tools -- rather than blocking the whole boot on a
         mount that may simply be off or out of range right now."""
@@ -1751,16 +1703,7 @@ class ControllerUI:
             logger.error("Boot: mount %s reconnect to %s:%s failed: %s", interface, host, port, exc)
 
     def _sync_indi_location_and_time(self) -> None:
-        """Confirmed on hardware as a real gap: the driver's own
-        GEOGRAPHIC_COORD/TIME_UTC were never actually set (read back
-        as 0/0 and empty respectively) -- the Settings page's
-        latitude/longitude were only ever used locally (this app's own
-        alt/az math in shared/astro.py for the UI's display), never
-        told to the driver itself, which independently needs them for
-        its own internal alt/az<->RA/Dec conversions. A driver with no
-        idea where or "when" it is cannot report a correct position
-        regardless of what this app syncs to it.
-
+        """
         Best-effort, same as _reconnect_mount_interface(): logs and
         continues on failure rather than blocking boot on it."""
         try:
@@ -1801,22 +1744,7 @@ class ControllerUI:
         port, using indi_setprop directly (bundled with indi-bin, same
         subprocess style firmware/indi/client.py's IndiClient itself now
         uses for get_status/sync/goto/park/jog) — this is about which
-        transport the driver talks to the mount over, unrelated to that.
-
-        Seen on hardware as "returned non-zero exit status 2" -- per
-        indi_setprop's own source (tools/setINDIproperty.c), exit code 2
-        isn't just a malformed property spec, it's also what
-        openINDIServer() raises on a plain connect() failure to
-        indiserver. Omitting -h/-p (as this used to) makes indi_setprop
-        default to localhost:7624, which happens to match
-        firmware/indi/manager.py's own default -- but any real driver
-        restart (Dev Tools INDI restart, or indiserver just not finished
-        coming up yet after boot) leaves a window where the socket isn't
-        accepting connections yet, so this now (a) targets the same
-        host/port firmware.indi.client.IndiClient itself actually
-        connects to instead of relying on indi_setprop's defaults lining
-        up by coincidence, and (b) retries briefly instead of failing on
-        the first transient refusal."""
+        transport the driver talks to the mount over, unrelated to that."""
         host = self.settings.get("mount_wifi_host", "")
         if not host:
             self._devtools_message([
