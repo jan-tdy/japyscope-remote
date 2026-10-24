@@ -28,7 +28,7 @@ as an EQDIRECT cable).
 | 3 | GND | shifter HV GND + LV GND (shared) | GND |
 | 4 | EXPD-/NC | — | not wired |
 | 5 | data | shifter HV2 → LV2 | GPIO15 (RXD) or GPIO14 (TXD) |
-| 6 | +12V | — | **never connec to shifter or Pi** |
+| 6 | +12V | — | **never connect to shifter or Pi** |
 
 Shifter HV-VCC → Pi 5V (physical pin 2/4). Shifter LV-VCC → Pi 3V3
 (physical pin 1). TX/RX direction is the only ambiguity and swapping it is
