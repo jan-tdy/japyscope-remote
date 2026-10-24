@@ -299,8 +299,8 @@ class IndiClient:
             # encoder microsteps minus its configured axis and zero offsets.
             az_steps = float(self._getprop("AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
             alt_steps = float(self._getprop("AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
-            az_offset = float(self._getprop("AXIS_OFFSET.AZSteps"))
-            alt_offset = float(self._getprop("AXIS_OFFSET.ALSteps"))
+            az_offset = float(self._getprop("AXIS_OFFSET.AZEncoder"))
+            alt_offset = float(self._getprop("AXIS_OFFSET.ALEncoder"))
             az_scale = float(self._getprop("AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC"))
             alt_scale = float(self._getprop("AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC"))
             if az_scale <= 0 or alt_scale <= 0:
@@ -389,8 +389,8 @@ class IndiClient:
                 float(self._getprop("AXIS2_ENCODER_VALUES.RAW_MICROSTEPS"))
                 - float(self._getprop("AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL"))
             )
-            az_offset = float(self._getprop("AXIS_OFFSET.AZSteps"))
-            alt_offset = float(self._getprop("AXIS_OFFSET.ALSteps"))
+            az_offset = float(self._getprop("AXIS_OFFSET.AZEncoder"))
+            alt_offset = float(self._getprop("AXIS_OFFSET.ALEncoder"))
             az_scale = float(self._getprop("AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC")) * 3600.0
             alt_scale = float(self._getprop("AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC")) * 3600.0
             if az_scale <= 0 or alt_scale <= 0:

@@ -33,8 +33,8 @@ def test_sync_appends_alignment_point_for_converted_ra_dec(monkeypatch):
         "Skywatcher Alt-Az.TELESCOPE_PARK.PARK": "Off",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "324000",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "108000",
-        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
-        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZEncoder": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALEncoder": "0",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
     }
@@ -234,8 +234,8 @@ def test_sync_alt_az_appends_eod_point_without_double_precessing(monkeypatch):
         "Skywatcher Alt-Az.TELESCOPE_PARK.PARK": "Off",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "0",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "0",
-        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
-        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZEncoder": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALEncoder": "0",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
     }
@@ -277,8 +277,8 @@ def test_sync_while_parked_still_appends_and_confirms(monkeypatch):
         "Skywatcher Alt-Az.TELESCOPE_PARK.PARK": "On",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "324000",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "108000",
-        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
-        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZEncoder": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALEncoder": "0",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1",
     }
@@ -316,8 +316,8 @@ def test_set_park_position_converts_degrees_to_encoder_counts(monkeypatch):
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.OFFSET_FROM_INITIAL": "1061688",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.RAW_MICROSTEPS": "8721650",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.OFFSET_FROM_INITIAL": "333042",
-        "Skywatcher Alt-Az.AXIS_OFFSET.AZSteps": "0",
-        "Skywatcher Alt-Az.AXIS_OFFSET.ALSteps": "-100",
+        "Skywatcher Alt-Az.AXIS_OFFSET.AZEncoder": "0",
+        "Skywatcher Alt-Az.AXIS_OFFSET.ALEncoder": "-100",
         "Skywatcher Alt-Az.AXIS1_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1.52777777777778",
         "Skywatcher Alt-Az.AXIS2_ENCODER_VALUES.MICROSTEPS_PER_ARCSEC": "1.52777777777778",
     }
