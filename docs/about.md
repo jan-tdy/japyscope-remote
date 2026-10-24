@@ -7,7 +7,7 @@ permalink: /about/
 <article class="content">
   <span class="eyebrow">Overview</span>
   <h1>What is JapyScope?</h1>
-  <p>JapyScope Remote is a Raspberry Pi Zero W-based hand controller for GoTo telescope mounts (not limited to Dobsonian telescopes, but primary made for them). It connects via RJ12/Bluetooth/Wi-Fi and currently uses INDI to control the mount.</p>
+  <p>JapyScope Remote is a Raspberry Pi Zero W-based hand controller for GoTo telescope mounts (not limited to Dobsonian telescopes, but primary made for them). It connects via RJ12/Wi-Fi and currently uses INDI to control the mount.</p>
   <h2>What you get</h2>
   <ul>
     <li>An e-paper (OLED in future) controller interface with keypad and side wheel.</li>
