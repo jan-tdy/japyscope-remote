@@ -11,7 +11,7 @@ def make_input(
 ) -> InputHAL:
     """Build the keypad, encoder, and (optionally) joystick sources
     independently, so any of them can be real GPIO/I2C while the others are
-    still keyboard-simulated during assemly (see shared.db's
+    still keyboard-simulated during assembly (see shared.db's
     hw_sim_keypad/hw_sim_encoder/hw_sim_joystick).
 
     joystick_simulated is None when the external joystick accessory isn't
