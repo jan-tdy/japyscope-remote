@@ -12,7 +12,7 @@ file (not a second copy elsewhere) as each build phase confirms real pins.
 ## Mount connection (RJ12)
 {: #mount-connection}
 
-The controller connects directly to the mount's **RJ12** "Hand Control" port(Also supports Bluetooth and Wi-Fi, see below) and speaks the
+The controller connects directly to the mount's **RJ12** "Hand Control" port(Also supports Wi-Fi, see below) and speaks the
 Sky-Watcher Motor Controller Command Set protocol directly (same principle
 as an EQDIRECT cable).
 
