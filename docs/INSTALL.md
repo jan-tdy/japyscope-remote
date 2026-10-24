@@ -85,7 +85,8 @@ credentials, then reconnect the client device to that network. The password is
 passed directly to the OS network manager; it is not stored in the JapyScope database.
 
 Generate a Web UI access code on the controller under **Menu → Wi-Fi / Web
-Access**, then open `http://{IP}:8080/` (or the Pi's IP address).
+Access**, then open `http://{IP}:8080/`.
+Replace {IP} with the device's IP (get it via Router, Dev Tools 1234, etc.), or if you bought the device from us, it is JapyScope_{SN}.local (hostname) where {SN} is the serial number.
 Five bad codes cause a 30-second per-client lockout.
 
 ## Development simulation
