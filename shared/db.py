@@ -85,10 +85,10 @@ DEFAULT_SETTINGS = {
     "longitude": "0.0",
     "elevation_m": "0",
     "timezone": "UTC",
-    "park_mode": "zenith",  # zenith | home | custom
-    "park_alt": "45",
-    "park_az": "180",
-    "backlight_r": "1",  # index into ("Off","Med","High")
+    "park_mode": "custom",  # zenith | home | custom
+    "park_alt": "0",
+    "park_az": "0",
+    "backlight_r": "0",  # index into ("Off","Med","High")
     "backlight_g": "0",
     "backlight_b": "0",
     "language": "en",  # see firmware/ui/i18n.py LANGUAGES for supported codes
