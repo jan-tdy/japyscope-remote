@@ -186,27 +186,25 @@ class IndiClient:
 
     def _setprop(self, spec: str) -> None:
         # TEMPORARY DIAGNOSTIC LOGGING -- for the jog/abort "sometimes does
-        # nothing" report. Shows exact wall-clock timing and the CLI's own
-        # exit code/stderr for every property write, at DEBUG
-        # (JAPYSCOPE_LOG_LEVEL=DEBUG, no systemd unit edit needed -- see
-        # firmware/main.py's --log-level help). Revert this block (and the
-        # matching one in _getprop(), jog()/stop_jog()/abort(), and
-        # firmware/ui/controller.py's _jog()/_stop_jog_axis()/
-        # _best_effort_abort()) once the real cause is found.
+        # nothing" report. Shows exact wall-clock timing and outcome for
+        # every property write, at DEBUG (JAPYSCOPE_LOG_LEVEL=DEBUG, no
+        # systemd unit edit needed -- see firmware/main.py's --log-level
+        # help). Deliberately doesn't log `spec`/stdout/stderr themselves
+        # (CodeQL flags that path as clear-text logging of command data) --
+        # timing + success/failure is enough to correlate against the
+        # direction/axis/key already logged one layer up in jog()/
+        # stop_jog()/abort() and controller.py's _jog()/_stop_jog_axis()/
+        # _best_effort_abort()/handle(). Revert this block (and those)
+        # once the real cause is found.
         start = time.monotonic()
         try:
-            result = subprocess.run(
+            subprocess.run(
                 ["indi_setprop", "-h", self.host, "-p", str(self.port), f"{self.device}.{spec}"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
-            logger.debug(
-                "DIAG indi_setprop %s OK in %.3fs (stdout=%r stderr=%r)",
-                spec, time.monotonic() - start, (result.stdout or "").strip(), (result.stderr or "").strip(),
-            )
+            logger.debug("DIAG indi_setprop OK in %.3fs", time.monotonic() - start)
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug(
-                "DIAG indi_setprop %s FAILED after %.3fs: %s", spec, time.monotonic() - start, exc,
-            )
+            logger.debug("DIAG indi_setprop FAILED after %.3fs", time.monotonic() - start)
             raise ConnectionError(f"indi_setprop {self.device}.{spec} failed: {exc}") from exc
 
     def _getprop(self, spec: str) -> str:
@@ -217,14 +215,9 @@ class IndiClient:
                 ["indi_getprop", "-1", "-h", self.host, "-p", str(self.port), f"{self.device}.{spec}"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
-            logger.debug(
-                "DIAG indi_getprop %s OK in %.3fs -> %r (stderr=%r)",
-                spec, time.monotonic() - start, (result.stdout or "").strip(), (result.stderr or "").strip(),
-            )
+            logger.debug("DIAG indi_getprop OK in %.3fs", time.monotonic() - start)
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug(
-                "DIAG indi_getprop %s FAILED after %.3fs: %s", spec, time.monotonic() - start, exc,
-            )
+            logger.debug("DIAG indi_getprop FAILED after %.3fs", time.monotonic() - start)
             raise ConnectionError(f"indi_getprop {self.device}.{spec} failed: {exc}") from exc
         return result.stdout.strip()
 
