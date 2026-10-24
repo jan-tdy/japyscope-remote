@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# An currently UNMAINTAINED code, in future will be refractored and used(propably).
+
 # Provisions JapyScope onto an SD card from ANOTHER computer, via a USB
 # card reader — no need to boot the Pi Zero W, attach a keyboard, or SSH
 # in first. Run this on a Linux host (needs root, loop-free block device

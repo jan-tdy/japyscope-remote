@@ -1,11 +1,4 @@
 """Display size/controller presets.
-
-The panel is confirmed as 2.13" (see docs/ARCHITECTURE.md — settled once the
-enclosure CAD, sized around a 2.13" module, existed). Every part of the
-firmware that draws to the screen must still go through a DisplayProfile
-rather than assuming a resolution, so switching panels later stays a
-one-line config change; 4.26" is kept available for that reason.
-
 Select via the JAPYSCOPE_DISPLAY_PROFILE env var (defaults to "2.13in").
 """
 from __future__ import annotations

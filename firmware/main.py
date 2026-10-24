@@ -23,14 +23,7 @@ from shared.db import DEFAULT_DB_PATH, HARDWARE_COMPONENTS, SettingsRepo, db_ses
 def _show_fatal_error(display, code: str, detail: str) -> None:
     """Best-effort: paint a maintainer code (docs/CODES.md) straight to the
     e-ink panel on a fatal failure, bypassing the DB-backed ControllerUI
-    entirely. Deliberately still attempted when the failure IS the SD card
-    going read-only: the panel's SPI writes are hardware I/O, independent
-    of the filesystem, so this keeps working exactly when the DB doesn't —
-    and e-ink holds the image with no power, so the code stays legible on
-    an unattended device (Piconcillo) even through a crash-restart loop,
-    until someone can reach it. Swallows its own failures: this only ever
-    runs while already handling a worse one, and must never raise a new
-    traceback over it."""
+    entirely."""
     if display is None:
         return
     try:

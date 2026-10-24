@@ -1,6 +1,4 @@
-"""Key codes shared by every input backend and by firmware/ui/. These match
-the codes already used throughout the HTML mockup 1:1, so porting mockup
-screen logic to Python is a direct translation.
+"""Key codes shared by every input backend and by firmware/ui/.
 """
 from __future__ import annotations
 

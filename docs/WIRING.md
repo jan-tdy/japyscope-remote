@@ -9,16 +9,10 @@ permalink: /wiring/
 Single source of truth for how the Raspberry Pi Zero W is wired. Update this
 file (not a second copy elsewhere) as each build phase confirms real pins.
 
-Status: **Fáza 1beta / 1** — most pin numbers below are the firmware's
-current defaults (`firmware/hal/*/keypad.py`,
-`firmware/hal/display/epaper.py`, `firmware/hal/input/joystick.py`), not yet
-verified against a soldered board. Cross-check before trusting a pin.
-
-## Mount connection (RJ12, not RJ45)
+## Mount connection (RJ12)
 {: #mount-connection}
 
-The controller connects directly to the mount's **RJ12** "Hand Control" port
-— this bypasses the stock SynScan hand controller entirely and speaks the
+The controller connects directly to the mount's **RJ12** "Hand Control" port(Also supports Wi-Fi, see below) and speaks the
 Sky-Watcher Motor Controller Command Set protocol directly (same principle
 as an EQDIRECT cable).
 
@@ -27,10 +21,6 @@ as an EQDIRECT cable).
 - Pi Zero W UART (`/dev/serial0`) ↔ level shifter ↔ RJ12 pins carrying
   TX/RX/GND.
 
-**Confirmed** (Fáza 1beta), clip facing down / contacts up / counted left to
-right, through a 4-channel level shifter (HV side = 5V mount, LV side =
-3.3V Pi):
-
 | RJ12 pin | Signal | Via | Pi pin |
 |---|---|---|---|
 | 1 | EXPD+ | — | not wired |
@@ -38,7 +28,7 @@ right, through a 4-channel level shifter (HV side = 5V mount, LV side =
 | 3 | GND | shifter HV GND + LV GND (shared) | GND |
 | 4 | EXPD-/NC | — | not wired |
 | 5 | data | shifter HV2 → LV2 | GPIO15 (RXD) or GPIO14 (TXD) |
-| 6 | +12V | — | **not wired — never to shifter or Pi** |
+| 6 | +12V | — | **never connect to shifter or Pi** |
 
 Shifter HV-VCC → Pi 5V (physical pin 2/4). Shifter LV-VCC → Pi 3V3
 (physical pin 1). TX/RX direction is the only ambiguity and swapping it is
@@ -46,57 +36,6 @@ harmless — if the mount doesn't respond, swap pins 2/5 at the Pi end.
 
 Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
 do not connect pin 6 (+12V) to the level shifter or Pi.
-
-### Optional: Bluetooth instead of the RJ12 cable
-{: #mount-bluetooth}
-
-Ján's 16" Sky-Watcher Flextube Dobson (an older, now-discontinued series)
-has a built-in Bluetooth module. If — and only if — that module is a
-transparent SPP (Serial Port Profile) link carrying the same SynScan serial
-protocol the RJ12 port carries (confirm this before relying on it; some
-factory BT dongles only talk to the SynScan Pro phone app's own framing,
-not a plain serial pass-through), it can replace the RJ12/level-shifter
-wiring above entirely — which also removes the one metal path tying the
-controller's ground to the mount's, a candidate fix for the ground-loop
-issue seen on this setup.
-
-Pairing is done from the device itself — Dev Tools code `9600` (or `9601`
-to re-pair later) scans for nearby Bluetooth devices for a few seconds and
-shows them on a pick list; selecting one pairs/trusts it and binds it to a
-persistent `/dev/rfcomm0` via `japyscope-rfcomm-mount.service`, so it
-survives reboots. No MAC address typing on the 3x4 keypad required — see
-`docs/CODES.md`.
-
-This works automatically for modules that use "Just Works" Secure Simple
-Pairing (no PIN prompt), which covers most modern Bluetooth Classic SPP
-modules. If pairing fails there — most likely a module that still needs a
-PIN this flow can't supply — the Dev Tools screen says so, and it falls
-back to a one-time manual pairing over SSH:
-
-```
-sudo japyscope-bluetooth-mount pair AA:BB:CC:DD:EE:FF
-```
-
-(`bluetoothctl`, `agent on`, `pair <MAC>`, answering the PIN prompt,
-pairs it with BlueZ directly — the script finds it already paired
-afterwards.) `sudo japyscope-bluetooth-mount unpair` reverses either path.
-
-**Not yet wired end-to-end**: picking Bluetooth there only records the
-intent — unlike WiFi (below), nothing yet points the
-`indi_skywatcherAltAzMount` driver's own connection at `/dev/rfcomm0`
-instead of `/dev/serial0` for it (`firmware/indi/client.py`'s
-`IndiClient` itself — `get_status`/`sync`/`goto`/`park`/`jog` — is wired
-up via `indi_setprop`/`indi_getprop`, but that's the driver's mount-
-control properties, not its own serial-port connection setting). Until a
-`_connect_mount_bluetooth()` equivalent of `_connect_mount_wifi()` below
-lands, switch the driver's `DEVICE_PORT` manually on this port after
-pairing (`indi_setprop "Skywatcher Alt-Az.DEVICE_PORT.PORT=/dev/rfcomm0"`,
-then `CONNECTION_MODE.CONNECTION_SERIAL=On`).
-
-Trade-offs vs. the wired RJ12 link: higher latency, occasional dropped
-connections (BT SPP), and the module draws its own power from the mount —
-worth confirming before committing to it as the primary link rather than a
-ground-loop workaround.
 
 ### Optional: WiFi (SynScan) instead of RJ12/Bluetooth
 
@@ -129,19 +68,15 @@ The device name (`"Skywatcher Alt-Az"` — note the lowercase "w", not
 what the `indi_skywatcherAltAzMount` binary is built from — plus the
 standard `INDI::Connection::TCP` plugin it uses, `libs/indibase/
 connectionplugins/connectiontcp.cpp`), not just guessed from naming
-convention. Still worth a sanity check against a live session before
-relying on it on real hardware —
-`indi_getprop -h localhost "Skywatcher Alt-Az.*"` against a running
-`indiserver` + `indi_skywatcherAltAzMount` session — since upstream could
-change the name in a future driver version.
+convention.
 
 Never run the SynScan Pro phone app and this at the same time against the
-same mount — they'll fight over the same connection.
+same mount, they'll fight over the same connection.
 
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
 {: #keypad}
 
-Stickers-only key legend, no physical modification to the keypad itself.
+Stickers-only key legend.
 Matrix scan pins (BCM numbering, `firmware/hal/input/keypad.py`):
 
 | Signal | BCM pin |
@@ -163,7 +98,7 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 | Row 3 | 7 | 8 | 9 |
 | Row 4 | FN2 | 0 | BKSP |
 
-## Rotary encoder (KY-040)
+## Rotary encoder (KY-040, Adafruit in future)
 {: #rotary-encoder}
 
 | Signal | BCM pin |
@@ -171,9 +106,6 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 | CLK | 16 |
 | DT | 12 |
 | SW (push) | 7 |
-
-Also needs a printed D-shaft knob for the KY-040 shaft (JLC3DP, per project
-notes) — not a wiring item, tracked here as a reminder for the enclosure BOM.
 
 ## External joystick (optional, KY-023-style)
 {: #joystick}
@@ -225,27 +157,4 @@ as a fallback profile). SPI wiring is the same regardless of panel size
 
 ## Backlight (custom RGB edge-lighting)
 
-Not a bonded/commercial frontlight — a custom JapySoft side/edge-mounted RGB
-LED solution (2× 5mm LED per side of the display, per project notes).
-
-**Switching mechanism confirmed**: plain GPIO drive — each 5mm LED wired
-with its own series current-limiting resistor straight to a Pi Zero W GPIO
-pin, no MOSFET and no dedicated LED driver IC. Off/Med/High per channel
-(R/G/B) is done with software PWM on those GPIO pins, not separate
-resistor values.
-
-**TODO**: exact GPIO pin assignment per channel/LED and resistor values —
-update this table once wired, and update
-`firmware/hal/display/epaper.py::set_backlight()` (currently a stub) to
-drive them.
-
-## Power / enclosure notes (not wiring, kept here for context)
-
-- No battery in the enclosure.
-- Bottom face: cable pass-through, mounting, joystick cable (external
-  joystick module, not enclosure-mounted — see "External joystick" above),
-  power connector.
-- Magnetic dock: 4× 6×2mm magnets, bracket glued to the OTA tube (16" tube
-  only for now), matching through-holes (not pockets) in the enclosure back
-  — required as genuine through-holes because JLC3DP prints unattended (no
-  manual pause-to-insert-magnet step).
+PLANNED FOR DEPRECATION/CHANGE

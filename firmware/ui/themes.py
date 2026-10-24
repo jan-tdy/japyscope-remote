@@ -8,6 +8,10 @@ rasterizer will honor `invert_row` once it exists — see
 `firmware/hal/display/epaper.py`). Non-invert themes mark the row with text
 alone (an arrow prefix, or brackets around it) so they work even before that
 rasterizer is implemented.
+
+TODO: Add more interface themes
+TODO: Add option for user to have custom interface themes
+TODO: Add button-layout customization feature, just like interface themes
 """
 from __future__ import annotations
 

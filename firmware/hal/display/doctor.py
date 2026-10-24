@@ -1,4 +1,5 @@
-"""Hands-off e-paper diagnosis for the Pi-driven Seeed 2.13" board: no
+"""UNMAINTAINED OLD FILE, PLANNED FOR DEPRECATION
+Hands-off e-paper diagnosis for the Pi-driven Seeed 2.13" board: no
 multimeter, no key presses, one verdict at the end.
 
     sudo systemctl stop japyscope-app

@@ -51,11 +51,6 @@ not guessed from naming convention:
 - ``CONNECTION``/``CONNECTION_MODE``/``DEVICE_ADDRESS``: standard INDI
   properties, already used by ``firmware/ui/controller.py``'s
   ``_connect_mount_wifi()``.
-
-Still worth a live sanity check against real hardware
-(``indi_getprop -h localhost "Skywatcher Alt-Az.*"``) since a future
-driver version could rename something -- but this is sourced, not
-guessed.
 """
 from __future__ import annotations
 

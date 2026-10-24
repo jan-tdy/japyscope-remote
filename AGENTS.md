@@ -37,18 +37,12 @@ This is production firmware for a real device, not a demo or a sandbox. PR descr
 
 Never leave a merged PR unlabeled; it silently drops out of the changelog sections.
 
-## INDI property changes
-
-`indi_setprop` exiting 0 only means the message reached indiserver -- it is not confirmation the driver accepted or acted on it. Before treating any new property write as working:
-
-- Read the property back with `indi_getprop` (or dump the whole device with `indi_getprop -h <host> "<device>.*.*"`) and confirm the value actually changed -- not just that the call didn't raise.
-- Check whether the property depends on driver-side state this app doesn't control yet: `TELESCOPE_PARK`, the Alignment Subsystem (`ALIGNMENT_SUBSYSTEM_ACTIVE`, `ALIGNMENT_POINTSET_SIZE`), `GEOGRAPHIC_COORD`/`TIME_UTC` being set at all. A write can be silently ignored by driver-side logic without any error surfacing to this app.
-- Don't assume a property documented for `INDI::Telescope` in general works the same way on this specific driver -- e.g. `indi_skywatcherAltAzMount` uses the Alignment Subsystem for sync, not a plain coordinate overwrite; `TELESCOPE_PARK_POSITION` may be in raw/sentinel units rather than degrees. Confirm against this driver's actual readback, not the base class docs.
-- When fixing a "does nothing"/"nothing changed" report, get a full property dump from the real device first (`indi_getprop -h <host> "<device>.*.*"`) and diff it across the action instead of guessing from source/docs alone.
-- Don't guess the fix and present it as confirmed. If a driver's actual behavior (property units, whether a subsystem like Alignment is active, what a sync/park command really does) isn't verifiable from the code or docs in hand, say so and ask the device owner to run a specific diagnostic command (e.g. the `indi_getprop` dump above) instead of shipping a plausible-sounding guess -- a guess that silently mispoints or mis-syncs a real, physically moving mount is worse than admitting uncertainty and asking.
-
 ## Verification
 
 - Run the relevant existing checks for changed code when practical.
+- Do not run all cca 2000 tests 2 times when not necessary.
 - Review the final diff for correctness, unintended changes, and whitespace errors.
 - Report what was checked and any checks that could not be run.
+
+## Other instructions
+When you spot e.g. some TODO or smillar notice in code, file a GitHub issue for it immediately.

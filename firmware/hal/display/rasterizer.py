@@ -17,12 +17,6 @@ blocks, and Roboto's glyph set covers Slovak natively (ť ľ č š ž ý á í �
 ä ô and friends), so firmware/ui/i18n.py's "sk" strings no longer need any
 accent-folding fallback.
 
-Pillow is a real dependency now (requirements.txt) — Pillow 12 dropped
-Python 3.9 (Raspberry Pi OS Bullseye's version), so a Pi still on Bullseye
-needs to either upgrade to Bookworm/Trixie or pin an older
-(3.9-compatible) Pillow itself; this project doesn't carry that pin. See
-docs/TROUBLESHOOTING.md.
-
 Pillow's own import is noticeably slow on the Pi Zero W's single ARMv6
 core, so it's imported lazily (inside `_font()`/`draw_text()`, not at
 module level) rather than paid by everyone who imports this module just

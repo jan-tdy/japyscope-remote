@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 SESAME_URL = "https://cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?{query}"
 
+# Wow! Hope that internet search is relly fully implemeted
 
 @dataclass(frozen=True)
 class SearchResult:
