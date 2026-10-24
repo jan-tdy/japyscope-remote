@@ -28,7 +28,7 @@ permalink: /codes/
 ### SmartSearch T9 exception
 
 **Inside the SmartSearch/TYPE screen only**, this is flipped: "9" is a normal T9 letter key (classic-phone layout —
-`w/x/y/z/9`), and **FN2** becomes "cancel out of SmartSearch" instead. 
+`w/x/y/z`), and **FN2** becomes "cancel out of SmartSearch" instead. 
 
 ## Full SmartSearch map
 
