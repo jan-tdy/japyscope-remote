@@ -1,7 +1,7 @@
 """Backlight HAL interface, separate from DisplayHAL because the custom
 JapySoft RGB edge-lighting is physically independent wiring (its own GPIO
 pins, not the display's SPI bus) that can be wired up on its own schedule
-during assembling. See shared.db's hw_sim_display/hw_sim_backlight settings TODO: REDO FOR OLED.
+during assembly. See shared.db's hw_sim_display/hw_sim_backlight settings TODO: REDO FOR OLED.
 """
 from __future__ import annotations
 
