@@ -750,6 +750,10 @@ class ControllerUI:
             return False
         axis = JOG_AXES[direction]
         axis_state = self._jog_axis_state(axis)
+        logger.debug(  # TEMPORARY
+            "DIAG _jog() key=%r direction=%s momentary=%s current_axis_direction=%r blocked_key=%r",
+            key, direction, momentary, axis_state.direction, axis_state.blocked_key,
+        )
         if key == axis_state.blocked_key:
             return True
         if axis_state.direction:
@@ -772,6 +776,7 @@ class ControllerUI:
         return True
 
     def _best_effort_abort(self) -> bool:
+        logger.debug("DIAG _best_effort_abort() called at %.3f", self.clock())  # TEMPORARY
         try:
             self.indi.abort()
             return True
@@ -782,6 +787,10 @@ class ControllerUI:
     def _stop_jog_axis(self, axis: str, reason: str = "key released") -> bool:
         axis_state = self._jog_axis_state(axis)
         direction = axis_state.direction
+        logger.debug(  # TEMPORARY
+            "DIAG _stop_jog_axis() axis=%s reason=%r current_direction=%r at %.3f",
+            axis, reason, direction, self.clock(),
+        )
         if not direction:
             return True
         try:
@@ -955,6 +964,14 @@ class ControllerUI:
         self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
 
     def handle(self, key: str) -> None:
+        # TEMPORARY: key omitted on SUDO_SET -- that screen reads ENC_UP/
+        # ENC_DOWN/ENC_PUSH directly to build the sudo password digit by
+        # digit (_digits()), so logging the raw key there would let
+        # anyone reading DEBUG logs reconstruct it.
+        if self.state.screen == "SUDO_SET":
+            logger.debug("DIAG handle() screen=SUDO_SET at %.3f", self.clock())
+        else:
+            logger.debug("DIAG handle() key=%r screen=%s at %.3f", key, self.state.screen, self.clock())
         s = self.state
         tap_key = tapped_key(key)
         momentary = tap_key is not None
