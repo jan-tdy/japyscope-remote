@@ -40,9 +40,9 @@ Never leave a merged PR unlabeled; it silently drops out of the changelog sectio
 ## Verification
 
 - Run the relevant existing checks for changed code when practical.
-- Do not run all cca 2000 tests 2 times when not nesessary.
+- Do not run all cca 2000 tests 2 times when not necessary.
 - Review the final diff for correctness, unintended changes, and whitespace errors.
 - Report what was checked and any checks that could not be run.
 
 ## Other instructions
-When you spot e.g. some TODO in code, file an ithub issue for it immediantely.
+When you spot e.g. some TODO or smillar notice in code, file a GitHub issue for it immediately.
