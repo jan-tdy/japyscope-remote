@@ -4,6 +4,7 @@ right now", not for actually pointing the mount (the INDI driver does its
 own math for that). Self-contained (no astropy/skyfield — too heavy for a
 Pi Zero and not already a dependency); this is the standard low-precision
 GMST -> local sidereal time -> hour angle -> altitude formula.
+TODO: Make it working (it even says big altitude for invisible objects)
 """
 from __future__ import annotations
 
