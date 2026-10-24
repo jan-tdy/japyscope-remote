@@ -5,7 +5,7 @@ permalink: /update/
 ---
 # Summary
 
-To update, check for update in Web UI.
+To update, use the Web UI’s “Check for update now” button.
 
 # OTA updates and rollback
 
