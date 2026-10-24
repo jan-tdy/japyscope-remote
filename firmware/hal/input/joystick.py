@@ -15,7 +15,7 @@ rotary encoder for menu navigation. Only the X-axis is unique to it
 (JOY_LEFT/JOY_RIGHT), used for manual N/S/E/W jogging (see
 firmware/ui/controller.py's ALIGN_JOG/TRACK handling).
 
-HRRRRR STUP DETECTED!!!
+HRRRRR STUB DETECTED!!!
 """
 from __future__ import annotations
 
