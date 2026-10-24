@@ -964,7 +964,14 @@ class ControllerUI:
         self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
 
     def handle(self, key: str) -> None:
-        logger.debug("DIAG handle() key=%r screen=%s at %.3f", key, self.state.screen, self.clock())  # TEMPORARY
+        # TEMPORARY: key omitted on SUDO_SET -- that screen reads ENC_UP/
+        # ENC_DOWN/ENC_PUSH directly to build the sudo password digit by
+        # digit (_digits()), so logging the raw key there would let
+        # anyone reading DEBUG logs reconstruct it.
+        if self.state.screen == "SUDO_SET":
+            logger.debug("DIAG handle() screen=SUDO_SET at %.3f", self.clock())
+        else:
+            logger.debug("DIAG handle() key=%r screen=%s at %.3f", key, self.state.screen, self.clock())
         s = self.state
         tap_key = tapped_key(key)
         momentary = tap_key is not None
