@@ -8,6 +8,11 @@ categories:
   - title: '🐛 Fixes'
     labels:
       - bug
+  - title: '🔒 Security'
+    labels:
+      - security
+      - vulnerability
+      - critical
   # Docs-only changes (README, docs/*.md, CLAUDE.md, etc.) -- no code, so
   # neither a fix nor a feature. Without its own category these fall
   # through to the un-categorized "What's Changed" list above every
@@ -32,6 +37,9 @@ version-resolver:
   patch:
     labels:
       - bug
+      - security
+      - vulnerability
+      - critical
       - dependencies
       - documentation
   default: patch
@@ -53,6 +61,13 @@ autolabeler:
     title:
       - '/^fix(\(.+\))?!?:/i'
       - '/^fix\b/i'
+  - label: security
+    branch:
+      - '/^(security|vulnerability|vuln|critical)\/.+/i'
+    title:
+      - '/^(security|vulnerability|vuln|critical)(\(.+\))?!?:/i'
+      - '/^(fix|patch|secure|harden)(.*)(security|vulnerability|vuln|critical)/i'
+      - '/^(fix|patch|address|resolve).*\b(security|vulnerability|vuln|critical)\b/i'
   # Dependabot already labels its own PRs "dependencies"; this also
   # catches manual version bump PRs ("Bump X to Y") by title/branch.
   - label: dependencies
