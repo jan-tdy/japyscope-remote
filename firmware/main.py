@@ -23,14 +23,7 @@ from shared.db import DEFAULT_DB_PATH, HARDWARE_COMPONENTS, SettingsRepo, db_ses
 def _show_fatal_error(display, code: str, detail: str) -> None:
     """Best-effort: paint a maintainer code (docs/CODES.md) straight to the
     e-ink panel on a fatal failure, bypassing the DB-backed ControllerUI
-    entirely. Deliberately still attempted when the failure IS the SD card
-    going read-only: the panel's SPI writes are hardware I/O, independent
-    of the filesystem, so this keeps working exactly when the DB doesn't —
-    and e-ink holds the image with no power, so the code stays legible on
-    an unattended device (Piconcillo) even through a crash-restart loop,
-    until someone can reach it. Swallows its own failures: this only ever
-    runs while already handling a worse one, and must never raise a new
-    traceback over it."""
+    entirely."""
     if display is None:
         return
     try:
@@ -69,8 +62,14 @@ class SimulatedIndiClient:
     def connect(self) -> None: pass
     def disconnect(self) -> None: pass
     def sync(self, ra: str, dec: str) -> None: self.status.aligned = True; self.status.ra = ra; self.status.dec = dec
+    def sync_alt_az(self, alt_deg: float, az_deg: float, latitude_deg: float, longitude_deg: float) -> None:
+        self.status.aligned = True; self.status.alt = alt_deg; self.status.az = az_deg
     def goto(self, ra: str, dec: str) -> None: self.status.ra = ra; self.status.dec = dec; self.status.tracking = True
+    def set_park_position(self, alt_deg: float, az_deg: float) -> None:
+        self.status.alt = alt_deg; self.status.az = az_deg
     def park(self) -> None: self.status.parked = True
+    def unpark(self) -> None: self.status.parked = False
+    def abort(self) -> None: self.status.tracking = False
     def get_status(self) -> MountStatus: return self.status
 
     def jog(self, direction: str, speed: int) -> None:
@@ -79,6 +78,8 @@ class SimulatedIndiClient:
         elif direction == "S": self.status.alt = max(-90.0, self.status.alt - step)
         elif direction == "E": self.status.az = (self.status.az + step) % 360
         elif direction == "W": self.status.az = (self.status.az - step) % 360
+
+    def stop_jog(self, direction: str) -> None: pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -135,7 +136,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             input_hal = make_input(flags["keypad"], flags["encoder"], joystick_simulated)
             backlight = make_backlight(flags["backlight"])
             manager = None if flags["mount"] else IndiServerManager(driver_binary=args.driver)
-            indi = SimulatedIndiClient() if flags["mount"] else IndiClient()
+            indi = SimulatedIndiClient() if flags["mount"] else IndiClient(settings=settings)
             if manager is not None:
                 manager.start()
                 connect_indi(indi)
@@ -172,6 +173,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         _show_fatal_error(display, "SYS-970", str(exc))
         return 1
     finally:
+        stop_motion = getattr(ui, "stop_motion", None)
+        if stop_motion is not None:
+            stop_motion()
         if input_hal is not None:
             input_hal.close()
         if indi is not None:

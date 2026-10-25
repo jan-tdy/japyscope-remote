@@ -317,7 +317,7 @@
         <div class="enc-zone" data-key="ENC_DOWN">▼</div>
       </div>
     </div>
-    <div class="device-caption">JapyScope Remote — HW mockup, v0.7<br>2.13&Prime; e-ink, 250×122 (SSD1680) · side wheel: scroll = rotate · click = push</div>
+    <div class="device-caption">JapyScope Remote Mockup - NOT UPDATED/MAINTAINED<br>2.13</div>
   </div>
 
   <div class="col-info">
@@ -345,9 +345,6 @@
 
 <div class="tab-panel" id="tab-webui">
   <div class="webui-page">
-    <h1>JapyScope Remote — Web UI</h1>
-    <p class="muted">Screen draft, v1 (no mount control). Raspberry Pi OS Lite + INDI. Plain server-rendered HTML, deliberately undesigned. Logs in with the code shown on the controller, and shares its catalog with it — try generating a code on the Hand Controller tab, then log in here.</p>
-
     <nav id="wu-nav"></nav>
     <hr>
 
@@ -595,6 +592,7 @@
       homeIndex:0, menuIndex:0, alignIndex:0, alignMoreIndex:0, alignConfirmIndex:0, parkConfirmIndex:0, parkedIndex:0, speed:1, starIdx:0,
       backlight:{R:1, G:0, B:0}, backlightChanIndex:0, backlightAutoOff:false, lastActivity:Date.now(),
       driverIndex:0, interfaceIndex:0, repoIndex:0, channelIndex:0, scriptIndex:0, wifiSwitchIndex:0,
+      btPaired:false, btScanResults:[], btScanIndex:0,
       sudoDigits:[null,null,null,null], sudoPos:0, sudoCurrent:0,
       slewWarnings:[], slewWarnBack:"IDLE",
       listItems:[], listIndex:0, listTitle:"", catIndex:0,
@@ -713,6 +711,7 @@
       case "CHANNEL_SELECT": return renderChannelSelect();
       case "SCRIPT_SELECT": return renderScriptSelect();
       case "WIFI_SWITCH_SELECT": return renderWifiSwitchSelect();
+      case "BT_SCAN_SELECT": return renderBtScanSelect();
       case "SUDO_SET": return renderSudoSet();
       default: return setLines(["?"]);
     }
@@ -1030,6 +1029,7 @@
       case "REPO_SELECT": return handleRepoSelect(key);
       case "CHANNEL_SELECT": return handleChannelSelect(key);
       case "WIFI_SWITCH_SELECT": return handleWifiSwitchSelect(key);
+      case "BT_SCAN_SELECT": return handleBtScanSelect(key);
       case "SCRIPT_SELECT": return handleScriptSelect(key);
       case "SUDO_SET": return handleSudoSet(key);
       default: return;
@@ -1404,9 +1404,49 @@
     if(key === "ENC_DOWN"){ st.interfaceIndex = (st.interfaceIndex+1)%n; return render(); }
     if(key === "9"){ st.screen = "IDLE"; return render(); }
     if(key === "ENC_PUSH"){
+      if(INTERFACES[st.interfaceIndex].indexOf("Bluetooth") === 0 && !st.btPaired){
+        return startBluetoothScan();
+      }
       logAction("Interface selected: "+INTERFACES[st.interfaceIndex]);
       st.screen = "IDLE";
       return render();
+    }
+  }
+
+  function startBluetoothScan(){
+    logAction("Dev Tools: scanning for Bluetooth devices");
+    setLines(["Scanning Bluetooth...", "(about 8 seconds)"]);
+    addTimer(setTimeout(function(){
+      st.btScanResults = ["SynScan Mount (demo)"];
+      st.btScanIndex = 0;
+      st.screen = "BT_SCAN_SELECT";
+      render();
+    }, 1800));
+  }
+
+  function renderBtScanSelect(){
+    var lines = ["Select Bluetooth device"];
+    if(st.btScanResults.length === 0) return setLines(lines.concat(["(none found)"]));
+    st.btScanResults.forEach(function(d,i){ lines.push((i===st.btScanIndex?"&gt; ":"  ")+d); });
+    setLines(lines);
+  }
+
+  function handleBtScanSelect(key){
+    var n = st.btScanResults.length;
+    if(key === "9"){ st.screen = "IDLE"; return render(); }
+    if(n === 0) return;
+    if(key === "ENC_UP"){ st.btScanIndex = (st.btScanIndex+n-1)%n; return render(); }
+    if(key === "ENC_DOWN"){ st.btScanIndex = (st.btScanIndex+1)%n; return render(); }
+    if(key === "ENC_PUSH"){
+      var device = st.btScanResults[st.btScanIndex];
+      logAction("Pairing with: "+device);
+      setLines(["Pairing...", "", "<span class=\"dim\">…</span>"]);
+      addTimer(setTimeout(function(){
+        st.btPaired = true;
+        setLines(["Paired: "+device, "Bluetooth is now the", "active mount interface"]);
+        addTimer(setTimeout(function(){ st.screen="IDLE"; render(); }, 2200));
+      }, 1200));
+      return;
     }
   }
 
@@ -1624,6 +1664,8 @@
         } else if(code === "9600"){
           logAction("Dev Tools: select communication interface");
           addTimer(setTimeout(function(){ st.interfaceIndex=0; st.screen="IFACE_SELECT"; render(); }, 300));
+        } else if(code === "9601"){
+          addTimer(setTimeout(function(){ startBluetoothScan(); }, 300));
         } else if(code === "0022"){
           logAction("Dev Tools: set repo");
           addTimer(setTimeout(function(){ st.repoIndex=0; st.screen="REPO_SELECT"; render(); }, 300));

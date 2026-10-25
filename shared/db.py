@@ -183,9 +183,24 @@ def init_db(conn: sqlite3.Connection) -> None:
         "SELECT value FROM settings WHERE key = 'sudo_password'"
     ).fetchone()
     if row is None:
+        # Fresh install: a hardcoded default here used to be the literal
+        # string "1234" — a well-known password shared by every device,
+        # visible to anyone reading this file on GitHub. Generate one at
+        # random per device instead, and leave the plaintext in `state`
+        # (cleared the moment the owner changes it via Menu -> Sudo
+        # Password) so ControllerUI can keep showing it on the Menu screen
+        # until then — see MENU rendering in firmware/ui/controller.py.
+        default_password = f"{secrets.randbelow(10_000):04d}"
         conn.execute(
             "INSERT INTO settings(key, value) VALUES ('sudo_password', ?)",
-            (hash_password("1234"),),
+            (hash_password(default_password),),
+        )
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES ('sudo_password_is_default', '1')"
+        )
+        conn.execute(
+            "INSERT INTO state(key, value, updated_at) VALUES ('sudo_password_first_boot', ?, ?)",
+            (default_password, time.time()),
         )
     elif not row["value"].startswith(PASSWORD_SCHEME + "$"):
         conn.execute(
@@ -372,6 +387,10 @@ class StateRepo:
             "SELECT value FROM state WHERE key = ?", (key,)
         ).fetchone()
         return row["value"] if row else default
+
+    def delete(self, key: str) -> None:
+        self.conn.execute("DELETE FROM state WHERE key = ?", (key,))
+        self.conn.commit()
 
     def all(self) -> dict[str, str]:
         return {row["key"]: row["value"] for row in self.conn.execute("SELECT * FROM state")}

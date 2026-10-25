@@ -1,28 +1,28 @@
 """The JapyScope boot splash: an orbiting-planet mark over the "JapyScope"
-wordmark and a small "JAPYSOFT" caption, composed as a 1bpp bitmap. The
-orbit/planet/moon are plain pixel math (plotted directly, no image
-library — a one-time ~250x122 boot image has no performance budget to
-justify a fancier scanline-fill approach); the wordmark and caption are
-rendered through `rasterizer.py`'s shared TTF text helpers (see its module
-docstring for why text moved off the old dot-matrix font) so the logo's
-type matches the menu screens'. Drawn once at boot by `firmware/splash.py`
-via `DisplayHAL.draw_bitmap()`.
+wordmark and a small caption, composed as a 1bpp bitmap. The orbit/planet/
+moon are plain pixel math (plotted directly, no image library, a one-time
+~250x122 boot image has no performance budget to justify a fancier
+scanline-fill approach); the wordmark and caption are rendered through
+`rasterizer.py`'s shared TTF text helpers (see its module docstring for why
+text moved off the old dot-matrix font) so the logo's type matches the menu
+screens'. Drawn once at boot by `firmware/splash.py` via
+`DisplayHAL.draw_bitmap()`, and again at shutdown by
+`firmware/shutdown_splash.py` — with a different caption (`render_shutdown()`
+below), so the panel's last image doesn't read as a hung boot screen: e-ink
+holds whatever was drawn last with no power, so the two moments need to look
+distinguishable at a glance.
 
-Picked from 4 black-and-white concepts drawn up as an artifact (orbit
-wordmark, scope badge, telescope icon, dot-matrix "J") — this is variant 1.
-Sized and positioned against the confirmed 2.13" 250x122 canvas
-(`profiles.PROFILE_2_13`); re-check proportions if drawn against a very
-different profile (e.g. 4.26"), since the constants below are absolute
-pixels, not scaled from `profile.width`/`height`.
-
-This exact bitmap never changes between boots, so `firmware/splash.py`
-doesn't call `render()` at boot at all — it reads the precomputed copy in
-`boot_logo_cache/<profile>.bin` instead, which (unlike calling this module)
-never needs Pillow's own, noticeably slow-on-the-Pi-Zero-W import. Run this
-module directly (`python -m firmware.hal.display.boot_logo`) to regenerate
-that cache after changing anything above — splash.py falls back to calling
-`render()` live if the cached file is missing or the wrong size for the
-active profile, so a stale cache is a slow boot, never a wrong one.
+Both bitmaps are fixed (no clock, no dynamic state), so neither
+`firmware/splash.py` nor `firmware/shutdown_splash.py` calls `render()`/
+`render_shutdown()` directly — they read the precomputed copies in
+`boot_logo_cache/<profile>.bin` and `boot_logo_cache/<profile>.shutdown.bin`
+instead, which (unlike calling this module) never need Pillow's own,
+noticeably slow-on-the-Pi-Zero-W import. Run this module directly
+(`python -m firmware.hal.display.boot_logo`) to regenerate both caches after
+changing anything above — the splash scripts fall back to calling the
+matching render function live if its cached file is missing or the wrong
+size for the active profile, so a stale cache is a slow boot/shutdown, never
+a wrong one.
 """
 from __future__ import annotations
 
@@ -44,6 +44,7 @@ _MOON_RADIUS = 4
 _WORDMARK = "JapyScope"
 _WORDMARK_FONT_PX = 24
 _CAPTION = "JapySoft AND Bombol.Space"
+_SHUTDOWN_CAPTION = "Shutting down…"
 _CAPTION_FONT_PX = 11
 _ICON_TO_WORDMARK_GAP = 8
 _WORDMARK_TO_CAPTION_GAP = 6
@@ -84,7 +85,7 @@ def _draw_centered_text(buf: bytearray, stride: int, width: int, height: int, y:
     draw_text(buf, stride, width, height, x, y, text, font_px)
 
 
-def render(profile: DisplayProfile) -> bytes:
+def _render(profile: DisplayProfile, caption: str) -> bytes:
     width, height = profile.width, profile.height
     stride = stride_for(width)
     buf = bytearray(b"\xff" * (stride * height))
@@ -99,17 +100,33 @@ def render(profile: DisplayProfile) -> bytes:
     _draw_centered_text(buf, stride, width, height, wordmark_y, _WORDMARK, _WORDMARK_FONT_PX)
 
     caption_y = wordmark_y + wordmark_h + _WORDMARK_TO_CAPTION_GAP
-    _draw_centered_text(buf, stride, width, height, caption_y, _CAPTION, _CAPTION_FONT_PX)
+    _draw_centered_text(buf, stride, width, height, caption_y, caption, _CAPTION_FONT_PX)
 
     return bytes(buf)
+
+
+def render(profile: DisplayProfile) -> bytes:
+    return _render(profile, _CAPTION)
+
+
+def render_shutdown(profile: DisplayProfile) -> bytes:
+    """Same icon and wordmark as `render()`, but with the caption swapped
+    for a "Shutting down…" status line instead of the JapySoft/Bombol.Space
+    credit — so the panel's last image before power loss doesn't read as a
+    hung boot screen (see module docstring)."""
+    return _render(profile, _SHUTDOWN_CAPTION)
 
 
 def _regenerate_cache() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for profile in (PROFILE_2_13,):
-        path = CACHE_DIR / f"{profile.name}.bin"
-        path.write_bytes(render(profile))
-        print(f"wrote {path} ({path.stat().st_size} bytes)")
+        boot_path = CACHE_DIR / f"{profile.name}.bin"
+        boot_path.write_bytes(render(profile))
+        print(f"wrote {boot_path} ({boot_path.stat().st_size} bytes)")
+
+        shutdown_path = CACHE_DIR / f"{profile.name}.shutdown.bin"
+        shutdown_path.write_bytes(render_shutdown(profile))
+        print(f"wrote {shutdown_path} ({shutdown_path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

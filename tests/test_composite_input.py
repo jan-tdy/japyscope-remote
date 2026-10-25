@@ -1,6 +1,7 @@
 from typing import Optional
 
 from firmware.hal.input.base import InputHAL
+from firmware.hal.input.base import key_up
 from firmware.hal.input.composite import CompositeInput
 from firmware.hal.input.keys import ENC_PUSH, JOY_LEFT
 
@@ -37,6 +38,13 @@ def test_mixed_sources_ignore_events_of_the_wrong_role():
     encoder = FakeSource([])
     composite = CompositeInput(keypad, encoder)
     assert composite.poll() is None
+
+
+def test_composite_routes_key_up_using_the_original_physical_key():
+    keypad = FakeSource([key_up("2")])
+    encoder = FakeSource([])
+    composite = CompositeInput(keypad, encoder)
+    assert composite.poll() == key_up("2")
 
 
 def test_close_closes_both_distinct_sources_but_not_twice_when_shared():

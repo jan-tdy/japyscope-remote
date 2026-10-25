@@ -17,12 +17,6 @@ blocks, and Roboto's glyph set covers Slovak natively (ť ľ č š ž ý á í �
 ä ô and friends), so firmware/ui/i18n.py's "sk" strings no longer need any
 accent-folding fallback.
 
-Pillow is a real dependency now (requirements.txt) — Pillow 12 dropped
-Python 3.9 (Raspberry Pi OS Bullseye's version), so a Pi still on Bullseye
-needs to either upgrade to Bookworm/Trixie or pin an older
-(3.9-compatible) Pillow itself; this project doesn't carry that pin. See
-docs/TROUBLESHOOTING.md.
-
 Pillow's own import is noticeably slow on the Pi Zero W's single ARMv6
 core, so it's imported lazily (inside `_font()`/`draw_text()`, not at
 module level) rather than paid by everyone who imports this module just
@@ -123,11 +117,24 @@ def _set_black(buf: bytearray, stride: int, width: int, height: int, x: int, y: 
         buf[y * stride + x // 8] &= ~(0x80 >> (x % 8)) & 0xFF
 
 
-def _invert_row_band(buf: bytearray, stride: int, y0: int, y1: int) -> None:
+def _invert_row_band(buf: bytearray, stride: int, y0: int, y1: int, x_end: Optional[int] = None) -> None:
+    """XOR-invert the row band. `x_end`, when given, stops the invert at
+    that device-pixel column instead of the full row width — callers pass
+    `text_width` so the selected row's reverse-video highlight doesn't
+    bleed into the scrollbar's reserved column: without this, an inverted
+    (now all-black) row swallowed the scrollbar's dashed track/thumb for
+    that row, since `_set_black` draws black-on-black there."""
     for y in range(y0, y1):
         row_start = y * stride
-        for xb in range(stride):
+        if x_end is None:
+            for xb in range(stride):
+                buf[row_start + xb] ^= 0xFF
+            continue
+        full_bytes, rem_bits = divmod(x_end, 8)
+        for xb in range(full_bytes):
             buf[row_start + xb] ^= 0xFF
+        if rem_bits:
+            buf[row_start + full_bytes] ^= (0xFF << (8 - rem_bits)) & 0xFF
 
 
 # Reserved at the right edge of the canvas for a vertical scrollbar
@@ -260,7 +267,10 @@ def render(
 
         if row_idx == invert_row:
             band_end = min(height, (row_idx + 1) * row_height)
-            _invert_row_band(buf, stride, row_idx * row_height, band_end)
+            _invert_row_band(
+                buf, stride, row_idx * row_height, band_end,
+                x_end=text_width if scroll is not None else None,
+            )
 
     if scroll is not None:
         row_start, row_count, item_start, item_total = scroll

@@ -182,6 +182,23 @@ def test_login_locks_after_five_failures(tmp_path):
     assert client.post("/", data={"code": "000000", "csrf_token": token}).status_code == 429
 
 
+def test_parse_journal_entries_keeps_raw_multiline_text_and_levels():
+    from webui.app import parse_journal_entries
+
+    sample = (
+        "Sep 20 12:00:01 pi japyscope-app[42]: ERROR: mount disconnected\n"
+        "  retrying connection\n"
+        "2026-09-20T12:00:02+00:00 pi japyscope-webui[9]: priority=4 slow request"
+    )
+    entries = parse_journal_entries(sample)
+
+    assert [entry["level"] for entry in entries] == ["error", "warning"]
+    assert [entry["unit"] for entry in entries] == ["japyscope-app", "japyscope-webui"]
+    assert entries[0]["message"] == "mount disconnected"
+    assert entries[0]["details"] == "  retrying connection"
+    assert "\n".join(entry["raw"] for entry in entries) == sample
+
+
 def test_diagnostics_page_renders_logs_or_fallback(tmp_path, monkeypatch):
     client, _ = authenticated_client(tmp_path)
     response = client.get("/diagnostics?unit=app&lines=50")
@@ -231,7 +248,35 @@ def test_diagnostics_requests_reverse_order_and_displays_oldest_first(tmp_path, 
     client, _ = authenticated_client(tmp_path)
     response = client.get("/diagnostics?unit=app&lines=50")
     body = response.data.decode("utf-8")
-    assert body.index("first") < body.index("second") < body.index("third")
+    # The raw log (id="log-output") keeps the usual oldest-on-top order.
+    raw_log = body[body.index('id="log-output"'):]
+    assert raw_log.index("first") < raw_log.index("second") < raw_log.index("third")
+
+
+def test_diagnostics_structured_entries_show_newest_first(tmp_path, monkeypatch):
+    # Unlike the raw log above, the structured/clickable entry list reads
+    # newest-first -- the most recent event is what someone checking
+    # Diagnostics almost always wants first, without scrolling.
+    from webui import app as app_module
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout=(
+                "Sep 20 12:00:03 pi japyscope-app[1]: third\n"
+                "Sep 20 12:00:02 pi japyscope-app[1]: second\n"
+                "Sep 20 12:00:01 pi japyscope-app[1]: first\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/diagnostics?unit=app&lines=50")
+    body = response.data.decode("utf-8")
+    structured = body[body.index('id="structured-logs"'):body.index('id="log-output"')]
+    assert structured.index("third") < structured.index("second") < structured.index("first")
 
 
 def test_diagnostics_uses_sudo_fallback_output(tmp_path, monkeypatch):
@@ -295,7 +340,7 @@ def test_system_wifi_page_shows_configured_ssids(tmp_path):
     assert "HomeNet" in body and "FieldHotspot" in body
 
 
-def test_system_configure_secondary_wifi_persists_and_connects(tmp_path):
+def test_system_configure_secondary_wifi_saves_without_connecting(tmp_path):
     configured = []
     db_path = str(tmp_path / "web.db")
     with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
@@ -323,7 +368,9 @@ def test_system_configure_secondary_wifi_persists_and_connects(tmp_path):
     with db_session(db_path) as conn:
         repo = SettingsRepo(conn)
         assert repo.get("wifi_ssid_secondary") == "FieldHotspot"
-        assert repo.get("wifi_active_slot") == "secondary"
+        # Saving never connects on its own — activating it is a separate,
+        # explicit Dev Tools step (code 5001), not a side effect of saving.
+        assert repo.get("wifi_active_slot") is None
 
 
 def test_system_configure_secondary_wifi_validates_password_length(tmp_path):
@@ -355,6 +402,50 @@ def test_system_configure_secondary_wifi_validates_password_length(tmp_path):
         assert SettingsRepo(conn).get("wifi_ssid_secondary") is None
 
 
+def test_system_configure_mount_wifi_saves_valid_ip(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(db_path, action_runner=lambda *_: None)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-mount-wifi",
+            "mount_wifi_host": "192.168.4.1",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with db_session(db_path) as conn:
+        assert SettingsRepo(conn).get("mount_wifi_host") == "192.168.4.1"
+
+
+def test_system_configure_mount_wifi_rejects_invalid_ip(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    app = create_app(db_path, action_runner=lambda *_: None)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    response = client.post(
+        "/system",
+        data={
+            "csrf_token": csrf(client),
+            "action": "configure-mount-wifi",
+            "mount_wifi_host": "not-an-ip",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with db_session(db_path) as conn:
+        assert SettingsRepo(conn).get("mount_wifi_host") is None
+
+
 def test_api_telemetry_endpoint(tmp_path):
     client, _ = authenticated_client(tmp_path)
     response = client.get("/api/telemetry")
@@ -366,3 +457,25 @@ def test_api_telemetry_endpoint(tmp_path):
     assert "disk_usage" in data
     assert "uptime" in data
 
+
+
+def test_service_worker_is_served_from_site_root_not_static(tmp_path):
+    # A service worker's maximum allowed scope defaults to its own
+    # script's directory; base.html registers it with the browser's
+    # default scope (the script's own path), so it must be served from
+    # "/", not "/static/sw.js" -- Flask's static route sends no
+    # Service-Worker-Allowed header to widen that scope.
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/sw.js")
+    assert response.status_code == 200
+    assert b"self.addEventListener" in response.data
+
+
+def test_service_worker_route_needs_no_authentication(tmp_path):
+    # Must be reachable before login too -- the login page itself serves
+    # base.html, which registers the service worker on every page load.
+    app = create_app(str(tmp_path / "sw.db"))
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    response = client.get("/sw.js")
+    assert response.status_code == 200

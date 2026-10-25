@@ -1,7 +1,4 @@
-"""Real backlight backend: plain GPIO drive, one 5mm LED + series resistor
-per channel (no MOSFET, no driver IC), Off/Med/High via software PWM — see
-docs/WIRING.md's Backlight section. Exact GPIO pins not yet assigned; fill
-in _ensure_hardware()/set() together once wired.
+"""OLD REAL BACKLIGHT BACKEND. TODO: REDO FOR OLED
 """
 from __future__ import annotations
 

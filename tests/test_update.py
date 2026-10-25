@@ -204,6 +204,7 @@ def test_health_error_rolls_back_current_symlink(tmp_path, monkeypatch):
     monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
     monkeypatch.setattr(update_module.shutil, "move", lambda _source, target: target.mkdir())
     monkeypatch.setattr(update_module.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_sync_system_files", lambda *_a, **_k: None)
     monkeypatch.setattr(updater, "_health_check", lambda: (_ for _ in ()).throw(UpdateError("unhealthy")))
     with pytest.raises(UpdateError): updater.apply()
     assert updater.current.resolve() == previous
@@ -233,3 +234,153 @@ def test_apply_replaces_failed_directory(tmp_path, monkeypatch):
     assert updater.apply() == "new"
     assert updater.current.resolve() == failed
     assert not (failed / "stale").exists()
+
+
+def test_apply_syncs_system_files_from_the_new_release_before_restart(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    previous.mkdir(parents=True); (root / "current").symlink_to(previous)
+    updater = Updater(root)
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": "new"})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+    extracted = tmp_path / "extracted"; (extracted / "install").mkdir(parents=True)
+    (extracted / "install" / "sync-system-files.sh").touch()
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+
+    def fake_move(source, target):
+        Path(target).mkdir()
+        for entry in Path(source).iterdir():
+            (Path(target) / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    monkeypatch.setattr(update_module.shutil, "move", fake_move)
+
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_health_check", lambda: None)
+
+    tag = updater.apply()
+
+    assert tag == "new"
+    target = releases / "new"
+    sync_calls = [c for c in calls if c[:1] == ["bash"]]
+    assert sync_calls == [["bash", str(target / "install" / "sync-system-files.sh")]]
+    # Must happen before the restart, or a changed systemd unit (e.g. a
+    # NoNewPrivileges flip) would restart under the old unit definition.
+    restart_index = calls.index(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"])
+    assert calls.index(sync_calls[0]) < restart_index
+
+
+def test_apply_fails_and_rolls_back_when_new_release_has_no_sync_script(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    previous.mkdir(parents=True); (root / "current").symlink_to(previous)
+    updater = Updater(root)
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": "new"})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+    extracted = tmp_path / "extracted"; extracted.mkdir()  # no install/sync-system-files.sh
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+    monkeypatch.setattr(update_module.shutil, "move", lambda _source, target: target.mkdir())
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    with pytest.raises(UpdateError): updater.apply()
+    assert updater.current.resolve() == previous
+
+
+def test_venv_reusable_when_lock_files_are_identical(tmp_path):
+    previous = tmp_path / "old"; target = tmp_path / "new"
+    (previous / ".venv").mkdir(parents=True)
+    target.mkdir()
+    (previous / "requirements.lock").write_bytes(b"pinned==1.0\n")
+    (target / "requirements.lock").write_bytes(b"pinned==1.0\n")
+    (previous / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    (target / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    assert Updater._venv_reusable(previous, target) is True
+
+
+def test_venv_not_reusable_when_a_lock_file_changed(tmp_path):
+    previous = tmp_path / "old"; target = tmp_path / "new"
+    (previous / ".venv").mkdir(parents=True)
+    target.mkdir()
+    (previous / "requirements.lock").write_bytes(b"pinned==1.0\n")
+    (target / "requirements.lock").write_bytes(b"pinned==1.1\n")  # bumped
+    (previous / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    (target / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    assert Updater._venv_reusable(previous, target) is False
+
+
+def test_venv_not_reusable_without_a_previous_release():
+    assert Updater._venv_reusable(None, Path("/irrelevant")) is False
+
+
+def test_venv_not_reusable_when_previous_has_no_venv(tmp_path):
+    previous = tmp_path / "old"; target = tmp_path / "new"
+    previous.mkdir(); target.mkdir()  # no previous/.venv
+    (previous / "requirements.lock").write_bytes(b"x")
+    (target / "requirements.lock").write_bytes(b"x")
+    (previous / "requirements-pyindi.lock").write_bytes(b"x")
+    (target / "requirements-pyindi.lock").write_bytes(b"x")
+    assert Updater._venv_reusable(previous, target) is False
+
+
+def test_apply_reuses_previous_venv_when_requirements_unchanged(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    (previous / ".venv" / "bin").mkdir(parents=True)
+    (previous / ".venv" / "bin" / "python").write_bytes(b"#!/usr/bin/env python3\n")
+    (previous / "requirements.lock").write_bytes(b"pinned==1.0\n")
+    (previous / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    (root / "current").symlink_to(previous)
+    updater = Updater(root)
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": "new"})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+
+    extracted = tmp_path / "extracted"
+    (extracted / "install").mkdir(parents=True)
+    (extracted / "install" / "sync-system-files.sh").touch()
+    # Same lock file contents as `previous` -- the reusable case.
+    (extracted / "requirements.lock").write_bytes(b"pinned==1.0\n")
+    (extracted / "requirements-pyindi.lock").write_bytes(b"pyindi==2.0\n")
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+
+    def fake_move(source, target):
+        Path(target).mkdir()
+        for entry in Path(source).iterdir():
+            (Path(target) / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    monkeypatch.setattr(update_module.shutil, "move", fake_move)
+
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_health_check", lambda: None)
+
+    tag = updater.apply()
+
+    assert tag == "new"
+    target_dir = releases / "new"
+    assert (target_dir / ".venv" / "bin" / "python").is_file()
+    # No venv-creation or pip-install calls -- the copied venv is reused.
+    assert not any(c[:3] == ["python3", "-m", "venv"] for c in calls)
+    assert not any("pip" in c for c in calls)
+    # compileall still runs -- new release code (not just deps) can differ.
+    assert any("compileall" in c for c in calls)
+
+
+def test_sync_system_files_runs_the_release_script(tmp_path, monkeypatch):
+    release = tmp_path / "release"; (release / "install").mkdir(parents=True)
+    script = release / "install" / "sync-system-files.sh"; script.touch()
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
+    Updater._sync_system_files(release)
+    assert calls == [(["bash", str(script)], {"check": True, "timeout": 30})]
+
+
+def test_sync_system_files_required_raises_when_script_missing(tmp_path):
+    with pytest.raises(UpdateError):
+        Updater._sync_system_files(tmp_path / "no-such-release")
+
+
+def test_sync_system_files_optional_is_a_quiet_no_op_when_script_missing(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+    Updater._sync_system_files(tmp_path / "no-such-release", required=False)
+    assert calls == []

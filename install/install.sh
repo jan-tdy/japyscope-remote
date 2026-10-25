@@ -271,10 +271,7 @@ if [[ ! -f /etc/japyscope/environment ]]; then
   printf 'JAPYSCOPE_DB_PATH=/var/lib/japyscope/japyscope.db\nJAPYSCOPE_SECRET_KEY=%s\n' "$secret" > /etc/japyscope/environment
   chmod 600 /etc/japyscope/environment
 fi
-install -o root -g root -m 755 "$source_dir/install/wifi-config.sh" /usr/local/sbin/japyscope-wifi
-install -o root -g root -m 755 "$source_dir/install/wifi-ap.sh" /usr/local/sbin/japyscope-wifi-ap
-install -o root -g root -m 755 "$source_dir/install/wifi-switch.sh" /usr/local/sbin/japyscope-wifi-switch
-install -o root -g root -m 755 "$source_dir/install/bluetooth-mount.sh" /usr/local/sbin/japyscope-bluetooth-mount
+"$script_dir/sync-system-files.sh"
 ap_password_file=/etc/japyscope/setup-ap-password
 if [[ ! -s $ap_password_file ]]; then
   umask 077
@@ -344,11 +341,6 @@ NMCONN
     chmod 600 "$nm_conn_dir/JapyScope Setup.nmconnection"
   fi
 fi
-printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /usr/local/sbin/japyscope-wifi-switch *, /bin/systemctl restart japyscope-app.service, /bin/systemctl start japyscope-update.service, /bin/systemctl reboot, /bin/systemctl poweroff, /bin/journalctl *, /usr/bin/journalctl *' > /etc/sudoers.d/japyscope
-chmod 440 /etc/sudoers.d/japyscope
-visudo -cf /etc/sudoers.d/japyscope
-install -o root -g root -m 644 "$source_dir"/install/systemd/* /etc/systemd/system/
-if systemd_is_live; then systemctl daemon-reload; fi
 if [[ $network_backend == wpa_supplicant ]]; then systemctl unmask hostapd.service; fi
 # --no-ap only withholds japyscope-wifi-ap.service, the automatic
 # boot-time fallback that brings the hotspot up on its own when no client

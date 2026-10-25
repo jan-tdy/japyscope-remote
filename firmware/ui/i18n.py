@@ -1,5 +1,7 @@
 """Minimal UI localization for the hand controller.
 
+TODO: Implement tolgee localization
+
 v0 covers the highest-visibility screens (Home, Menu, boot park check,
 park/unpark, about) plus shared footers. Anything not in ``STRINGS`` falls
 back to the key itself, and any language missing a translation falls back
@@ -33,11 +35,13 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu.sudo_password": {"en": "Sudo Password", "sk": "Heslo sudo"},
     "menu.system": {"en": "System", "sk": "Systém"},
     "menu.about": {"en": "About", "sk": "O aplikácii"},
+    "menu.connection": {"en": "Connection", "sk": "Pripojenie"},
+    "connection.reconnect": {"en": "Reconnect", "sk": "Pripojiť znova"},
     "language.title": {"en": "Language", "sk": "Jazyk"},
     "theme.title": {"en": "Interface Theme", "sk": "Téma rozhrania"},
     "boot.park_question": {"en": "In park position?", "sk": "Je v parkovacej polohe?"},
-    "boot.park_yes": {"en": "Yes — parked", "sk": "Áno — zaparkovaný"},
-    "boot.park_no": {"en": "No — sync now", "sk": "Nie — synchronizovať"},
+    "boot.park_yes": {"en": "Yes, parked", "sk": "Áno, zaparkovaný"},
+    "boot.park_no": {"en": "No, sync now", "sk": "Nie, synchronizovať"},
     "boot.sync_failed_1": {"en": "INDI Sync failed", "sk": "INDI synchronizácia zlyhala"},
     "boot.sync_failed_2": {"en": "Position not trusted", "sk": "Poloha nie je overená"},
     "boot.sync_failed_3": {"en": "push=retry", "sk": "push=skúsiť znova"},
@@ -49,10 +53,11 @@ STRINGS: dict[str, dict[str, str]] = {
     "park.parked_title": {"en": "PARKED", "sk": "ZAPARKOVANÉ"},
     "park.unpark": {"en": "Unpark", "sk": "Odparkovať"},
     "park.power_off": {"en": "Power off", "sk": "Vypnúť"},
+    "park.home": {"en": "Home", "sk": "Domov"},
     "about.line1": {"en": "JapyScope Remote", "sk": "JapyScope Remote"},
-    "about.line2": {"en": "by JapySoft", "sk": "od JapySoft"},
+    "about.line2": {"en": "by JapySoft and Bombol.Space", "sk": "od JapySoft a Bombol.Space"},
     "about.line3": {"en": "Firmware {version}", "sk": "Firmvér {version}"},
-    "footer.push_back": {"en": "push/9=back", "sk": "stlačiť/9=späť"},
+    "footer.push_back": {"en": "ok/9=back", "sk": "ok/9=späť"},
 }
 
 

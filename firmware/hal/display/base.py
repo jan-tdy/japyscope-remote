@@ -1,5 +1,5 @@
 """Display HAL interface. Every screen in firmware/ui/ renders through this,
-never through a concrete driver — so --simulate can swap in a backend with
+never through a concrete driver so --simulate can swap in a backend with
 no SPI/e-ink hardware present.
 """
 from __future__ import annotations

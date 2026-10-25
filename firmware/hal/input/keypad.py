@@ -1,14 +1,5 @@
-"""Real hardware input backend: the 3x4 matrix keypad only (stock SparkFun
-COM-14662, stickers only — see docs/WIRING.md for physical key legend), on
-Raspberry Pi Zero W GPIO. The KY-040 rotary encoder is a separate device on
-separate pins — see encoder.py — since the two are wired up independently
-during bring-up (see shared.db's hw_sim_keypad/hw_sim_encoder settings).
-
-Pin numbers below are placeholders — cross-check/update against
-docs/WIRING.md, the single source of truth, once wiring is finalized.
-Matrix scanning is a standard technique and doesn't depend on that
-confirmation, so it's implemented for real (not stubbed) even though this
-has not been tested against physical hardware yet.
+"""Real hardware input backend: the 3x4 matrix keypad only (stock SparkFun COM-14662), on
+Raspberry Pi Zero W GPIO.
 
 Each key's raw level must stay unchanged for `_DEBOUNCE_S` before it's
 trusted, and a key only emits once per press (on the stable not-pressed ->
@@ -32,7 +23,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, key_up
 from .keys import BKSP, FN2
 
 # 3x4 matrix: rows/cols in BCM numbering — confirm against docs/WIRING.md.
@@ -84,6 +75,8 @@ class KeypadInput(InputHAL):
             self._active[key] = True
             self._queue.put(key)
         elif not pressed:
+            if self._active[key]:
+                self._queue.put(key_up(key))
             self._active[key] = False
 
     def _scan_matrix(self) -> None:

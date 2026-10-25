@@ -16,8 +16,9 @@ from firmware.hal.display import make_display
 from firmware.hal.display.boot_logo import CACHE_DIR
 
 
-def _cached_bitmap(profile) -> bytes | None:
-    path = CACHE_DIR / f"{profile.name}.bin"
+def _cached_bitmap(profile, variant: str = "boot") -> bytes | None:
+    suffix = f"{profile.name}.bin" if variant == "boot" else f"{profile.name}.shutdown.bin"
+    path = CACHE_DIR / suffix
     try:
         data = path.read_bytes()
     except OSError:

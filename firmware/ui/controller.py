@@ -1,9 +1,4 @@
 """Display-independent controller state machine.
-
-The screen names mirror the interactive mockup in ``docs/mockup.html``.  The
-state machine owns navigation and persistence; concrete display, input and
-INDI implementations are injected so the same code runs on a Pi or in
-``--simulate`` mode.
 """
 from __future__ import annotations
 
@@ -11,9 +6,10 @@ import logging
 import os
 import random
 import socket
+import sqlite3
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -21,8 +17,9 @@ from typing import Callable, Optional, Sequence
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
-from firmware.hal.input.base import InputHAL
+from firmware.hal.input.base import InputHAL, released_key, tapped_key
 from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from shared.version import current_version
 
@@ -44,7 +41,21 @@ T9 = {
     "8": "wxyz",
     "9": "wxyz",  # SmartSearch-only exception; FN2 is back on TYPE.
 }
-SPEEDS = (1, 2, 4, 8, 16, 32, 64)
+SPEEDS = tuple(range(1, 10))
+SPEED_RATE_LABELS = {
+    1: "1x", 2: "2x", 3: "4x", 4: "8x", 5: "16x",
+    6: "32x", 7: "64x", 8: "128x", 9: "Max",
+}
+JOG_HOLD_TIMEOUT_SECONDS = 45
+# How long PARKING waits for the driver to actually confirm parked
+# (polled via runtime["parked"] — see _poll_parking()) before giving up
+# and reporting a timeout instead of assuming the mount finished moving.
+PARK_CONFIRM_TIMEOUT_SECONDS = 60
+# How long SLEW waits for the driver to actually confirm tracking
+# (polled via runtime["tracking"] — see _poll_slew()) before giving up.
+# A full-sky alt-az GOTO can take several minutes, so leave a generous
+# window before aborting motion that may still be progressing.
+SLEW_CONFIRM_TIMEOUT_SECONDS = 600
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -82,6 +93,14 @@ JOG_DIRECTIONS = {
     "4": "W", JOY_LEFT: "W",
     "6": "E", JOY_RIGHT: "E",
 }
+# N/S (TELESCOPE_MOTION_NS) and E/W (TELESCOPE_MOTION_WE) are independent
+# switches on the driver -- both can be On at once for true diagonal
+# motion. Confirmed on hardware as a real bug when jog state only tracked
+# a single active direction: holding a second axis (e.g. the joystick
+# pushed diagonally) stopped the first axis instead of running both.
+# UIState tracks each axis separately (jog_ns/jog_we below) so they can
+# be held independently.
+JOG_AXES = {"N": "ns", "S": "ns", "E": "we", "W": "we"}
 
 BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
     "Basic Objects": (
@@ -105,6 +124,15 @@ BUILTIN_CATALOGS: dict[str, tuple[SearchResult, ...]] = {
         SearchResult("C14 Double Cluster", "02h20m00s", "+57°08′", alt=41, source="caldwell"),
     ),
 }
+
+
+@dataclass
+class JogAxisState:
+    """One jog axis's (NS or WE) currently-held direction, if any."""
+    direction: str = ""
+    key: str = ""
+    blocked_key: str = ""
+    started_at: float = 0.0
 
 
 @dataclass
@@ -133,12 +161,17 @@ class UIState:
     access_expires: float = 0.0
     access_last_remaining: int = -1
     transition_at: float = 0.0
+    jog_ns: "JogAxisState" = field(default_factory=lambda: JogAxisState())
+    jog_we: "JogAxisState" = field(default_factory=lambda: JogAxisState())
     last_status_at: float = 0.0
     error_message: str = ""
     backlight: list[int] = field(default_factory=lambda: [1, 0, 0])
     dev_scripts: list[str] = field(default_factory=list)
     dev_message: list[str] = field(default_factory=list)
     wifi_switch_labels: list[str] = field(default_factory=list)
+    bt_scan_results: list[tuple[str, str]] = field(default_factory=list)  # (mac, name)
+    update_last_phase: str = ""
+    update_dismissed: bool = False
 
 
 class ControllerUI:
@@ -147,7 +180,7 @@ class ControllerUI:
     MENU = (
         "menu.time_sync", "menu.alignment", "menu.park_toggle", "menu.wifi_access",
         "menu.location", "menu.backlight", "menu.language", "menu.theme",
-        "menu.sudo_password", "menu.system", "menu.about",
+        "menu.sudo_password", "menu.system", "menu.about", "menu.connection",
     )
     CATALOG = ("SmartSearch", "Custom Catalogs", *BUILTIN_CATALOGS)
     # Dev Tools codes 0022/0033 — see docs/CODES.md. Single-option for now,
@@ -159,10 +192,36 @@ class ControllerUI:
     # SSID/password happens in the Web UI (System page); this only flips
     # which already-configured slot is live, via install/wifi-switch.sh.
     WIFI_SWITCH_SLOTS = ("primary", "secondary")
-    # Dev Tools code 9600 — see docs/CODES.md. "bluetooth" pairing/binding
-    # itself is done once via install/bluetooth-mount.sh (SSH), not from
-    # this screen; selecting it here only records the intended interface.
-    MOUNT_INTERFACES = (("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"))
+    # Dev Tools codes 9600/9601 — see docs/CODES.md. Picking "bluetooth"
+    # here for the first time (or 9601 any time) triggers a scan + pick
+    # screen (_start_bluetooth_scan/BT_SCAN_SELECT) instead of just
+    # recording the choice — there's no module paired yet to talk to.
+    MOUNT_INTERFACES = (
+        ("rj12", "RJ12 serial"), ("bluetooth", "Bluetooth (SynScan)"), ("wifi", "WiFi (SynScan)"),
+        ("synscan_app", "SynScan/Stellarium app"),
+    )
+    # indi_skywatcherAltAzMount's own INDI device name and connection
+    # property names used to point it at the mount's SynScan WiFi module
+    # over the network (UDP port 11880 — the module is a transparent
+    # serial<->UDP bridge for the same SynScan protocol RJ12 carries,
+    # confirmed against independent open-source reimplementations of it)
+    # instead of a serial port. Verified against the driver's actual
+    # source (indilib/indi, drivers/telescope/skywatcherAPIMount.cpp,
+    # built as the indi_skywatcherAltAzMount binary): getDefaultName()
+    # returns exactly "Skywatcher Alt-Az" (lowercase "w" — not
+    # "SkyWatcher"), its tcpConnection defaults to 192.168.4.1:11880/UDP,
+    # and CONNECTION_MODE/DEVICE_ADDRESS/CONNECTION are the standard
+    # INDI::Connection::TCP property names (libs/indibase/
+    # connectionplugins/connectiontcp.cpp, libs/indibase/defaultdevice.cpp).
+    INDI_MOUNT_DEVICE = "Skywatcher Alt-Az"
+    INDI_MOUNT_WIFI_PORT = 11880
+    # Candidate ports for the "SynScan/Stellarium app" interface choice --
+    # unlike INDI_MOUNT_WIFI_PORT above, these are NOT independently
+    # confirmed against this project's own hardware (see
+    # _connect_mount_app()'s docstring): SynScan Pro app (11881),
+    # "SynScan" (11882), and Stellarium's own telescope-server protocol
+    # (10001). Tried in this order until one actually comes up.
+    INDI_MOUNT_APP_PORTS = ((11881, "SynScan Pro app"), (11882, "SynScan"), (10001, "Stellarium"))
 
     def __init__(
         self,
@@ -203,6 +262,28 @@ class ControllerUI:
 
     def start(self) -> None:
         self.render()
+        if self.indi_manager is not None:
+            self._reconnect_mount_interface()
+            self._sync_indi_location_and_time()
+        update_status = self.runtime.get("update_status")
+        if update_status in ("success", "failed"):
+            # A finished OTA update (`install/update.py`'s `apply()`)
+            # restarts this very process right after writing this status
+            # -- so this boot is the first chance to actually show the
+            # result, before the usual BOOT_PARK_CHECK question. Cleared
+            # immediately so a later, unrelated boot never replays it.
+            tag = self.runtime.get("update_tag", "")
+            phase = self.runtime.get("update_phase", "")
+            error = self.runtime.get("update_error", "")
+            for key in ("update_status", "update_phase", "update_tag", "update_error"):
+                self.runtime.delete(key)
+            if update_status == "success":
+                self.state.dev_message = ["Update installed", f"Now running {tag}" if tag else "Update complete"]
+            else:
+                detail = "Rolled back to the previous version" if phase == "rolled_back" else "Update failed"
+                self.state.dev_message = ["Update failed", detail, error[:32] if error else ""]
+            self._set("UPDATE_RESULT")
+            return
         self.state.screen = "BOOT_PARK_CHECK"
         self.state.index = 0
         self.render()
@@ -215,31 +296,132 @@ class ControllerUI:
                 self.handle(key)
             self.tick()
 
+    def stop_motion(self) -> None:
+        """Best-effort stop for physical motion before process teardown."""
+        if self.state.jog_ns.direction or self.state.jog_we.direction:
+            self._stop_jog("process teardown")
+        elif self.state.screen == "SLEW":
+            self._abort_slew()
+
     def tick(self) -> None:
         now = self.clock()
         s = self.state
+        for axis in ("ns", "we"):
+            axis_state = self._jog_axis_state(axis)
+            if axis_state.direction and now - axis_state.started_at >= JOG_HOLD_TIMEOUT_SECONDS:
+                axis_state.blocked_key = axis_state.key
+                self._stop_jog_axis(axis, "jog hold timeout")
         if now - s.last_status_at >= 2:
             s.last_status_at = now
             self._refresh_status()
-        if s.transition_at and now >= s.transition_at:
+        if s.transition_at and now >= s.transition_at and s.screen not in ("PARKING", "SLEW"):
             s.transition_at = 0
-            if s.screen == "SLEW": self._set("TRACK")
-            elif s.screen == "PARKING": self.runtime.set("parked", "true"); self._set("PARKED")
-            # Confirmed on hardware as an infinite loop ("Saving…" <->
-            # "Looks right?" repeating until the app crashed): this used to
-            # send ALIGN_SAVE back to ALIGN_CONFIRM, the very screen that
-            # enters ALIGN_SAVE on "Yes, done" — any further input (a
-            # queued ENC_PUSH, encoder noise) re-entered ALIGN_SAVE and
-            # the 1.5s timer fired again, forever. Alignment is actually
-            # complete by this point (`aligned` was already set true back
-            # in ALIGN_CONFIRM) — go to IDLE instead.
-            elif s.screen == "ALIGN_SAVE": self._set("IDLE")
+            if s.screen == "ALIGN_SAVE": self._set("IDLE")
         if s.screen == "WIFI_ACCESS":
             remaining = max(0, int(s.access_expires - now))
             if now >= s.access_expires: self._set("MENU", 3)
             elif remaining != s.access_last_remaining:
                 s.access_last_remaining = remaining
                 self.render(coalesce=True)
+        self._poll_update_status()
+        self._poll_parking()
+        self._poll_slew()
+
+    def _poll_parking(self) -> None:
+        """PARK_CONFIRM's `self.indi.park()` call only issues the park
+        command — on real hardware the driver's `Park()` starts an
+        asynchronous slew to the park position that can take far longer
+        than a fixed timer, so PARKING used to claim "parked" after a
+        blind 1.5s regardless of whether the mount had actually finished
+        moving, letting the owner reach the power-off screen while it was
+        still in motion. Waits instead for `runtime["parked"]` to
+        actually read true — kept fresh by `_refresh_status()`'s own
+        periodic `get_status()` poll — before showing PARKED.
+        `PARK_CONFIRM_TIMEOUT_SECONDS` (set as `transition_at` when
+        parking starts) is a safety net for a status read that never
+        confirms (e.g. a flaky `get_status()`): it reports the timeout
+        rather than silently proceeding as if parked."""
+        s = self.state
+        if s.screen != "PARKING":
+            return
+        if self._truth(self.runtime.get("parked", "false")):
+            s.transition_at = 0
+            self._set("PARKED")
+        elif s.transition_at and self.clock() >= s.transition_at:
+            s.transition_at = 0
+            logger.error("INDI-002 park did not confirm within %ss", PARK_CONFIRM_TIMEOUT_SECONDS)
+            # _devtools_message()'s DEV_MESSAGE screen returns to
+            # s.return_screen on dismissal -- fine for an actual Dev
+            # Tools message, but return_screen can still hold whatever
+            # a much earlier _confirm_slew()/_speed() call left there
+            # (e.g. "LIST"), which starting PARKING never touches. Pin
+            # it to a safe screen so dismissing this doesn't drop the
+            # owner back where they could immediately issue another
+            # slew with the park result still unconfirmed.
+            s.return_screen = "IDLE"
+            self._devtools_message(["Park did not confirm", "check mount position", "before powering off"])
+
+    def _poll_slew(self) -> None:
+        """`_begin_slew()`'s `self.indi.goto()` call only issues the goto
+        — the driver slews asynchronously and, per
+        `skywatcherAPIMount.cpp`'s own status-polling loop, only starts
+        tracking once the axes report full-stop (confirmed against its
+        source, same place that motivated `goto()` selecting
+        `ON_COORD_SET.TRACK` — see `firmware/indi/client.py`). SLEW used
+        to claim "tracking" after a blind 1.5s regardless of whether the
+        mount had actually arrived, same class of bug `_poll_parking()`
+        fixes for parking. Waits instead for `runtime["tracking"]` to
+        actually read true — kept fresh by `_refresh_status()`'s own
+        periodic `get_status()` poll — before showing TRACK.
+        `SLEW_CONFIRM_TIMEOUT_SECONDS` is the same kind of safety net as
+        `PARK_CONFIRM_TIMEOUT_SECONDS`."""
+        s = self.state
+        if s.screen != "SLEW":
+            return
+        if self._truth(self.runtime.get("tracking", "false")):
+            s.transition_at = 0
+            self._set("TRACK")
+        elif s.transition_at and self.clock() >= s.transition_at:
+            s.transition_at = 0
+            logger.error("INDI-002 slew did not confirm tracking within %ss", SLEW_CONFIRM_TIMEOUT_SECONDS)
+            self._abort_slew()
+            # Same stale-return_screen risk _poll_parking() has (see its
+            # comment) -- return_screen here is whatever _confirm_slew()
+            # set (e.g. "LIST"), which would let the owner immediately
+            # issue another slew with this one's outcome still unknown.
+            s.return_screen = "IDLE"
+            self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
+
+    def _poll_update_status(self) -> None:
+        """Surfaces `install/update.py`'s progress (written to `state` as
+        `update_status`/`update_phase`) on the device -- but only ever by
+        taking over an already-idle screen, never by interrupting
+        whatever the owner is actually doing (TRACK, aligning, browsing a
+        catalog, Dev Tools...). The scheduled daily update timer
+        (`japyscope-update.timer`) fires at a random hour completely
+        independent of what's on screen -- unconditionally jumping to an
+        update screen from any screen would make that routine, unattended
+        background check actively interrupt real use."""
+        s = self.state
+        status = self.runtime.get("update_status")
+        if s.screen == "IDLE" and status == "running" and not s.update_dismissed:
+            s.update_last_phase = ""
+            self._set("UPDATE_STATUS")
+        elif s.screen == "UPDATE_STATUS":
+            if status == "running":
+                phase = self.runtime.get("update_phase", "")
+                if phase != s.update_last_phase:
+                    s.update_last_phase = phase
+                    self.render(coalesce=True)
+            else:
+                # Finished without the process restart a real install
+                # triggers -- e.g. already up to date, or a failure
+                # before anything was actually touched -- so this screen
+                # has nothing left to watch.
+                for key in ("update_status", "update_phase", "update_tag", "update_error"):
+                    self.runtime.delete(key)
+                s.update_dismissed = False
+                self._set("IDLE")
 
     def _refresh_status(self) -> None:
         get_status = getattr(self.indi, "get_status", None)
@@ -257,10 +439,16 @@ class ControllerUI:
         }
         for key, value in values.items():
             encoded = str(value).lower() if isinstance(value, bool) else str(value)
-            if self.runtime.get(key) != encoded:
-                self.runtime.set(key, encoded)
+            try:
+                if self.runtime.get(key) != encoded:
+                    self.runtime.set(key, encoded)
+            except sqlite3.OperationalError as exc:
+                logger.warning("Skipping status write for %s: %s", key, exc)
+                continue
 
     def _set(self, screen: str, index: int = 0) -> None:
+        if screen != self.state.screen and (self.state.jog_ns.direction or self.state.jog_we.direction):
+            self._stop_jog("screen changed")
         self.state.screen = screen
         self.state.index = index
         self.render()
@@ -373,7 +561,16 @@ class ControllerUI:
                 self._t("home.aligned") if aligned else self._t("home.not_aligned"),
             )
         elif screen == "MENU":
-            lines = self._visible(self._t("menu.title"), [self._t(k) for k in self.MENU])
+            items = [self._t(k) for k in self.MENU]
+            if self.settings.get("sudo_password_is_default") == "1":
+                # Nagged on every Menu visit (not just once at first boot,
+                # which is easy to miss) until the owner picks their own
+                # sudo password instead of the random one generated at
+                # install — see docs/CODES.md's "Sudo password" section
+                # and shared/db.py's init_db().
+                sudo_index = self.MENU.index("menu.sudo_password")
+                items[sudo_index] = f"{items[sudo_index]} (default!)"
+            lines = self._visible(self._t("menu.title"), items)
         elif screen == "LANGUAGE":
             lines = self._visible(self._t("language.title"), [name for name, _ in LANGUAGES])
         elif screen == "THEME":
@@ -413,7 +610,7 @@ class ControllerUI:
         elif screen == "ALIGN_STAR_PICK":
             lines = self._visible(f"Point {s.align_points + 1}", [star.name for star in STARS])
         elif screen == "ALIGN_JOG":
-            lines = [f"Point to {s.jog_target}", f"Speed {s.speed}x", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
+            lines = [f"Point to {s.jog_target}", f"Speed {SPEED_RATE_LABELS.get(s.speed, '—')}", "2/8/4/6/stick=jog", "7=spd · push=ok · 9=back"]
         elif screen == "ALIGN_MORE":
             lines = self._visible(f"Points: {s.align_points}", ["Add another point", "Finish alignment"])
         elif screen == "ALIGN_CONFIRM":
@@ -421,7 +618,7 @@ class ControllerUI:
         elif screen == "ALIGN_SAVE":
             lines = ["ALIGNED", "Saving alignment…", "", ""]
         elif screen == "SPEED_ADJUST":
-            lines = ["Jog speed", f"{s.speed}x", "rotate=change", "push/9=back"]
+            lines = ["Jog speed", SPEED_RATE_LABELS.get(s.speed, "—"), "rotate=change", "push/9=back"]
         elif screen == "PARK_CONFIRM":
             lines = self._visible(
                 self._t("park.confirm_question"), [self._t("park.confirm_yes"), self._t("park.confirm_cancel")]
@@ -430,11 +627,17 @@ class ControllerUI:
             lines = [self._t("park.parking"), "", "", ""]
         elif screen == "PARKED":
             lines = self._visible(
-                self._t("park.parked_title"), [self._t("park.unpark"), self._t("park.power_off")]
+                self._t("park.parked_title"),
+                [self._t("park.unpark"), self._t("park.power_off"), self._t("home.dev_tools"), self._t("park.home")],
             )
         elif screen == "WIFI_ACCESS":
             remain = max(0, int(s.access_expires - self.clock()))
-            lines = ["Web UI access code", s.access_code, f"Valid {remain // 60:02}:{remain % 60:02}", "push/9=back"]
+            lines = [
+                "Web UI access code",
+                s.access_code,
+                f"{self._local_ip()}:8080 · {remain // 60:02}:{remain % 60:02}",
+                "push/9=back",
+            ]
         elif screen == "WIFI_SETUP":
             password_path = os.environ.get(
                 "JAPYSCOPE_AP_PASSWORD_FILE", "/etc/japyscope/setup-ap-password"
@@ -464,18 +667,43 @@ class ControllerUI:
             lines = self._visible("Mount driver", ["Sky-Watcher Alt-Az"])
         elif screen == "IFACE_SELECT":
             lines = self._visible("Mount interface", [label for _, label in self.MOUNT_INTERFACES])
+        elif screen == "CONNECTION":
+            current = self.settings.get("mount_interface", "rj12")
+            label = dict(self.MOUNT_INTERFACES).get(current, current)
+            lines = self._visible(f"Connection: {label}", [self._t("connection.reconnect")])
         elif screen == "DEV_REPO_SELECT":
             lines = self._visible("Set repo", list(self.REPOS))
         elif screen == "DEV_CHANNEL_SELECT":
             lines = self._visible("Update channel", [label for _, label in self.UPDATE_CHANNELS])
         elif screen == "DEV_SCRIPT_SELECT":
             lines = self._visible("Run custom script", s.dev_scripts or ["(no .sh scripts found)"])
+        elif screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            lines = self._visible("Run official script", s.dev_scripts or ["(none found / offline)"])
         elif screen == "WIFI_SWITCH_SELECT":
             lines = self._visible("Switch Wi-Fi network", s.wifi_switch_labels)
+        elif screen == "BT_SCAN_SELECT":
+            lines = self._visible(
+                "Select Bluetooth device", [name for _, name in s.bt_scan_results] or ["(none found)"]
+            )
         elif screen == "DEV_MESSAGE":
             lines = [*s.dev_message, "push/9=back"]
+        elif screen == "UPDATE_STATUS":
+            phase_text = {
+                "checking": "Checking for update…",
+                "downloading": "Downloading…",
+                "installing": "Installing…",
+            }.get(self.runtime.get("update_phase", ""), "Working…")
+            lines = ["Software Update", phase_text, "", "9=hide (keeps running)"]
+        elif screen == "UPDATE_RESULT":
+            lines = [*s.dev_message, "push/9=continue"]
         elif screen == "TIME_SYNC":
-            lines = ["Time synchronized", "using system NTP", "", "push/9=back"]
+            synced, method = self._time_sync_status()
+            lines = [
+                "Clock synchronized" if synced else "Clock NOT synchronized",
+                method,
+                "",
+                "push/9=back",
+            ]
         elif screen == "SYSTEM_CONFIRM":
             lines = ["Power off controller?", "push=yes", "", "9=back"]
         elif screen == "SHUTDOWN":
@@ -494,18 +722,6 @@ class ControllerUI:
 
     def _move(self, key: str, count: int, wrap: bool = True) -> bool:
         """Scroll the current list/menu by one item on ENC_UP/ENC_DOWN.
-
-        Temporary stopgap while the physical KY-040 rotary encoder is
-        unreliable (see firmware/hal/input/encoder.py's debounce-tuning
-        saga): the matrix keypad's "1" and "7" — a vertical pair on its
-        left column — also act as ENC_UP/ENC_DOWN here, so menus stay
-        navigable by hand regardless of how the encoder is behaving.
-        Remove this once the encoder is replaced/fixed (an Adafruit
-        STEMMA QT I2C encoder is the planned hardware fix) or keep it as
-        a permanent secondary input if it proves useful either way.
-        "7" is excluded on IDLE, where it already opens SPEED_ADJUST (see
-        handle()'s IDLE case) — that binding wins there instead; "1" has
-        no such conflict anywhere and always works.
         """
         if key == "1":
             key = ENC_UP
@@ -518,21 +734,204 @@ class ControllerUI:
         self.render(coalesce=True)
         return True
 
-    def _jog(self, key: str) -> bool:
-        """Manual nudge for screens where the mount can move (see
-        JOG_DIRECTIONS). Returns whether `key` was a jog key at all, same
-        calling convention as `_move`, so callers fall through to their own
-        handling otherwise. Failure (real hardware not wired up yet — see
-        firmware/indi/client.py) just logs, same as `park()`'s failure
-        handling: a single missed nudge isn't worth leaving the jog screen."""
+    def _jog_axis_state(self, axis: str) -> JogAxisState:
+        return self.state.jog_ns if axis == "ns" else self.state.jog_we
+
+    def _jog(self, key: str, momentary: bool = False) -> bool:
+        """Continuous manual motion for held keys, with bounded encoder taps.
+        N/S and E/W are independent axes (see JOG_AXES above) -- holding
+        one doesn't stop or replace the other, so diagonal motion (both
+        held at once, e.g. the joystick pushed diagonally) actually moves
+        both. Returns whether `key` was a jog key at all, same calling
+        convention as `_move`, so callers fall through to their own
+        handling otherwise."""
         direction = JOG_DIRECTIONS.get(key)
         if direction is None:
             return False
+        axis = JOG_AXES[direction]
+        axis_state = self._jog_axis_state(axis)
+        logger.debug(  # TEMPORARY
+            "DIAG _jog() key=%r direction=%s momentary=%s current_axis_direction=%r blocked_key=%r",
+            key, direction, momentary, axis_state.direction, axis_state.blocked_key,
+        )
+        if key == axis_state.blocked_key:
+            return True
+        if axis_state.direction:
+            # A rotary detent must not stop or replace a jog held by another
+            # input that happens to use the same direction code.
+            if momentary or axis_state.direction == direction:
+                return True
+            if not self._stop_jog_axis(axis, "direction changed"):
+                return True
         try:
             self.indi.jog(direction, self.state.speed)
-        except (NotImplementedError, ConnectionError) as exc:
+            axis_state.direction = direction
+            axis_state.key = key
+            axis_state.started_at = self.clock()
+            if momentary:
+                self._stop_jog_axis(axis, "encoder detent")
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
+            self._best_effort_abort()
         return True
+
+    def _best_effort_abort(self) -> bool:
+        logger.debug("DIAG _best_effort_abort() called at %.3f", self.clock())  # TEMPORARY
+        try:
+            self.indi.abort()
+            return True
+        except Exception as exc:
+            logger.error("INDI-004 jog safety abort failed: %s", exc)
+            return False
+
+    def _stop_jog_axis(self, axis: str, reason: str = "key released") -> bool:
+        axis_state = self._jog_axis_state(axis)
+        direction = axis_state.direction
+        logger.debug(  # TEMPORARY
+            "DIAG _stop_jog_axis() axis=%s reason=%r current_direction=%r at %.3f",
+            axis, reason, direction, self.clock(),
+        )
+        if not direction:
+            return True
+        try:
+            self.indi.stop_jog(direction)
+        except (AttributeError, NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
+            logger.error("INDI-004 jog stop failed (%s): %s", reason, exc)
+            if not self._best_effort_abort():
+                return False
+        axis_state.direction = ""
+        axis_state.key = ""
+        axis_state.started_at = 0.0
+        return True
+
+    def _stop_jog(self, reason: str = "key released") -> bool:
+        """Stops whichever axis/axes are currently held -- for callers
+        that don't know (or don't need to know) which one: process
+        teardown, a screen change, the bare `handle()` release path's
+        key-without-a-matching-axis case. Prefer `_stop_jog_axis()`
+        directly when the axis is already known."""
+        stopped_ns = self._stop_jog_axis("ns", reason)
+        stopped_we = self._stop_jog_axis("we", reason)
+        return stopped_ns and stopped_we
+
+    def _park_alt_az(self) -> tuple[float, float]:
+        """The configured park position (Settings page's "Park
+        Configuration"), as (alt, az) in degrees.
+
+        "zenith": straight up -- azimuth is meaningless there, any value
+        works. "home": the SynScan Alt-Az GTi's own mechanical home
+        position (tube level, pointing north) -- this specific value is
+        NOT independently confirmed against real hardware (unlike
+        "zenith", which is geometry, not a hardware fact); verify it
+        matches the actual power-on position before relying on it.
+        "custom": the saved `park_alt`/`park_az` settings directly."""
+        mode = self.settings.get("park_mode", "zenith")
+        if mode == "zenith":
+            return 90.0, 0.0
+        if mode == "home":
+            return 0.0, 0.0
+        try:
+            return float(self.settings.get("park_alt", "45")), float(self.settings.get("park_az", "180"))
+        except (TypeError, ValueError):
+            return 45.0, 180.0
+
+    def _sync_park_position(self) -> bool:
+        """BOOT_PARK_CHECK's "Yes — parked": tell the driver it's
+        actually at the configured park position instead of leaving
+        whatever RA/Dec it happened to have before the reboot --
+        confirmed on hardware as a real gap (the driver's own
+        connection setting has no memory of a previous session's
+        position; see `IndiClient.sync_alt_az()`'s docstring).
+
+        Returns whether it succeeded, so the caller only marks
+        `parked`/advances the screen on success -- same pattern as
+        `_unpark()`."""
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            latitude = longitude = 0.0
+        alt, az = self._park_alt_az()
+        try:
+            self.indi.unpark()
+            self.indi.sync_alt_az(alt, az, latitude, longitude)
+            self.indi.set_park_position(alt, az)
+            self.indi.park()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 boot park-position sync failed: %s", exc)
+            s = self.state
+            s.return_screen = "BOOT_PARK_CHECK"
+            self._devtools_message(["Could not sync park", "position with the driver", "Check Diagnostics"])
+            return False
+        return True
+
+    def _park_to_configured_position(self) -> bool:
+        """PARK_CONFIRM's "Yes" -- writes the configured Park
+        Configuration (Settings page) to the driver's own park position
+        before commanding `park()`, which otherwise slews to whatever
+        position the driver already has (its own default, or a stale
+        one from a previous session) instead of what's configured here.
+        Returns whether it succeeded, so the caller only proceeds to the
+        actual park command on success -- same pattern as
+        `_sync_park_position()`/`_unpark()`."""
+        alt, az = self._park_alt_az()
+        try:
+            self.indi.set_park_position(alt, az)
+        except (AttributeError, NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 setting park position failed: %s", exc)
+            s = self.state
+            s.return_screen = "PARK_CONFIRM"
+            self._devtools_message(["Could not set park", "position with the driver", "Check Diagnostics"])
+            return False
+        return True
+
+    def _unpark(self) -> bool:
+        """Sends the mount's own unpark command before clearing the local
+        `parked` flag — a bare `runtime.set("parked", "false")` used to
+        leave the driver itself still parked, which real drivers reject
+        every subsequent goto/sync/jog against. Returns whether it
+        succeeded, so callers only leave PARKED on success."""
+        try:
+            self.indi.unpark()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 unpark failed: %s", exc)
+            return False
+        self.runtime.set("parked", "false")
+        return True
+
+    def _unpark_for_alignment(self, return_screen: str) -> bool:
+        """Entry gate for the two flows that move the mount and then teach
+        it where it is: the boot question's "No — sync now" and Menu ->
+        Alignment. `INDI::Telescope` rejects `TELESCOPE_MOTION_*` (jog) and
+        `EQUATORIAL_EOD_COORD` writes while parked, and the driver comes back
+        up parked after every restart — so from park every input in those
+        flows was dropped by the driver while this app happily carried on,
+        leaving a position nothing had actually confirmed.
+
+        Sent unconditionally rather than when this app's own `parked` flag
+        says so: the flag is stale at boot, and `unpark()` is a no-op on a
+        driver that is already unparked (it just logs "Telescope already
+        unparked"). Returns whether the driver took it; on failure the flow
+        stops here with a message instead of running where nothing works."""
+        if self._unpark():
+            return True
+        s = self.state
+        s.return_screen = return_screen
+        self._devtools_message(["Could not unpark mount", "check INDI connection", "before aligning"])
+        return False
+
+    def _abort_slew(self) -> None:
+        """Sends the mount's own abort command before leaving the SLEW
+        screen — pressing "7" used to just switch screens without ever
+        telling the driver to stop, leaving a real mount still slewing
+        toward the (possibly wrong, pre-sync) target in the background.
+        Best-effort, same as `_jog()`'s failure handling: still shows
+        SLEW_ABORTED either way, since the UI has no better screen to
+        offer if the abort command itself fails to reach the driver."""
+        try:
+            self.indi.abort()
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
+            logger.error("INDI-002 abort failed: %s", exc)
 
     def _confirm_align_point(self) -> None:
         """Called when the wheel is pushed on ALIGN_JOG: the star picked on
@@ -565,7 +964,33 @@ class ControllerUI:
         self._set("ALIGN_STAR_PICK" if s.align_points < 2 else "ALIGN_MORE")
 
     def handle(self, key: str) -> None:
+        # TEMPORARY: key omitted on SUDO_SET -- that screen reads ENC_UP/
+        # ENC_DOWN/ENC_PUSH directly to build the sudo password digit by
+        # digit (_digits()), so logging the raw key there would let
+        # anyone reading DEBUG logs reconstruct it.
+        if self.state.screen == "SUDO_SET":
+            logger.debug("DIAG handle() screen=SUDO_SET at %.3f", self.clock())
+        else:
+            logger.debug("DIAG handle() key=%r screen=%s at %.3f", key, self.state.screen, self.clock())
         s = self.state
+        tap_key = tapped_key(key)
+        momentary = tap_key is not None
+        if momentary:
+            key = tap_key
+        up_key = released_key(key)
+        if up_key is not None:
+            # Only the input that started the active hold owns its
+            # release. Different devices can map to the same mount
+            # direction (for example keypad "2" and joystick ENC_UP both
+            # mean north) -- and each axis (NS/WE) releases independently
+            # of the other.
+            for axis in ("ns", "we"):
+                axis_state = self._jog_axis_state(axis)
+                if up_key == axis_state.key:
+                    self._stop_jog_axis(axis)
+                if up_key == axis_state.blocked_key:
+                    axis_state.blocked_key = ""
+            return
         # Keypad "3" — manual "force a full refresh" on the current
         # screen, no state change. The only way to clear ghosting left
         # over from scrolling's partial refreshes, since nothing does
@@ -585,6 +1010,8 @@ class ControllerUI:
             if self._move(key, 2): return
             if key == ENC_PUSH:
                 if s.index == 0:
+                    if not self._sync_park_position():
+                        return
                     self.runtime.set("parked", "true")
                     self._set("PARKED")
                 else:
@@ -592,7 +1019,12 @@ class ControllerUI:
                     # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
                     # below, entered here with boot_sync set so confirming
                     # the point returns to IDLE instead of looping into the
-                    # full Manual (2 stars) menu flow.
+                    # full Manual (2 stars) menu flow. Unpark first: the
+                    # driver comes back up parked after every restart, and
+                    # both the jog below and the sync at the end of it are
+                    # rejected while parked.
+                    if not self._unpark_for_alignment("BOOT_PARK_CHECK"):
+                        return
                     s.boot_sync = True
                     s.align_points = 0
                     self._set("ALIGN_STAR_PICK")
@@ -606,7 +1038,17 @@ class ControllerUI:
             return
         if s.screen == "IDLE":
             if self._move(key, len(self.HOME)): return
+            # Manual jog from the home screen, not just TRACK/ALIGN_JOG --
+            # requested so the mount can be nudged without first starting
+            # a slew or alignment. _move() above already claims
+            # ENC_UP/ENC_DOWN/"1"/"7" for Home menu navigation and
+            # returns early for them, so only the keys it doesn't use
+            # (keypad 2/4/6/8, and the external joystick's X-axis) ever
+            # reach _jog() here -- the rotary encoder still scrolls HOME
+            # exactly as before.
+            if self._jog(key, momentary=momentary): return
             if key == ENC_PUSH:
+                s.return_screen = "IDLE"
                 self._set(("MENU", "CATALOG_MENU", "DEVTOOLS")[s.index]); s.digits = []
             elif key == "7": self._speed("IDLE")
             elif key == FN2: self._set("FN2_EASTER")
@@ -627,7 +1069,10 @@ class ControllerUI:
             if key == "9": self._set("CATALOG_MENU", 1)
             elif key == ENC_PUSH and rows:
                 row = rows[s.index]; s.catalog_id = row["id"]
-                s.list_items = [SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]) for i in self.catalogs.list_items(row["id"])]
+                s.list_items = [
+                    self._with_live_alt(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]))
+                    for i in self.catalogs.list_items(row["id"])
+                ]
                 s.catalog_title = row["name"]; self._set("LIST")
             return
         if s.screen == "LIST":
@@ -646,14 +1091,14 @@ class ControllerUI:
             elif key == "9": self._set(s.return_screen)
             return
         if s.screen == "SLEW":
-            if key == "7": self._set("SLEW_ABORTED")
+            if key == "7": self._abort_slew(); self._set("SLEW_ABORTED")
             return
         if s.screen == "SLEW_ABORTED":
             if key == ENC_PUSH: self._begin_slew()
             elif key == "9": self._set("IDLE")
             return
         if s.screen == "TRACK":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "9": self._set("IDLE")
             elif key == "7": self._speed("TRACK")
             return
@@ -684,7 +1129,7 @@ class ControllerUI:
                 self._set("ALIGN_JOG")
             return
         if s.screen == "ALIGN_JOG":
-            if self._jog(key): return
+            if self._jog(key, momentary=momentary): return
             if key == "7": self._speed("ALIGN_JOG")
             elif key == "9":
                 if s.boot_sync: self._set("ALIGN_STAR_PICK")
@@ -711,18 +1156,45 @@ class ControllerUI:
             if self._move(key, 2): return
             if key == "9" or (key == ENC_PUSH and s.index == 1): self._set("MENU", 2)
             elif key == ENC_PUSH:
+                if not self._park_to_configured_position():
+                    return
                 try:
                     self.indi.park()
                 except (NotImplementedError, ConnectionError) as exc:
                     logger.error("INDI-002 park failed: %s", exc)
                     return
-                s.transition_at = self.clock() + 1.5
+                s.transition_at = self.clock() + PARK_CONFIRM_TIMEOUT_SECONDS
                 self._set("PARKING")
             return
         if s.screen == "PARKED":
-            if self._move(key, 2): return
-            if key == ENC_PUSH and s.index == 0: self.runtime.set("parked", "false"); self._set("IDLE")
-            elif key == ENC_PUSH: self._shutdown()
+            if self._move(key, 4): return
+            if key == "9":
+                # Same destination as the Home option below -- PARKED handled
+                # no keys at all apart from the wheel, so the owner was stuck
+                # here until they unparked or powered off.
+                self._set("IDLE")
+            elif key == ENC_PUSH and s.index == 0:
+                if self._unpark(): self._set("IDLE")
+            elif key == ENC_PUSH and s.index == 1: self._shutdown()
+            elif key == ENC_PUSH and s.index == 3:
+                # Home while staying parked, with nothing sent to the mount:
+                # getting at the home screen (and through it Menu -> Wi-Fi /
+                # Web access for the Web UI code) must not cost a motion
+                # command. The driver keeps its own parked state and this
+                # app's `parked` flag stays true, so unparking is still an
+                # explicit choice -- Unpark above, or Menu -> Park / Unpark
+                # once on Home.
+                self._set("IDLE")
+            elif key == ENC_PUSH:
+                # Dev Tools from PARKED without unparking first -- unparking
+                # is a real mount motion the owner shouldn't have to trigger
+                # just to reach a settings menu. s.return_screen (read by
+                # _digits()/_devtools_code()/every Dev Tools subscreen's "9")
+                # makes the whole subtree come back here instead of
+                # defaulting to IDLE, which would wrongly suggest the mount
+                # had been unparked.
+                s.return_screen = "PARKED"
+                self._set("DEVTOOLS"); s.digits = []
             return
         if s.screen == "WIFI_ACCESS":
             if key in ("9", ENC_PUSH): self._set("MENU", 3)
@@ -751,37 +1223,80 @@ class ControllerUI:
         if s.screen in {"DEVTOOLS", "SUDO_SET"}: self._digits(key); return
         if s.screen == "DEV_REPO_SELECT":
             if self._move(key, len(self.REPOS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
                 self.settings.set("update_repo", self.REPOS[s.index])
-                self._set("IDLE")
+                self._set(s.return_screen)
             return
         if s.screen == "DEV_CHANNEL_SELECT":
             if self._move(key, len(self.UPDATE_CHANNELS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
                 self.settings.set("update_channel", self.UPDATE_CHANNELS[s.index][0])
-                self._set("IDLE")
+                self._set(s.return_screen)
             return
         if s.screen == "IFACE_SELECT":
             if self._move(key, len(self.MOUNT_INTERFACES)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH:
-                self.settings.set("mount_interface", self.MOUNT_INTERFACES[s.index][0])
-                self._set("IDLE")
+                selected = self.MOUNT_INTERFACES[s.index][0]
+                if selected == "bluetooth" and self.settings.get("bluetooth_mount_paired", "0") != "1":
+                    # Not paired yet — scan instead of just recording the
+                    # choice, since there's no mount to talk to otherwise.
+                    self._start_bluetooth_scan()
+                elif selected == "wifi":
+                    self._connect_mount_wifi()
+                elif selected == "synscan_app":
+                    self._connect_mount_app()
+                else:
+                    self.settings.set("mount_interface", selected)
+                    self._set(s.return_screen)
+            return
+        if s.screen == "CONNECTION":
+            if self._move(key, 1): return
+            if key == "9": self._set("MENU", 11); return
+            if key == ENC_PUSH:
+                s.return_screen = "CONNECTION"
+                self._menu_reconnect()
             return
         if s.screen == "DEV_SCRIPT_SELECT":
             if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH and s.dev_scripts: self._run_custom_script(s.dev_scripts[s.index])
+            return
+        if s.screen == "DEV_OFFICIAL_SCRIPT_SELECT":
+            if self._move(key, max(1, len(s.dev_scripts)), wrap=False): return
+            if key == "9": self._set(s.return_screen); return
+            if key == ENC_PUSH and s.dev_scripts: self._run_official_script(s.dev_scripts[s.index])
             return
         if s.screen == "WIFI_SWITCH_SELECT":
             if self._move(key, len(self.WIFI_SWITCH_SLOTS)): return
-            if key == "9": self._set("IDLE"); return
+            if key == "9": self._set(s.return_screen); return
             if key == ENC_PUSH: self._devtools_wifi_switch(self.WIFI_SWITCH_SLOTS[s.index])
             return
+        if s.screen == "BT_SCAN_SELECT":
+            if self._move(key, max(1, len(s.bt_scan_results)), wrap=False): return
+            if key == "9": self._set(s.return_screen); return
+            if key == ENC_PUSH and s.bt_scan_results:
+                mac, name = s.bt_scan_results[s.index]
+                self._devtools_bluetooth_pair(mac, name)
+            return
         if s.screen == "DEV_MESSAGE":
-            if key in ("9", ENC_PUSH): self._set("IDLE")
+            if key in ("9", ENC_PUSH): self._set(s.return_screen)
+            return
+        if s.screen == "UPDATE_STATUS":
+            # Just hides it -- the update (a separate process,
+            # `install/update.py`) keeps running either way; there is
+            # nothing here to cancel. `update_dismissed` stops
+            # `_poll_update_status` from immediately bringing it right
+            # back on the very next tick while the same update is still
+            # running.
+            if key in ("9", ENC_PUSH):
+                s.update_dismissed = True
+                self._set("IDLE")
+            return
+        if s.screen == "UPDATE_RESULT":
+            if key in ("9", ENC_PUSH): self._set("BOOT_PARK_CHECK")
             return
         if s.screen == "SYSTEM_CONFIRM":
             if key == "9": self._set("MENU", 9)
@@ -794,8 +1309,10 @@ class ControllerUI:
             self._set(s.return_screen)
             return
         if s.screen in {"WIFI_SETUP", "DRIVER_SELECT"} and key in ("9", ENC_PUSH):
-            # Both are only reachable via Dev Tools codes (5000/5555) — back always goes to IDLE.
-            self._set("IDLE")
+            # Both are only reachable via Dev Tools codes (5000/5555) — back
+            # goes to wherever Dev Tools itself was opened from (IDLE, or
+            # PARKED without having to unpark first).
+            self._set(s.return_screen)
             return
         if s.screen in {"ALIGN_SMART_NA", "FN2_EASTER"} and key in ("9", ENC_PUSH):
             self._set("ALIGN_CHOOSE" if s.screen == "ALIGN_SMART_NA" else "IDLE")
@@ -806,14 +1323,28 @@ class ControllerUI:
     def _select_menu(self) -> None:
         s = self.state
         if s.index == 0: self._set("TIME_SYNC")
-        elif s.index == 1: self._set("ALIGN_CHOOSE")
+        elif s.index == 1:
+            # Alignment jogs the mount to center each star and then syncs
+            # it; the driver rejects both while parked (see BOOT_PARK_CHECK's
+            # "No — sync now").
+            if not self._unpark_for_alignment("MENU"):
+                return
+            self._set("ALIGN_CHOOSE")
         elif s.index == 2:
-            if self._truth(self.runtime.get("parked", "false")): self.runtime.set("parked", "false"); self._set("IDLE")
+            if self._truth(self.runtime.get("parked", "false")):
+                if self._unpark(): self._set("IDLE")
             else: self._set("PARK_CONFIRM")
         elif s.index == 3:
-            s.access_code = f"{random.SystemRandom().randrange(100000, 1000000)}"
-            s.access_expires = self.clock() + 600; s.access_last_remaining = -1
-            self.codes.issue(s.access_code, 600); self._set("WIFI_ACCESS")
+            # Only mint a fresh code (and restart the 10-minute countdown)
+            # when the current one is gone or expired — just reopening this
+            # menu entry to glance at the remaining time used to invalidate
+            # a still-valid, already-in-use code every time.
+            if not s.access_code or self.clock() >= s.access_expires:
+                s.access_code = f"{random.SystemRandom().randrange(100000, 1000000)}"
+                s.access_expires = self.clock() + 600
+                self.codes.issue(s.access_code, 600)
+            s.access_last_remaining = -1
+            self._set("WIFI_ACCESS")
         elif s.index == 4: self._set("LOCATION")
         elif s.index == 5: self._set("BACKLIGHT")
         elif s.index == 6:
@@ -826,7 +1357,8 @@ class ControllerUI:
             self._set("THEME", keys.index(current) if current in keys else 0)
         elif s.index == 8: s.digits = []; s.digit_value = 0; self._set("SUDO_SET")
         elif s.index == 9: self._set("SYSTEM_CONFIRM")
-        else: self._set("ABOUT")
+        elif s.index == 10: self._set("ABOUT")
+        else: self._set("CONNECTION")
 
     def _open_catalog(self) -> None:
         s = self.state
@@ -839,8 +1371,35 @@ class ControllerUI:
     def _local_objects(self) -> list[SearchResult]:
         objects = [item for values in BUILTIN_CATALOGS.values() for item in values]
         for catalog in self.catalogs.list_catalogs():
-            objects.extend(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]) for i in self.catalogs.list_items(catalog["id"]))
+            objects.extend(
+                self._with_live_alt(SearchResult(i["name"], i["ra"], i["dec"], i["type"], i["source"]))
+                for i in self.catalogs.list_items(catalog["id"])
+            )
         return objects
+
+    def _with_live_alt(self, obj: SearchResult) -> SearchResult:
+        """Fill in `obj.alt` from its RA/Dec plus the configured observer
+        location and the current time, when it doesn't already have one.
+        Custom catalog items (`shared/db.py`'s `CatalogItem`, via the Web
+        UI) and online SmartSearch/Sesame results never carry an `alt` --
+        unlike `BUILTIN_CATALOGS`'s demo entries, nothing computed one for
+        them, so they always showed "Alt: --" (and, worse, silently never
+        triggered the below-horizon warning in `_confirm_slew`). Returns
+        `obj` unchanged if it already has an `alt`, or if its RA/Dec can't
+        be parsed, or the device has no location configured yet."""
+        if obj.alt is not None:
+            return obj
+        ra_deg = astro.ra_to_degrees(obj.ra)
+        dec_deg = astro.dec_to_degrees(obj.dec)
+        if ra_deg is None or dec_deg is None:
+            return obj
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            return obj
+        alt = astro.altitude_degrees(ra_deg, dec_deg, latitude, longitude, self.clock())
+        return replace(obj, alt=alt)
 
     def _type(self, key: str) -> None:
         s = self.state
@@ -858,6 +1417,7 @@ class ControllerUI:
         s.t9_at = now; self.render(coalesce=True)
 
     def _confirm_slew(self, obj: SearchResult, return_screen: str) -> None:
+        obj = self._with_live_alt(obj)
         self.state.selected = obj; self.state.return_screen = return_screen
         if not self._truth(self.runtime.get("aligned", "false")) or (obj.alt is not None and obj.alt < 0): self._set("WARN")
         else: self._begin_slew()
@@ -871,11 +1431,22 @@ class ControllerUI:
             return
         try:
             self.indi.goto(obj.ra, obj.dec)
-        except (NotImplementedError, ConnectionError) as exc:
+        except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-002 goto failed: %s", exc)
+            self._best_effort_abort()
             self._set(self.state.return_screen)
             return
-        self.state.transition_at = self.clock() + 1.5
+        # runtime["tracking"] is only ever refreshed by _refresh_status()'s
+        # periodic get_status() poll (no synchronous reset the way
+        # _unpark() clears "parked" immediately) -- if the mount was
+        # already tracking a previous target, that stale "true" would
+        # otherwise still be sitting there on the very next tick() (run()
+        # calls it right after handle()), letting _poll_slew() promote
+        # straight to TRACK before any post-goto sample confirms the NEW
+        # slew has actually arrived. Clearing it here forces _poll_slew()
+        # to wait for a fresh sample.
+        self.runtime.set("tracking", "false")
+        self.state.transition_at = self.clock() + SLEW_CONFIRM_TIMEOUT_SECONDS
         self._set("SLEW")
 
     def _digits(self, key: str) -> None:
@@ -887,7 +1458,7 @@ class ControllerUI:
             key = ENC_UP
         elif key == "7":
             key = ENC_DOWN
-        if key == "9": self._set("IDLE" if s.screen == "DEVTOOLS" else "MENU"); return
+        if key == "9": self._set(s.return_screen if s.screen == "DEVTOOLS" else "MENU"); return
         if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
         if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return
         if key == ENC_PUSH:
@@ -896,6 +1467,8 @@ class ControllerUI:
                 code = "".join(map(str, s.digits))
                 if s.screen == "SUDO_SET":
                     self.settings.set_password("sudo_password", code)
+                    self.settings.set("sudo_password_is_default", "0")
+                    self.runtime.delete("sudo_password_first_boot")
                     self._set("MENU")
                 else:
                     self._devtools_code(code)
@@ -905,7 +1478,7 @@ class ControllerUI:
         """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
         full table, which must stay in sync with this method."""
         if code == "0000":
-            self._set("IDLE")
+            self._set(self.state.return_screen)
         elif code == "0022":
             current = self.settings.get("update_repo", self.REPOS[0])
             self._set("DEV_REPO_SELECT", self.REPOS.index(current) if current in self.REPOS else 0)
@@ -931,9 +1504,14 @@ class ControllerUI:
             ifaces = [k for k, _ in self.MOUNT_INTERFACES]
             current = self.settings.get("mount_interface", ifaces[0])
             self._set("IFACE_SELECT", ifaces.index(current) if current in ifaces else 0)
+        elif code == "9601":
+            self._start_bluetooth_scan()
         elif code == "9955":
             self.state.dev_scripts = self._list_custom_scripts()
             self._set("DEV_SCRIPT_SELECT")
+        elif code == "9956":
+            self.state.dev_scripts = self._list_official_scripts()
+            self._set("DEV_OFFICIAL_SCRIPT_SELECT")
         elif code == "9999":
             self._devtools_message(["Why did the astronomer", "break up with the Moon?", "Because it needed space."])
         elif code == "4200":
@@ -962,7 +1540,49 @@ class ControllerUI:
             "System Info",
             f"{self._local_ip()} · {socket.gethostname()}.local",
             f"Uptime {self._uptime()} · INDI {'up' if connected else 'down'}",
+            f"Web UI: http://{self._local_ip()}:8080/",
         ])
+
+    @staticmethod
+    def _subprocess_failure_detail(exc: Exception) -> str:
+        """The real reason a sudo'd Dev Tools subprocess failed, for the
+        one-line status screen — `str(CalledProcessError)` is just a repr
+        of the command and its exit code ("Command '[...]' returned
+        non-zero exit status 1."), which told the owner nothing they
+        didn't already know and used to be all that got shown (truncated
+        to 32 chars, e.g. "Command '['sudo', '/usr/local/s"). Prefer the
+        failed command's own stderr/stdout — e.g. bluetoothctl's "No
+        default controller available" — when there is any."""
+        if isinstance(exc, subprocess.CalledProcessError):
+            for stream in (exc.stderr, exc.stdout):
+                if stream:
+                    lines = [line.strip() for line in stream.strip().splitlines() if line.strip()]
+                    if lines:
+                        return lines[-1][:42]
+            return f"exit status {exc.returncode}"
+        return str(exc)[:42]
+
+    @staticmethod
+    def _time_sync_status() -> tuple[bool, str]:
+        """Ask systemd whether the clock has actually been synchronized
+        against NTP, and via what — the Menu's Time Sync screen used to
+        claim "Time synchronized using system NTP" unconditionally, with
+        no real check behind it."""
+        try:
+            result = subprocess.run(
+                ["timedatectl", "show", "-p", "NTPSynchronized", "-p", "NTP", "--value"],
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            lines = result.stdout.splitlines()
+            synced = lines[0].strip() == "yes" if lines else False
+            ntp_enabled = lines[1].strip() == "yes" if len(lines) > 1 else False
+        except (OSError, subprocess.SubprocessError, IndexError):
+            return False, "NTP status unknown"
+        if synced:
+            return True, "via systemd-timesyncd (NTP)"
+        if ntp_enabled:
+            return False, "NTP enabled, not synced yet"
+        return False, "NTP is disabled"
 
     @staticmethod
     def _uptime() -> str:
@@ -989,7 +1609,13 @@ class ControllerUI:
         self._devtools_message([status, f"{self._local_ip()} · {socket.gethostname()}.local", "user: japyscope"])
 
     def _open_wifi_switch_select(self) -> None:
-        primary = self.settings.get("wifi_ssid", "") or "(not configured)"
+        # Primary's SSID is only ever known here if it was set up via /setup
+        # — a device whose Wi-Fi was configured some other way (Raspberry Pi
+        # Imager, raspi-config, by hand) never recorded one, even though
+        # that network is what's actually working. "(unknown)" rather than
+        # "(not configured)" for that case — switching to it below doesn't
+        # need this label to be right, it's display-only.
+        primary = self.settings.get("wifi_ssid", "") or "(unknown)"
         secondary = self.settings.get("wifi_ssid_secondary", "") or "(not configured)"
         self.state.wifi_switch_labels = [f"Primary: {primary}", f"Secondary: {secondary}"]
         active = self.settings.get("wifi_active_slot", "primary")
@@ -997,9 +1623,14 @@ class ControllerUI:
         self._set("WIFI_SWITCH_SELECT", index)
 
     def _devtools_wifi_switch(self, slot: str) -> None:
-        ssid_key = "wifi_ssid" if slot == "primary" else "wifi_ssid_secondary"
-        if not self.settings.get(ssid_key, ""):
-            self._devtools_message([f"{slot.capitalize()} not set up", "Configure it in the Web UI", "System page first"])
+        # Only secondary needs a guard: it's the one slot JapyScope actually
+        # creates, so nothing-saved-yet is a real "can't do this". Primary
+        # is deliberately never gated on knowing its SSID — switching to it
+        # means "stop overriding with secondary", which install/
+        # wifi-switch.sh can always do regardless of whether this device's
+        # Wi-Fi was ever set up through /setup (see its own comment).
+        if slot == "secondary" and not self.settings.get("wifi_ssid_secondary", ""):
+            self._devtools_message(["Secondary not set up", "Configure it in the Web UI", "System page first"])
             return
         try:
             subprocess.run(["sudo", "/usr/local/sbin/japyscope-wifi-switch", slot], check=True, timeout=30)
@@ -1009,6 +1640,258 @@ class ControllerUI:
             return
         self.settings.set("wifi_active_slot", slot)
         self._devtools_message([f"Switched to {slot}", "Rejoin that network", "to keep using the Web UI"])
+
+    def _start_bluetooth_scan(self) -> None:
+        """Dev Tools codes 9600 (first-time Bluetooth pick) and 9601
+        (re-pair). Blocks the UI for the scan's duration — same tradeoff
+        as the other synchronous sudo'd Dev Tools actions, but longer
+        (~8s) since it's a real radio scan; the message painted first is
+        the only feedback until it's done."""
+        self.state.dev_message = ["Scanning Bluetooth...", "(about 8 seconds)"]
+        self._set("DEV_MESSAGE")
+        try:
+            result = subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "scan", "8"],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Bluetooth scan failed: %s", exc)
+            self._devtools_message(["Bluetooth scan failed", self._subprocess_failure_detail(exc)])
+            return
+        devices: list[tuple[str, str]] = []
+        for line in result.stdout.splitlines():
+            mac, _, name = line.partition("|")
+            if mac:
+                devices.append((mac, name or mac))
+        self.state.bt_scan_results = devices
+        if not devices:
+            self._devtools_message(["No Bluetooth devices found", "Check the mount is on", "and in range, then retry"])
+            return
+        self._set("BT_SCAN_SELECT")
+
+    def _devtools_bluetooth_pair(self, mac: str, name: str) -> None:
+        try:
+            subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-bluetooth-mount", "pair", mac],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("Dev Tools: Bluetooth pairing with %s failed: %s", mac, exc)
+            self._devtools_message([
+                "Pairing failed", name[:21], self._subprocess_failure_detail(exc), "pair once over SSH",
+            ])
+            return
+        self.settings.set("bluetooth_mount_paired", "1")
+        self.settings.set("mount_interface", "bluetooth")
+        self._devtools_message([f"Paired: {name[:21]}", "Bluetooth is now the", "active mount interface"])
+
+    def _indi_setprop_steps(self, indi_host: str, indi_port: str, steps: list[str]) -> Optional[Exception]:
+        """Runs each `indi_setprop` step in order, returning the first
+        failure (or `None` on full success). Retries briefly, but only
+        on exit code 2 -- per indi_setprop's own source
+        (tools/setINDIproperty.c), that's specifically what
+        openINDIServer() raises on a plain connect() failure to
+        indiserver itself (the local control channel, not the mount),
+        which is exactly the transient case a just-restarted indiserver
+        can hit. Anything else (a malformed/unknown property) won't fix
+        itself on retry."""
+        for step in steps:
+            exc: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    subprocess.run(
+                        ["indi_setprop", "-h", indi_host, "-p", indi_port, step],
+                        capture_output=True, text=True, check=True, timeout=10,
+                    )
+                    exc = None
+                    break
+                except (OSError, subprocess.SubprocessError) as retry_exc:
+                    exc = retry_exc
+                    retryable = isinstance(exc, subprocess.CalledProcessError) and exc.returncode == 2
+                    if attempt < 2 and retryable:
+                        time.sleep(1)
+                    else:
+                        break
+            if exc is not None:
+                return exc
+        return None
+
+    def _indi_getprop(self, indi_host: str, indi_port: str, spec: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["indi_getprop", "-1", "-h", indi_host, "-p", indi_port, spec],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Dev Tools: indi_getprop %s failed: %s", spec, exc)
+            return None
+        return result.stdout.strip()
+
+    def _reconnect_mount_interface(self) -> None:
+        """Replays whichever mount interface was last selected via Dev
+        Tools 9600 (`settings["mount_interface"]`) -- the connection
+        setting `indi_skywatcherAltAzMount` actually uses lives on the
+        driver process, not in this app's own SQLite state, so a freshly
+        started indiserver has no memory of a previous boot's choice.
+        Confirmed on hardware: without this, `mount_interface` already
+        says "wifi" and `mount_wifi_host` is already saved, but every
+        status poll fails after a reboot until the owner reopens Dev
+        Tools and picks WiFi again manually.
+
+        Logs and gives up quietly on failure -- the owner can still fix
+        it via Dev Tools -- rather than blocking the whole boot on a
+        mount that may simply be off or out of range right now."""
+        interface = self.settings.get("mount_interface", "rj12")
+        if interface not in ("wifi", "synscan_app"):
+            return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
+        device = self.INDI_MOUNT_DEVICE
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            logger.error("Boot: mount_interface is %s but no mount_wifi_host is saved; skipping reconnect", interface)
+            return
+        port = self.INDI_MOUNT_WIFI_PORT if interface == "wifi" else self.settings.get("mount_app_port", "")
+        if not port:
+            logger.error("Boot: mount_interface is synscan_app but no mount_app_port is saved; skipping reconnect")
+            return
+        steps = [
+            f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+            f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+            f"{device}.DEVICE_ADDRESS.PORT={port}",
+            f"{device}.CONNECTION.CONNECT=On",
+        ]
+        exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+        if exc is not None:
+            logger.error("Boot: mount %s reconnect to %s:%s failed: %s", interface, host, port, exc)
+
+    def _sync_indi_location_and_time(self) -> None:
+        """
+        Best-effort, same as _reconnect_mount_interface(): logs and
+        continues on failure rather than blocking boot on it."""
+        try:
+            latitude = float(self.settings.get("latitude", "0.0"))
+            longitude = float(self.settings.get("longitude", "0.0"))
+        except (TypeError, ValueError):
+            return
+        try:
+            self.indi.set_location(latitude, longitude)
+            self.indi.set_time()
+        except (NotImplementedError, ConnectionError) as exc:
+            logger.error("INDI-002 setting location/time failed: %s", exc)
+
+    def _menu_reconnect(self) -> None:
+        """Menu -> Connection -> Reconnect: the same WiFi/app reconnect
+        `_reconnect_mount_interface()` already replays silently at boot,
+        but triggerable on demand and with real feedback on the panel --
+        for when the mount was off/out of range at boot and is now back,
+        without waiting for the next reboot or hunting for the Dev Tools
+        9600 code. Reuses `_connect_mount_wifi()`/`_connect_mount_app()`
+        directly: same indi_setprop sequence, same success/failure
+        message, same `mount_interface` persistence on success."""
+        interface = self.settings.get("mount_interface", "rj12")
+        if interface == "wifi":
+            self._connect_mount_wifi()
+        elif interface == "synscan_app":
+            self._connect_mount_app()
+        else:
+            label = dict(self.MOUNT_INTERFACES).get(interface, interface)
+            self._devtools_message([
+                f"{label} has no", "automatic reconnect yet", "see docs/WIRING.md",
+            ])
+
+    def _connect_mount_wifi(self) -> None:
+        """Dev Tools code 9600's "WiFi" choice. Points the already-running
+        indi_skywatcherAltAzMount driver (firmware/indi/manager.py) at the
+        mount's SynScan WiFi module over the network instead of a serial
+        port, using indi_setprop directly (bundled with indi-bin, same
+        subprocess style firmware/indi/client.py's IndiClient itself now
+        uses for get_status/sync/goto/park/jog) — this is about which
+        transport the driver talks to the mount over, unrelated to that."""
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            self._devtools_message([
+                "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
+            ])
+            return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
+        device = self.INDI_MOUNT_DEVICE
+        steps = [
+            f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+            f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+            f"{device}.DEVICE_ADDRESS.PORT={self.INDI_MOUNT_WIFI_PORT}",
+            f"{device}.CONNECTION.CONNECT=On",
+        ]
+        exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+        if exc is not None:
+            logger.error("Dev Tools: mount WiFi connect failed: %s", exc)
+            self._devtools_message(["Mount WiFi connect failed", self._subprocess_failure_detail(exc)])
+            return
+        self.settings.set("mount_interface", "wifi")
+        self._devtools_message(["Connecting via WiFi", host, "now the active mount interface"])
+
+    def _connect_mount_app(self) -> None:
+        """Dev Tools code 9600's "SynScan/Stellarium app" choice.
+
+        Unlike _connect_mount_wifi() (one fixed port, 11880, for the
+        mount's own SynScan WiFi module), this is for the handful of
+        other ports planetarium/mobile apps are known to use when they
+        expect to be the ones listening, or connecting to a
+        differently-configured relay: SynScan Pro app (11881), "SynScan"
+        (11882), and Stellarium's own telescope-server protocol (10001).
+        None of these three are independently confirmed against this
+        project's actual hardware yet (unlike every other property in
+        this file — see firmware/indi/client.py's module docstring) —
+        this tries each in turn and keeps the first the driver can
+        actually read EQUATORIAL_EOD_COORD back from, rather than assume
+        indi_setprop's success (which only means indiserver accepted the
+        request, not that the driver reached anything at that address —
+        see _indi_setprop_steps' docstring). A real packet capture from
+        Stellarium/SynScan Pro would let this be narrowed to the one
+        port that's actually right instead of a guess-and-check list."""
+        host = self.settings.get("mount_wifi_host", "")
+        if not host:
+            self._devtools_message([
+                "No mount WiFi IP set", "Set it in Web UI ->", "System first, then retry",
+            ])
+            return
+        indi_host = str(getattr(self.indi, "host", "localhost"))
+        indi_port = str(getattr(self.indi, "port", 7624))
+        device = self.INDI_MOUNT_DEVICE
+        last_exc: Optional[Exception] = None
+        for port, label in self.INDI_MOUNT_APP_PORTS:
+            steps = [
+                f"{device}.CONNECTION_MODE.CONNECTION_TCP=On",
+                f"{device}.DEVICE_ADDRESS.ADDRESS={host}",
+                f"{device}.DEVICE_ADDRESS.PORT={port}",
+                f"{device}.CONNECTION.CONNECT=On",
+            ]
+            exc = self._indi_setprop_steps(indi_host, indi_port, steps)
+            if exc is not None:
+                last_exc = exc
+                logger.error("Dev Tools: mount app connect via %s (%s) failed to set up: %s", label, port, exc)
+                continue
+            # CONNECT=On only means indiserver accepted the request --
+            # the driver's own TCP connect to the mount happens async.
+            # Give it a moment, then check whether it actually came up.
+            connected = False
+            for _ in range(5):
+                time.sleep(1)
+                if self._indi_getprop(indi_host, indi_port, f"{device}.CONNECTION.CONNECT") == "On":
+                    connected = True
+                    break
+            if connected:
+                self.settings.set("mount_interface", "synscan_app")
+                self.settings.set("mount_app_port", str(port))
+                self._devtools_message([f"Connected: {label}", f"{host}:{port}", "now the active mount interface"])
+                return
+            logger.error("Dev Tools: mount app connect via %s (%s) did not come up", label, port)
+            # Best-effort: back out before trying the next port instead
+            # of leaving the driver mid-connect-attempt to this one.
+            self._indi_setprop_steps(indi_host, indi_port, [f"{device}.CONNECTION.DISCONNECT=On"])
+        detail = self._subprocess_failure_detail(last_exc) if last_exc is not None else "no port responded"
+        self._devtools_message(["Mount app connect failed", detail, "tried app/SynScan/Stellarium ports"])
 
     @staticmethod
     def _local_ip() -> str:
@@ -1040,4 +1923,33 @@ class ControllerUI:
             self._devtools_message([f"Running {name}", "", "(started in background)"])
         except OSError as exc:
             logger.error("Dev Tools: failed to run script %s: %s", name, exc)
+            self._devtools_message([f"Failed to run {name}", str(exc)[:32]])
+
+    def _list_official_scripts(self) -> list[str]:
+        """Dev Tools code 9956 — unlike 9955's local ~/custom scripts,
+        these are fetched from github.com/japyscope/scripts and only ever
+        run after their checksum is verified against that repo's own
+        SHA256SUMS (install/official-script-runner.sh does both the
+        listing and the verification — this just asks it what's there)."""
+        try:
+            result = subprocess.run(
+                ["sudo", "/usr/local/sbin/japyscope-run-official-script", "list"],
+                capture_output=True, text=True, check=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Dev Tools: could not list official scripts: %s", exc)
+            return []
+        return sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+    def _run_official_script(self, name: str) -> None:
+        # Fire-and-forget, same as _run_custom_script — the privileged
+        # helper does its own download+checksum-verify+execute inline
+        # before this returns, which can take a while (network fetch
+        # plus whatever the script itself does), so this doesn't block
+        # the UI waiting for it.
+        try:
+            subprocess.Popen(["sudo", "/usr/local/sbin/japyscope-run-official-script", "run", name])
+            self._devtools_message(["Verifying & running", name, "(started in background)"])
+        except OSError as exc:
+            logger.error("Dev Tools: failed to run official script %s: %s", name, exc)
             self._devtools_message([f"Failed to run {name}", str(exc)[:32]])

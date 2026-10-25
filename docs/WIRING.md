@@ -9,16 +9,10 @@ permalink: /wiring/
 Single source of truth for how the Raspberry Pi Zero W is wired. Update this
 file (not a second copy elsewhere) as each build phase confirms real pins.
 
-Status: **Fáza 1beta / 1** — most pin numbers below are the firmware's
-current defaults (`firmware/hal/*/keypad.py`,
-`firmware/hal/display/epaper.py`, `firmware/hal/input/joystick.py`), not yet
-verified against a soldered board. Cross-check before trusting a pin.
-
-## Mount connection (RJ12, not RJ45)
+## Mount connection (RJ12)
 {: #mount-connection}
 
-The controller connects directly to the mount's **RJ12** "Hand Control" port
-— this bypasses the stock SynScan hand controller entirely and speaks the
+The controller connects directly to the mount's **RJ12** "Hand Control" port(Also supports Wi-Fi, see below) and speaks the
 Sky-Watcher Motor Controller Command Set protocol directly (same principle
 as an EQDIRECT cable).
 
@@ -27,10 +21,6 @@ as an EQDIRECT cable).
 - Pi Zero W UART (`/dev/serial0`) ↔ level shifter ↔ RJ12 pins carrying
   TX/RX/GND.
 
-**Confirmed** (Fáza 1beta), clip facing down / contacts up / counted left to
-right, through a 4-channel level shifter (HV side = 5V mount, LV side =
-3.3V Pi):
-
 | RJ12 pin | Signal | Via | Pi pin |
 |---|---|---|---|
 | 1 | EXPD+ | — | not wired |
@@ -38,7 +28,7 @@ right, through a 4-channel level shifter (HV side = 5V mount, LV side =
 | 3 | GND | shifter HV GND + LV GND (shared) | GND |
 | 4 | EXPD-/NC | — | not wired |
 | 5 | data | shifter HV2 → LV2 | GPIO15 (RXD) or GPIO14 (TXD) |
-| 6 | +12V | — | **not wired — never to shifter or Pi** |
+| 6 | +12V | — | **never connect to shifter or Pi** |
 
 Shifter HV-VCC → Pi 5V (physical pin 2/4). Shifter LV-VCC → Pi 3V3
 (physical pin 1). TX/RX direction is the only ambiguity and swapping it is
@@ -47,49 +37,46 @@ harmless — if the mount doesn't respond, swap pins 2/5 at the Pi end.
 Unused: RJ12 pins 1 (white), 4 (yellow), 6 (red) — trim short and insulate,
 do not connect pin 6 (+12V) to the level shifter or Pi.
 
-### Optional: Bluetooth instead of the RJ12 cable
-{: #mount-bluetooth}
+### Optional: WiFi (SynScan) instead of RJ12/Bluetooth
 
-Ján's 16" Sky-Watcher Flextube Dobson (an older, now-discontinued series)
-has a built-in Bluetooth module. If — and only if — that module is a
-transparent SPP (Serial Port Profile) link carrying the same SynScan serial
-protocol the RJ12 port carries (confirm this before relying on it; some
-factory BT dongles only talk to the SynScan Pro phone app's own framing,
-not a plain serial pass-through), it can replace the RJ12/level-shifter
-wiring above entirely — which also removes the one metal path tying the
-controller's ground to the mount's, a candidate fix for the ground-loop
-issue seen on this setup.
+Mounts whose built-in module exposes Sky-Watcher's SynScan WiFi adapter
+(the same ESP-WROOM-style chip used across Sky-Watcher's WiFi products —
+AZ-GTi, Freedom-Find bases, the standalone SynScan WiFi Adapter) can be
+reached over the network instead of RJ12 or Bluetooth. Unlike Bluetooth,
+this one **is** wired end-to-end at the INDI level: `indi_skywatcherAltAzMount`
+has built-in support for a network connection (the standard INDI
+`Connection::TCP` plugin), and the module itself is just a transparent
+serial↔UDP bridge for the same SynScan protocol RJ12 carries (confirmed
+against independent open-source reimplementations of it, e.g.
+[`emard/esp32synscan`](https://github.com/emard/esp32synscan)) — no custom
+protocol work needed.
 
-One-time pairing/bind, over SSH (Dev Tools code `0044`), not from the
-device UI — entering a MAC address on the 3x4 keypad isn't practical:
+1. Find the module's IP: `192.168.4.1` if it's in its own Access Point
+   mode (its default `SynScan_WiFi_xxxx` network), or its DHCP-assigned
+   LAN IP if it's in Station mode joined to your own WiFi (check your
+   router's client list).
+2. Save that IP in the Web UI → System → "Mount WiFi (SynScan)".
+3. Dev Tools code `9600` → WiFi — this runs `indi_setprop` to set the
+   driver's `CONNECTION_MODE`/`DEVICE_ADDRESS` properties to that IP over
+   UDP port 11880 and connects (`firmware/ui/controller.py`'s
+   `_connect_mount_wifi()`).
 
-```
-sudo japyscope-bluetooth-mount pair AA:BB:CC:DD:EE:FF
-```
+The device name (`"Skywatcher Alt-Az"` — note the lowercase "w", not
+"SkyWatcher") and property names (`CONNECTION_MODE`/`DEVICE_ADDRESS`/
+`CONNECTION`) are confirmed against the driver's actual upstream source
+(`indilib/indi`, `drivers/telescope/skywatcherAPIMount.cpp` — this is
+what the `indi_skywatcherAltAzMount` binary is built from — plus the
+standard `INDI::Connection::TCP` plugin it uses, `libs/indibase/
+connectionplugins/connectiontcp.cpp`), not just guessed from naming
+convention.
 
-This pairs and trusts the module, then binds it to a persistent
-`/dev/rfcomm0` via `japyscope-rfcomm-mount.service` (`install/
-bluetooth-mount.sh`), so it survives reboots. `sudo japyscope-bluetooth-mount
-unpair` reverses it. Afterwards, select it on the device: Dev Tools code
-`9600` → "Bluetooth (SynScan)" (persists `settings.mount_interface`, see
-`docs/CODES.md`).
-
-**Not yet wired end-to-end**: picking Bluetooth there only records the
-intent — actually pointing the `indi_skywatcherAltAzMount` driver at
-`/dev/rfcomm0` instead of `/dev/serial0` still needs `firmware/indi/
-client.py`'s property wiring (currently stubbed, same v0 gap as
-`get_status`/`sync`/`goto`/`park`). Until that lands, switch the driver's
-`DEVICE_PORT` manually on this port after pairing.
-
-Trade-offs vs. the wired RJ12 link: higher latency, occasional dropped
-connections (BT SPP), and the module draws its own power from the mount —
-worth confirming before committing to it as the primary link rather than a
-ground-loop workaround.
+Never run the SynScan Pro phone app and this at the same time against the
+same mount, they'll fight over the same connection.
 
 ## Keypad (3×4 matrix, stock SparkFun COM-14662)
 {: #keypad}
 
-Stickers-only key legend, no physical modification to the keypad itself.
+Stickers-only key legend.
 Matrix scan pins (BCM numbering, `firmware/hal/input/keypad.py`):
 
 | Signal | BCM pin |
@@ -111,7 +98,7 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 | Row 3 | 7 | 8 | 9 |
 | Row 4 | FN2 | 0 | BKSP |
 
-## Rotary encoder (KY-040)
+## Rotary encoder (KY-040, Adafruit in future)
 {: #rotary-encoder}
 
 | Signal | BCM pin |
@@ -119,9 +106,6 @@ Row-major key layout (see `docs/CODES.md` for what each key does):
 | CLK | 16 |
 | DT | 12 |
 | SW (push) | 7 |
-
-Also needs a printed D-shaft knob for the KY-040 shaft (JLC3DP, per project
-notes) — not a wiring item, tracked here as a reminder for the enclosure BOM.
 
 ## External joystick (optional, KY-023-style)
 {: #joystick}
@@ -173,27 +157,4 @@ as a fallback profile). SPI wiring is the same regardless of panel size
 
 ## Backlight (custom RGB edge-lighting)
 
-Not a bonded/commercial frontlight — a custom JapySoft side/edge-mounted RGB
-LED solution (2× 5mm LED per side of the display, per project notes).
-
-**Switching mechanism confirmed**: plain GPIO drive — each 5mm LED wired
-with its own series current-limiting resistor straight to a Pi Zero W GPIO
-pin, no MOSFET and no dedicated LED driver IC. Off/Med/High per channel
-(R/G/B) is done with software PWM on those GPIO pins, not separate
-resistor values.
-
-**TODO**: exact GPIO pin assignment per channel/LED and resistor values —
-update this table once wired, and update
-`firmware/hal/display/epaper.py::set_backlight()` (currently a stub) to
-drive them.
-
-## Power / enclosure notes (not wiring, kept here for context)
-
-- No battery in the enclosure.
-- Bottom face: cable pass-through, mounting, joystick cable (external
-  joystick module, not enclosure-mounted — see "External joystick" above),
-  power connector.
-- Magnetic dock: 4× 6×2mm magnets, bracket glued to the OTA tube (16" tube
-  only for now), matching through-holes (not pockets) in the enclosure back
-  — required as genuine through-holes because JLC3DP prints unattended (no
-  manual pause-to-insert-magnet step).
+PLANNED FOR DEPRECATION/CHANGE

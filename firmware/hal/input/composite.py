@@ -1,19 +1,19 @@
-"""Merges up to three independent input sources — keypad, KY-040 rotary
-encoder, and an optional external joystick — into the single InputHAL
+"""Merges up to three independent input sources (keypad, KY-040 rotary
+encoder, and an optional external joystick) into the single InputHAL
 stream firmware/ui/ consumes. Lets each be real or simulated on its own
-during hardware bring-up (see shared.db's hw_sim_keypad/hw_sim_encoder/
+during hardware assembly (see shared.db's hw_sim_keypad/hw_sim_encoder/
 hw_sim_joystick), rather than only supporting an all-or-nothing --simulate.
 
 joystick_source is optional (None) because, unlike the keypad and encoder,
 the joystick is an external accessory that may not be connected at all (see
-shared.db's joystick_enabled and firmware/hal/input/joystick.py) — when it's
+shared.db's joystick_enabled and firmware/hal/input/joystick.py) - when it's
 None, this behaves exactly as it did before the joystick existed.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, released_key, tapped_key
 from .keys import is_encoder_key, is_joystick_key, is_keypad_key
 
 
@@ -55,7 +55,9 @@ class CompositeInput(InputHAL):
         budget = max(timeout / len(self._groups), 0.01)
         for source, predicates in self._groups:
             key = source.poll(budget)
-            if key is not None and any(predicate(key) for predicate in predicates):
+            physical_key = released_key(key) or tapped_key(key) if key is not None else None
+            routed_key = physical_key or key
+            if key is not None and any(predicate(routed_key) for predicate in predicates):
                 return key
         return None
 

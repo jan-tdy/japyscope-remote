@@ -1,5 +1,8 @@
 name: Smoke-test Bookworm armhf install dependencies
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:

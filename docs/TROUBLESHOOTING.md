@@ -333,23 +333,6 @@ over SSH.
    generic consumer card. Re-flash the OS fresh rather than reusing a
    card that has already corrupted twice.
 
-Note: `install/install.sh` and `install/update.py system-upgrade` now
-self-heal the *software* half of this on their own — an interrupted
-previous apt/dpkg run (a half-configured package after a crash) is fixed
-automatically with `dpkg --configure -a` before every apt command, a held
-apt/dpkg lock is waited out, and a transient apt failure is retried up to 3
-times. None of that touches the *hardware* half above: if the root
-filesystem is genuinely read-only, both scripts detect it and stop
-immediately with a message pointing back here, rather than retrying (which
-would just risk more corruption).
-
-If this happens at runtime instead of during install/update — the SD card
-going read-only while `japyscope-app` is already running — the app now
-shows `SYS-980` directly on the e-ink panel when it crashes (see
-`docs/CODES.md`), alongside the journal entry, specifically so this is
-visible on an unattended device without needing SSH access to a Pi that
-may itself be struggling to respond.
-
 ## `INDI-001`: server or driver did not start
 
 Run `command -v indiserver`, `command -v indi_skywatcherAltAzMount`, and

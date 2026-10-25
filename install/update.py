@@ -59,6 +59,25 @@ def _read_update_settings() -> tuple[str, str]:
         return DEFAULT_REPO, DEFAULT_CHANNEL
 
 
+def _write_update_status(**fields: str) -> None:
+    """Best-effort progress for the controller's Menu -> System -> Update
+    screen (`firmware/ui/controller.py` polls these `state.update_*`
+    keys) -- same tolerance as `_read_update_settings` above: a DB hiccup
+    must never fail the update itself, just leave the screen with nothing
+    to show. Keys are prefixed `update_` (e.g. `phase="downloading"` ->
+    `state["update_phase"]`)."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from shared.db import StateRepo, db_session
+
+        with db_session() as conn:
+            state = StateRepo(conn)
+            for key, value in fields.items():
+                state.set(f"update_{key}", value)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not write update status to shared.db: %s", exc)
+
+
 def _fetch_json(url: str) -> dict | list:
     request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "japyscope-updater/0"})
     with urlopen(request, timeout=15) as response:
@@ -297,69 +316,148 @@ class Updater:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise UpdateError("another update is already running") from exc
-            release = self.latest()
-            tag = release.get("tag_name", "").strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
-                raise UpdateError("unsafe release tag")
-            if tag == self.current_version(): return tag
-            target = self.releases / tag
-            if target.exists():
-                # Older updater versions deliberately retained a failed target,
-                # which made every later retry fail before doing useful work.
-                # It cannot be current here (checked above), so it is safe to
-                # clear and rebuild transactionally.
-                logger.warning("removing incomplete release from a previous failed update: %s", target)
-                shutil.rmtree(target)
-            asset, expected = _select_asset(release)
-            previous = self.current.resolve() if self.current.is_symlink() else None
-            with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
-                temp = Path(temp_name); archive = temp / asset["name"]
-                _download(asset["browser_download_url"], archive)
-                actual = _sha256(archive)
-                if actual != expected: raise UpdateError("OTA-002 release checksum verification failed")
-                extracted = _safe_extract(archive, temp / "extract")
-                shutil.move(str(extracted), target)
-            activated = False
+            _write_update_status(status="running", phase="checking", error="")
             try:
-                subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
-                    check=True, timeout=300,
-                )
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
-                    check=True, timeout=900,
-                )
-                # Separate, --no-deps, --no-build-isolation install — see
-                # requirements-pyindi.lock and install.sh for why
-                # pyindi-client can't go through the main hash-locked
-                # install on this hardware (bottle/dbus-python unused and
-                # unbuildable; --no-build-isolation makes its swig build
-                # dependency resolve to the system swig, not a PyPI-bundled
-                # binary that needs a newer glibc than Bullseye has).
-                subprocess.run(
-                    [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
-                    check=True, timeout=1800,
-                )
+                release = self.latest()
+                tag = release.get("tag_name", "").strip()
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+                    raise UpdateError("unsafe release tag")
+                if tag == self.current_version():
+                    _write_update_status(status="idle", phase="up_to_date")
+                    return tag
+                target = self.releases / tag
+                if target.is_symlink():
+                    raise UpdateError(f"release path is a symlink: {target}")
+                if target.exists():
+                    if not target.is_dir(): raise UpdateError(f"release path is not a directory: {target}")
+                    logger.warning("removing incomplete release from a previous failed update: %s", target)
+                    shutil.rmtree(target)
+                asset, expected = _select_asset(release)
+                previous = self.current.resolve() if self.current.is_symlink() else None
+                _write_update_status(phase="downloading", tag=tag)
+                with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
+                    temp = Path(temp_name); archive = temp / asset["name"]
+                    _download(asset["browser_download_url"], archive)
+                    actual = _sha256(archive)
+                    if actual != expected: raise UpdateError("OTA-002 release checksum verification failed")
+                    extracted = _safe_extract(archive, temp / "extract")
+                    shutil.move(str(extracted), target)
+            except (UpdateError, OSError, HTTPError, URLError, TimeoutError) as exc:
+                _write_update_status(status="failed", phase="failed", error=str(exc)[:160])
+                if "target" in locals() and target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target, ignore_errors=True)
+                raise
+            _write_update_status(phase="installing")
+            try:
+                if self._venv_reusable(previous, target):
+                    # Most releases are code-only hotfixes with an
+                    # unchanged requirements.lock/requirements-pyindi.lock
+                    # -- rebuilding the venv from scratch then re-installs
+                    # the exact same pinned versions it already has,
+                    # which on this hardware is most of an update's
+                    # wall-clock time for zero actual change. Copying the
+                    # previous release's already-built venv is safe here
+                    # specifically because every invocation in this
+                    # codebase (this file, firmware/main.py, and the
+                    # systemd units, which always launch via the
+                    # `current` symlink) names the venv's python by an
+                    # explicit absolute path rather than relying on a
+                    # console-script's baked-in shebang.
+                    logger.info("requirements unchanged since %s; reusing its venv", previous.name)
+                    shutil.copytree(previous / ".venv", target / ".venv", symlinks=True)
+                else:
+                    subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+                        check=True, timeout=300,
+                    )
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "-r", str(target / "requirements.lock")],
+                        check=True, timeout=900,
+                    )
+                    # Separate, --no-deps, --no-build-isolation install — see
+                    # requirements-pyindi.lock and install.sh for why
+                    # pyindi-client can't go through the main hash-locked
+                    # install on this hardware (bottle/dbus-python unused and
+                    # unbuildable; --no-build-isolation makes its swig build
+                    # dependency resolve to the system swig, not a PyPI-bundled
+                    # binary that needs a newer glibc than Bullseye has).
+                    subprocess.run(
+                        [str(target / ".venv" / "bin" / "python"), "-m", "pip", "install", "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(target / "requirements-pyindi.lock")],
+                        check=True, timeout=300,
+                    )
                 subprocess.run([str(target / ".venv" / "bin" / "python"), "-m", "compileall", "-q", str(target)], check=True, timeout=120)
+                # An OTA update only ever extracts code into releases/<tag>
+                # and flips the `current` symlink — unlike install.sh, it
+                # never re-copies /usr/local/sbin/japyscope-*, the sudoers
+                # file, or the systemd units. Without this, those OS-level
+                # files silently keep running whatever a past install.sh
+                # run left behind, however much a newer release's
+                # install/*.sh, the sudoers line, or a unit changes (seen
+                # on real hardware as a WIFI-001 failure: the installed
+                # japyscope-wifi script rejected --slot because it
+                # predated that flag). Must run — and its systemd unit
+                # copy + daemon-reload land — before the restart below, or
+                # that restart still runs under the old unit definitions.
+                self._sync_system_files(target)
                 self._flip(target)
-                activated = True
+                # Written before the restart below (which kills this very
+                # process's controller) so the controller that comes back
+                # up actually sees "success" on its first boot-time state
+                # read, instead of racing its own restart to write it.
+                _write_update_status(status="success", phase="done", tag=tag)
                 subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=True, timeout=30)
                 self._health_check()
             except (OSError, subprocess.SubprocessError, UpdateError) as exc:
                 logger.error("OTA-003 new release failed health check; rolling back: %s", exc)
-                if activated:
-                    if previous is not None:
-                        self._flip(previous)
-                    elif self.current.is_symlink() and self.current.resolve() == target:
+                if previous is not None:
+                    self._flip(previous)
+                    # Match the OS-level files back to the release we're
+                    # rolling back to — a release built before this sync
+                    # step existed has no such script, in which case the
+                    # new release's sync (which already ran above) is left
+                    # in place rather than erroring the rollback over it.
+                    self._sync_system_files(previous, required=False)
+                    _write_update_status(status="failed", phase="rolled_back", error=str(exc)[:160])
+                else:
+                    if self.current.is_symlink() and self.current.resolve() == target:
                         self.current.unlink()
-                    try:
-                        subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
-                    except (OSError, subprocess.SubprocessError) as rollback_exc:
-                        logger.error("OTA-003 service restart after rollback failed: %s", rollback_exc)
+                    _write_update_status(status="failed", phase="failed", error=str(exc)[:160])
+                try:
+                    subprocess.run(["systemctl", "restart", "japyscope-app.service", "japyscope-webui.service"], check=False, timeout=30)
+                except (OSError, subprocess.SubprocessError) as rollback_exc:
+                    logger.error("OTA-003 service restart after rollback failed: %s", rollback_exc)
                 shutil.rmtree(target, ignore_errors=True)
                 raise UpdateError("OTA-003 update failed and was rolled back") from exc
             return tag
+
+    @staticmethod
+    def _venv_reusable(previous: Optional[Path], target: Path) -> bool:
+        """Whether `target`'s dependencies are byte-identical to
+        `previous`'s already-built venv, so that venv can just be copied
+        instead of rebuilt. Hash-locked requirements files mean "same
+        file contents" really does mean "same resolved, verified
+        dependency set" -- there's nothing a fresh `pip install` would
+        do differently."""
+        if previous is None or not (previous / ".venv").is_dir():
+            return False
+        for name in ("requirements.lock", "requirements-pyindi.lock"):
+            previous_lock = previous / name
+            target_lock = target / name
+            if not previous_lock.is_file() or not target_lock.is_file():
+                return False
+            if previous_lock.read_bytes() != target_lock.read_bytes():
+                return False
+        return True
+
+    @staticmethod
+    def _sync_system_files(release: Path, required: bool = True) -> None:
+        script = release / "install" / "sync-system-files.sh"
+        if not script.is_file():
+            if required:
+                raise UpdateError(f"release is missing install/sync-system-files.sh: {release}")
+            return
+        subprocess.run(["bash", str(script)], check=required, timeout=30)
 
     def _flip(self, target: Path) -> None:
         temporary = self.root / ".current.new"

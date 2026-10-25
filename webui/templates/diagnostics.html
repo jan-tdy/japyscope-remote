@@ -37,7 +37,37 @@
   </div>
 </form>
 
-<pre id="log-output">{{ logs }}</pre>
+<div class="log-toolbar">
+  <button type="button" id="raw-toggle" aria-expanded="false" aria-controls="log-output">Raw log</button>
+</div>
+
+<div id="structured-logs" class="log-list" aria-label="Structured journal entries">
+  <div class="log-filters" aria-label="Filter structured logs">
+    <fieldset>
+      <legend>Level</legend>
+      <label><input type="checkbox" class="log-level-filter" value="error" checked> Error</label>
+      <label><input type="checkbox" class="log-level-filter" value="warning" checked> Warning</label>
+      <label><input type="checkbox" class="log-level-filter" value="info" checked> Info</label>
+    </fieldset>
+    <label for="log-text-filter">Text</label>
+    <input id="log-text-filter" type="search" placeholder="Search message or service" autocomplete="off">
+  </div>
+  {% for entry in entries %}
+  <details class="log-entry log-{{ entry.level }}">
+    <summary>
+      <span class="log-level">{{ entry.level }}</span>
+      {% if entry.timestamp %}<time>{{ entry.timestamp }}</time>{% endif %}
+      <span class="log-unit">{{ entry.unit }}</span>
+      <span class="log-message">{{ entry.message }}</span>
+    </summary>
+    <pre class="log-raw">{{ entry.raw }}</pre>
+  </details>
+  {% else %}
+  <p class="muted">No structured log entries.</p>
+  {% endfor %}
+  <p id="log-no-matches" class="muted" hidden>No entries match.</p>
+</div>
+<pre id="log-output" hidden>{{ logs }}</pre>
 
 <section>
   <h3>SSH Command Reference</h3>
@@ -46,8 +76,45 @@
 </section>
 
 <script>
+var rawLog = document.getElementById('log-output');
+var rawToggle = document.getElementById('raw-toggle');
+rawToggle.addEventListener('click', function() {
+  var showRaw = rawLog.hidden;
+  rawLog.hidden = !showRaw;
+  document.getElementById('structured-logs').hidden = showRaw;
+  rawToggle.setAttribute('aria-expanded', String(showRaw));
+});
+
+var logEntries = Array.prototype.slice.call(document.querySelectorAll('#structured-logs .log-entry'));
+var levelFilters = Array.prototype.slice.call(document.querySelectorAll('.log-level-filter'));
+var textFilter = document.getElementById('log-text-filter');
+var noMatches = document.getElementById('log-no-matches');
+
+function filterLogs() {
+  var selectedLevels = levelFilters.filter(function(filter) { return filter.checked; })
+    .map(function(filter) { return filter.value; });
+  var query = textFilter.value.trim().toLocaleLowerCase();
+  var visibleCount = 0;
+
+  logEntries.forEach(function(entry) {
+    var unit = entry.querySelector('.log-unit').textContent;
+    var message = entry.querySelector('.log-message').textContent;
+    var fullEntry = entry.querySelector('.log-raw').textContent;
+    var level = entry.className.match(/\blog-(error|warning|info)\b/);
+    var matches = level && selectedLevels.indexOf(level[1]) !== -1 &&
+      (unit + ' ' + message + ' ' + fullEntry).toLocaleLowerCase().indexOf(query) !== -1;
+    entry.hidden = !matches;
+    if (matches) visibleCount += 1;
+  });
+
+  noMatches.hidden = logEntries.length === 0 || visibleCount > 0;
+}
+
+levelFilters.forEach(function(filter) { filter.addEventListener('change', filterLogs); });
+textFilter.addEventListener('input', filterLogs);
+
 document.getElementById('copy-btn').addEventListener('click', function() {
-  var text = document.getElementById('log-output').innerText;
+  var text = rawLog.textContent;
   var feedback = document.getElementById('copy-feedback');
 
   function showMsg(msg) {
@@ -66,9 +133,11 @@ document.getElementById('copy-btn').addEventListener('click', function() {
   }
 
   function fallbackCopy() {
+    var wasHidden = rawLog.hidden;
+    if (wasHidden) rawLog.hidden = false;
     try {
       var range = document.createRange();
-      range.selectNodeContents(document.getElementById('log-output'));
+      range.selectNodeContents(rawLog);
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
@@ -77,6 +146,8 @@ document.getElementById('copy-btn').addEventListener('click', function() {
       showMsg(ok ? 'Copied!' : 'Copy failed');
     } catch (e) {
       showMsg('Please select text manually');
+    } finally {
+      rawLog.hidden = wasHidden;
     }
   }
 });

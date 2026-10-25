@@ -1,4 +1,5 @@
-"""Standalone SSD1680 bring-up check, independent of EPaperDisplay.
+""" UNMAINTAINED UNUSED CODE PLANNED FOR DEPRECATION
+Standalone SSD1680 bring-up check, independent of EPaperDisplay.
 
 Stop japyscope-app first so nothing else holds the GPIO/SPI pins, then:
 

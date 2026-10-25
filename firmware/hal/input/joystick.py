@@ -15,13 +15,7 @@ rotary encoder for menu navigation. Only the X-axis is unique to it
 (JOY_LEFT/JOY_RIGHT), used for manual N/S/E/W jogging (see
 firmware/ui/controller.py's ALIGN_JOG/TRACK handling).
 
-Pin numbers, the I2C address, and axis polarity below are placeholders —
-cross-check/update against docs/WIRING.md, the single source of truth, once
-wiring is finalized. As with encoder.py's quadrature decoding, converting
-continuous X/Y readings into discrete direction events (with a dead zone
-and hold-to-repeat, since jogging means holding the stick over rather than
-a single detent click) is a standard technique implemented for real here,
-even though it hasn't been exercised against physical hardware yet.
+HRRRRR STUB DETECTED!!!
 """
 from __future__ import annotations
 
@@ -30,7 +24,7 @@ import threading
 import time
 from typing import Optional
 
-from .base import InputHAL
+from .base import InputHAL, key_up
 from .keys import ENC_DOWN, ENC_PUSH, ENC_UP, JOY_LEFT, JOY_RIGHT
 
 JOY_SW_PIN = 27
@@ -41,9 +35,7 @@ JOY_Y_CHANNEL = 1  # ADS1115 single-ended input wired to VRy (up/down)
 
 _SCAN_INTERVAL_S = 0.02
 _DEBOUNCE_S = 0.05
-# How often a direction re-fires while the stick is held over, for smooth
-# jogging rather than one nudge per press — tune once real hardware exists.
-_REPEAT_INTERVAL_S = 0.15
+_REPEAT_INTERVAL_S = 0.25
 _CENTER = 32768  # mid-scale of the ADS1115's 16-bit conversion register
 _DEAD_ZONE = 6000  # +/- around center treated as "centered" (rest-position noise margin)
 
@@ -123,27 +115,53 @@ class JoystickInput(InputHAL):
 
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._stop = threading.Event()
-        self._last_key_time: dict[str, float] = {}
+        self._active_direction: Optional[str] = None
+        self._direction_candidate: Optional[str] = None
+        self._direction_candidate_at = time.monotonic()
+        self._last_repeat_at = 0.0
+        self._button_raw = GPIO.input(JOY_SW_PIN)
+        self._button_changed_at = time.monotonic()
+        self._button_pressed = False
         self._thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._thread.start()
-
-    def _emit(self, key: str, min_gap: float) -> None:
-        now = time.monotonic()
-        if now - self._last_key_time.get(key, 0.0) < min_gap:
-            return
-        self._last_key_time[key] = now
-        self._queue.put(key)
 
     def _scan_axes(self) -> None:
         x = self._adc.read_channel(JOY_X_CHANNEL)
         y = self._adc.read_channel(JOY_Y_CHANNEL)
         direction = _direction_from_axes(x - _CENTER, y - _CENTER)
-        if direction is not None:
-            self._emit(direction, _REPEAT_INTERVAL_S)
+        now = time.monotonic()
+        if direction != self._direction_candidate:
+            self._direction_candidate = direction
+            self._direction_candidate_at = now
+            return
+        if now - self._direction_candidate_at < _DEBOUNCE_S:
+            return
+        if direction != self._active_direction:
+            if self._active_direction is not None:
+                self._queue.put(key_up(self._active_direction))
+            self._active_direction = direction
+            if direction is not None:
+                self._queue.put(direction)
+                self._last_repeat_at = now
+        elif direction is not None and now - self._last_repeat_at >= _REPEAT_INTERVAL_S:
+            self._queue.put(direction)
+            self._last_repeat_at = now
 
     def _scan_button(self) -> None:
-        if self._gpio.input(JOY_SW_PIN) == self._gpio.LOW:
-            self._emit(ENC_PUSH, _DEBOUNCE_S)
+        now = time.monotonic()
+        level = self._gpio.input(JOY_SW_PIN)
+        if level != self._button_raw:
+            self._button_raw = level
+            self._button_changed_at = now
+            return
+        if now - self._button_changed_at < _DEBOUNCE_S:
+            return
+        if level == self._gpio.LOW and not self._button_pressed:
+            self._button_pressed = True
+            self._queue.put(ENC_PUSH)
+        elif level == self._gpio.HIGH and self._button_pressed:
+            self._button_pressed = False
+            self._queue.put(key_up(ENC_PUSH))
 
     def _scan_loop(self) -> None:
         while not self._stop.is_set():
