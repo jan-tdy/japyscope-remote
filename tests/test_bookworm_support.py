@@ -20,7 +20,7 @@ def test_installer_accepts_bookworm_and_selects_its_native_dependencies():
 def test_bookworm_uses_the_pinned_indi_2_client_core_not_its_incompatible_dev_package():
     installer = read("install/install.sh")
     assert "pyindi-client 2.2.0 requires INDI Core 2.x" in installer
-    assert "apt_retry apt-get purge -y libindi-dev" in installer
+    assert "apt_retry apt-get -o DPkg::Lock::Timeout=120 purge -y libindi-dev" in installer
     assert "source \"$source_dir/install/libindi-core.env\"" in installer
     assert "Fetching prebuilt INDI core" in installer
 
