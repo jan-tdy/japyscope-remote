@@ -1,0 +1,145 @@
+name: Build precompiled venv (armhf, Trixie)
+
+# Builds a ready-to-run virtualenv (every pinned dependency, including the
+# compiled PyIndi extension) for the exact OS/architecture install/update.py
+# checks for at update time, and attaches it to the same GitHub Release as
+# the application tarball. The Pi Zero W (single ARM1176 core, 512 MB RAM)
+# cannot reliably `pip install` a changed requirements.lock/
+# requirements-pyindi.lock in the time install/update.py's health check
+# allows it -- that's the on-device build that times out and triggers an
+# OTA-003 rollback on every dependency bump. Shipping the already-built
+# venv as a release asset lets _try_install_precompiled_venv in
+# install/update.py skip that build on-device entirely; devices whose OS
+# codename/architecture don't match this asset -- or that fetch a release
+# this workflow failed to attach one to -- fall back to the existing
+# on-device build, unaffected by this workflow's own success or failure.
+#
+# This mirrors test-trixie-armhf.yml's own build of this exact venv (that
+# workflow already proves the dependency set installs on Trixie armhf
+# under QEMU on every PR); this workflow just keeps the result instead of
+# discarding it.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the venv asset to"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Same pin as build-libindi-armhf.yml/test-trixie-armhf.yml and for the
+    # same reason: current ubuntu-latest's qemu-user-static segfaults on
+    # the arm1176 CPU model, and (per test-trixie-armhf.yml) Trixie's own
+    # e2fsprogs needs ubuntu-24.04's newer e2fsprogs to actually resize the
+    # QEMU image -- this job uses cortex-a7 (not arm1176) either way, but
+    # stays on 24.04 to match the already-proven combination.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Resolve tag
+        id: ref
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the resolved tag
+        uses: actions/checkout@v4
+        with:
+          # On a tag push, github.ref is already that tag -- this just
+          # makes it explicit. On workflow_dispatch, the default checkout
+          # ref is whatever branch the run was dispatched from, not
+          # inputs.tag, which would silently build the venv against that
+          # branch's requirements.lock instead of the selected release's.
+          ref: refs/tags/${{ steps.ref.outputs.tag }}
+
+      - name: Build the venv under QEMU (Raspberry Pi OS Trixie armhf, ARMv6-compatible)
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: "https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-12-04/2025-12-04-raspios-trixie-armhf-lite.img.xz"
+          cpu: cortex-a7
+          image_additional_mb: 8192
+          optimize_image: 'no'
+          bind_mount_repository: true
+          commands: |
+            set -eux
+            repo_dir=$(pwd)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              python3 python3-dev python3-venv python3-pip build-essential \
+              pkg-config swig ninja-build libdbus-1-dev libglib2.0-dev \
+              libjpeg-dev zlib1g-dev libfreetype6-dev libnova-dev \
+              libcfitsio-dev curl ca-certificates indi-bin
+
+            # Same prebuilt INDI core pin install.sh and test-trixie-armhf.yml
+            # use -- see install/libindi-core.env and docs/TROUBLESHOOTING.md.
+            . install/libindi-core.env
+            tmp_tarball=$(mktemp)
+            curl -fL --retry 3 --retry-delay 5 -o "$tmp_tarball" \
+              "https://github.com/jan-tdy/japyscope-remote/releases/download/$LIBINDI_CORE_TAG/$LIBINDI_CORE_ASSET"
+            echo "$LIBINDI_CORE_SHA256  $tmp_tarball" | sha256sum -c -
+            tar -xzf "$tmp_tarball" -C /usr/local
+            rm -f "$tmp_tarball"
+            if [ -d /usr/local/lib/arm-linux-gnueabihf ]; then
+              find /usr/local/lib/arm-linux-gnueabihf -maxdepth 1 -name 'libindi*' -exec ln -sf {} /usr/local/lib/ \;
+            fi
+            ldconfig
+
+            venv_dir=/tmp/japyscope-venv
+            python3 -m venv "$venv_dir"
+            "$venv_dir/bin/python" -m pip install --upgrade pip setuptools wheel
+            "$venv_dir/bin/python" -m pip install --require-hashes -r requirements.lock
+            # Separate, --no-deps, --no-build-isolation install -- see
+            # requirements-pyindi.lock and install.sh for why.
+            "$venv_dir/bin/python" -m pip install --require-hashes --no-deps --no-build-isolation -r requirements-pyindi.lock
+            "$venv_dir/bin/python" -c 'import PyIndi; print(PyIndi.__file__)'
+            "$venv_dir/bin/python" -m compileall -q "$venv_dir"
+
+            tar czf "$repo_dir/venv.tar.gz" -C /tmp japyscope-venv
+
+      - name: Rename and checksum
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ref.outputs.tag }}"
+          ASSET="japyscope-venv-trixie-armhf-${TAG}.tar.gz"
+          mv venv.tar.gz "$ASSET"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+
+      - name: Attach to the GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Never gh release create here: install/update.py's _select_asset
+          # requires exactly one application .tar.gz asset on the release,
+          # and this venv asset is never that. If release.yml hasn't
+          # created the release yet (e.g. its publish step failed or
+          # hasn't run), creating one here would leave a venv-only release
+          # that every device rejects outright instead of just falling
+          # back to the on-device build.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG does not exist yet -- release.yml must publish the application asset first" >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
