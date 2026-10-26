@@ -6,7 +6,17 @@ from types import SimpleNamespace
 import pytest
 
 import install.update as update_module
-from install.update import UpdateError, Updater, _apt_upgrade, _read_update_settings, _releases_url, _safe_extract
+from install.update import (
+    UpdateError,
+    Updater,
+    _apt_upgrade,
+    _read_update_settings,
+    _releases_url,
+    _safe_extract,
+    _safe_extract_venv,
+    _select_asset,
+    _select_precompiled_venv_asset,
+)
 
 
 def add_file(bundle, name, data=b"x"):
@@ -29,6 +39,111 @@ def test_safe_extract_rejects_traversal(tmp_path):
     archive = tmp_path / "bad.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle: add_file(bundle, "../escape")
     with pytest.raises(UpdateError): _safe_extract(archive, tmp_path / "out")
+
+
+def test_safe_extract_venv_accepts_symlinked_interpreter(tmp_path):
+    archive = tmp_path / "venv.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        add_file(bundle, "japyscope-venv-trixie-armhf-v1/pyvenv.cfg", b"home = /usr/bin\n")
+        add_file(bundle, "japyscope-venv-trixie-armhf-v1/bin/python3.13", b"#!elf\n")
+        link = tarfile.TarInfo("japyscope-venv-trixie-armhf-v1/bin/python")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/usr/bin/python3.13"  # absolute, as `python3 -m venv` creates by default
+        bundle.addfile(link)
+    root = _safe_extract_venv(archive, tmp_path / "out")
+    assert (root / "bin" / "python").is_symlink()
+
+
+def test_safe_extract_venv_rejects_traversal(tmp_path):
+    archive = tmp_path / "bad-venv.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle: add_file(bundle, "../escape")
+    with pytest.raises(UpdateError): _safe_extract_venv(archive, tmp_path / "out")
+
+
+def test_safe_extract_venv_rejects_non_venv_tree(tmp_path):
+    archive = tmp_path / "not-a-venv.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle: add_file(bundle, "release/some_file.txt")
+    with pytest.raises(UpdateError): _safe_extract_venv(archive, tmp_path / "out")
+
+
+def test_select_asset_ignores_precompiled_venv_asset():
+    release = {
+        "assets": [
+            {"name": "release.tar.gz", "digest": "sha256:" + "a" * 64},
+            {"name": "japyscope-venv-trixie-armhf-v1.tar.gz", "digest": "sha256:" + "b" * 64},
+        ]
+    }
+    asset, digest = _select_asset(release)
+    assert asset["name"] == "release.tar.gz"
+    assert digest == "a" * 64
+
+
+def test_select_precompiled_venv_asset_matches_codename_and_arch():
+    release = {
+        "assets": [
+            {"name": "release.tar.gz", "digest": "sha256:" + "a" * 64},
+            {"name": "japyscope-venv-trixie-armhf-v1.tar.gz", "digest": "sha256:" + "c" * 64},
+        ]
+    }
+    selection = _select_precompiled_venv_asset(release, "v1", "trixie", "armhf")
+    assert selection is not None
+    asset, digest = selection
+    assert asset["name"] == "japyscope-venv-trixie-armhf-v1.tar.gz"
+    assert digest == "c" * 64
+
+
+def test_select_precompiled_venv_asset_returns_none_when_missing():
+    release = {"assets": [{"name": "release.tar.gz", "digest": "sha256:" + "a" * 64}]}
+    assert _select_precompiled_venv_asset(release, "v1", "trixie", "armhf") is None
+
+
+def test_select_precompiled_venv_asset_returns_none_for_other_os(tmp_path):
+    release = {
+        "assets": [
+            {"name": "release.tar.gz", "digest": "sha256:" + "a" * 64},
+            {"name": "japyscope-venv-bookworm-armhf-v1.tar.gz", "digest": "sha256:" + "c" * 64},
+        ]
+    }
+    assert _select_precompiled_venv_asset(release, "v1", "trixie", "armhf") is None
+
+
+def test_try_install_precompiled_venv_uses_matching_asset(tmp_path, monkeypatch):
+    release = {"assets": [{"name": "japyscope-venv-trixie-armhf-v1.tar.gz", "browser_download_url": "unused", "digest": "sha256:deadbeef"}]}
+    target = tmp_path / "releases" / "v1"; target.mkdir(parents=True)
+    monkeypatch.setattr(update_module, "_os_codename", lambda: "trixie")
+    monkeypatch.setattr(update_module, "_dpkg_architecture", lambda: "armhf")
+    monkeypatch.setattr(update_module, "_download", lambda _url, path, max_size=None: path.write_bytes(b"venv-archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "deadbeef")
+    extracted_venv = tmp_path / "extracted-venv"; (extracted_venv / "bin").mkdir(parents=True)
+    (extracted_venv / "bin" / "python").write_bytes(b"#!/usr/bin/env python3\n")
+    (extracted_venv / "pyvenv.cfg").touch()
+    monkeypatch.setattr(update_module, "_safe_extract_venv", lambda *_args: extracted_venv)
+    monkeypatch.setattr(update_module.shutil, "move", lambda source, dest: Path(dest).symlink_to(source, target_is_directory=True))
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+
+    assert Updater._try_install_precompiled_venv(release, "v1", target) is True
+    assert (target / ".venv").exists()
+
+
+def test_try_install_precompiled_venv_falls_back_on_checksum_mismatch(tmp_path, monkeypatch):
+    release = {"assets": [{"name": "japyscope-venv-trixie-armhf-v1.tar.gz", "browser_download_url": "unused", "digest": "sha256:deadbeef"}]}
+    target = tmp_path / "releases" / "v1"; target.mkdir(parents=True)
+    monkeypatch.setattr(update_module, "_os_codename", lambda: "trixie")
+    monkeypatch.setattr(update_module, "_dpkg_architecture", lambda: "armhf")
+    monkeypatch.setattr(update_module, "_download", lambda _url, path, max_size=None: path.write_bytes(b"venv-archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "wrong-hash")
+
+    assert Updater._try_install_precompiled_venv(release, "v1", target) is False
+    assert not (target / ".venv").exists()
+
+
+def test_try_install_precompiled_venv_falls_back_when_no_matching_asset(tmp_path, monkeypatch):
+    release = {"assets": [{"name": "release.tar.gz", "digest": "sha256:" + "a" * 64}]}
+    target = tmp_path / "releases" / "v1"; target.mkdir(parents=True)
+    monkeypatch.setattr(update_module, "_os_codename", lambda: "trixie")
+    monkeypatch.setattr(update_module, "_dpkg_architecture", lambda: "armhf")
+
+    assert Updater._try_install_precompiled_venv(release, "v1", target) is False
 
 
 def test_apt_upgrade_never_touches_dist_upgrade(monkeypatch):

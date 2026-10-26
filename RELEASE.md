@@ -9,8 +9,10 @@ actually pick up via OTA (`install/update.py`, checked hourly-ish by the
 Read this before changing the process — the updater (`install/update.py`)
 is strict on purpose:
 
-- The GitHub Release for the tag must contain **exactly one** `*.tar.gz`
-  asset. More or fewer, and `apply()` refuses to install anything.
+- The GitHub Release for the tag must contain **exactly one** application
+  `*.tar.gz` asset (anything named `japyscope-venv-*.tar.gz` doesn't count
+  towards this — see below). More or fewer application assets, and
+  `apply()` refuses to install anything.
 - That tarball must extract to a single top-level directory containing (at
   minimum) `firmware/main.py`, `webui/app.py`, and `requirements.lock` —
   i.e. it needs to be this repo's tracked tree at that tag, not some other
@@ -28,6 +30,16 @@ is strict on purpose:
 The GitHub Action below (`.github/workflows/release.yml`) builds and
 uploads an asset that satisfies all of this automatically from a `git
 archive` of the tag — you shouldn't need to build the tarball by hand.
+
+A second, independent workflow
+(`.github/workflows/build-venv-trixie-armhf.yml`) attaches an optional
+`japyscope-venv-trixie-armhf-<tag>.tar.gz` (+ `.sha256`) asset to the same
+release: a precompiled venv for Trixie/armhf devices, so they can skip the
+on-device `pip install` on a dependency bump — see docs/UPDATE.md. It runs
+on the same tag push, independently of `release.yml`; a device the asset
+doesn't match (wrong codename/arch, or missing because this workflow
+hasn't finished or failed) just falls back to the on-device build, so a
+release is still fully installable without it.
 
 ## Steps
 

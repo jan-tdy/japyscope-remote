@@ -26,6 +26,12 @@ DEFAULT_REPO = "jan-tdy/japyscope-remote"
 DEFAULT_CHANNEL = "stable"  # stable | prerelease — see docs/CODES.md Dev Tools code 0033
 API_URL = f"{API_BASE}/repos/{DEFAULT_REPO}/releases/latest"
 MAX_DOWNLOAD = 100 * 1024 * 1024
+# A prebuilt venv (PyIndi's compiled extension plus every pinned
+# dependency) is far bigger than the source tarball capped by
+# MAX_DOWNLOAD above -- give it its own, more generous ceiling instead of
+# raising the source limit too.
+MAX_VENV_DOWNLOAD = 512 * 1024 * 1024
+VENV_ASSET_PREFIX = "japyscope-venv-"
 
 
 class UpdateError(RuntimeError): pass
@@ -84,7 +90,7 @@ def _fetch_json(url: str) -> dict | list:
         return json.load(response)
 
 
-def _download(url: str, destination: Path) -> None:
+def _download(url: str, destination: Path, max_size: int = MAX_DOWNLOAD) -> None:
     request = Request(url, headers={"Accept": "application/octet-stream", "User-Agent": "japyscope-updater/0"})
     with urlopen(request, timeout=30) as response, destination.open("wb") as target:
         total = 0
@@ -92,7 +98,7 @@ def _download(url: str, destination: Path) -> None:
             chunk = response.read(1024 * 1024)
             if not chunk: break
             total += len(chunk)
-            if total > MAX_DOWNLOAD: raise UpdateError("release asset exceeds 100 MiB")
+            if total > max_size: raise UpdateError(f"release asset exceeds {max_size} bytes")
             target.write(chunk)
 
 
@@ -105,8 +111,16 @@ def _sha256(path: Path) -> str:
 
 
 def _select_asset(release: dict) -> tuple[dict, str]:
-    archives = [a for a in release.get("assets", []) if a.get("name", "").endswith(".tar.gz")]
-    if len(archives) != 1: raise UpdateError("release must contain exactly one .tar.gz asset")
+    # A release may additionally carry an optional japyscope-venv-*.tar.gz
+    # precompiled-venv asset (see _select_precompiled_venv_asset below) --
+    # that one is also a .tar.gz but is never the application source
+    # tree, so it's excluded here rather than tripping the "exactly one"
+    # check below.
+    archives = [
+        a for a in release.get("assets", [])
+        if a.get("name", "").endswith(".tar.gz") and not a.get("name", "").startswith(VENV_ASSET_PREFIX)
+    ]
+    if len(archives) != 1: raise UpdateError("release must contain exactly one application .tar.gz asset")
     asset = archives[0]
     if Path(asset.get("name", "")).name != asset.get("name"):
         raise UpdateError("unsafe release asset name")
@@ -121,6 +135,54 @@ def _select_asset(release: dict) -> tuple[dict, str]:
         expected = path.read_text(encoding="ascii").split()[0]
     if len(expected) != 64 or any(c not in "0123456789abcdefABCDEF" for c in expected):
         raise UpdateError("invalid SHA-256 checksum file")
+    return asset, expected.lower()
+
+
+def _os_codename() -> Optional[str]:
+    """VERSION_CODENAME from /etc/os-release (e.g. "trixie"), or None if
+    unreadable/unset -- never raises, since this only gates an
+    optimization (see _try_install_precompiled_venv)."""
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VERSION_CODENAME="):
+                return line.split("=", 1)[1].strip().strip('"') or None
+    except OSError:
+        return None
+    return None
+
+
+def _dpkg_architecture() -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["dpkg", "--print-architecture"], capture_output=True, text=True, check=True, timeout=10,
+        )
+        return result.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _select_precompiled_venv_asset(release: dict, tag: str, codename: str, arch: str) -> Optional[tuple[dict, str]]:
+    """The optional japyscope-venv-<codename>-<arch>-<tag>.tar.gz asset
+    for this exact device, if the release carries one. Returns None (not
+    an error) on any mismatch or verification shortfall -- the caller
+    falls back to the on-device build either way."""
+    expected_name = f"{VENV_ASSET_PREFIX}{codename}-{arch}-{tag}.tar.gz"
+    asset = next((a for a in release.get("assets", []) if a.get("name") == expected_name), None)
+    if asset is None: return None
+    digest = asset.get("digest", "")
+    if digest.startswith("sha256:"): return asset, digest[len("sha256:"):]
+    checksum_name = asset["name"] + ".sha256"
+    checksum = next((a for a in release.get("assets", []) if a.get("name") == checksum_name), None)
+    if checksum is None:
+        logger.warning("precompiled venv asset %s has no verifiable checksum; skipping", expected_name)
+        return None
+    with tempfile.TemporaryDirectory() as temp:
+        path = Path(temp) / checksum_name
+        _download(checksum["browser_download_url"], path)
+        expected = path.read_text(encoding="ascii").split()[0]
+    if len(expected) != 64 or any(c not in "0123456789abcdefABCDEF" for c in expected):
+        logger.warning("precompiled venv asset %s has an invalid checksum file; skipping", expected_name)
+        return None
     return asset, expected.lower()
 
 
@@ -142,6 +204,31 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
         or not (root / "requirements-pyindi.lock").is_file()
     ):
         raise UpdateError("release does not contain a JapyScope application tree")
+    return root
+
+
+def _safe_extract_venv(archive: Path, destination: Path) -> Path:
+    """Like _safe_extract, but for a packaged virtualenv: unlike the
+    application source tree, a venv legitimately contains symlinks --
+    `python3 -m venv`'s default (non---copies) layout links bin/python to
+    the system interpreter by its absolute path (e.g. /usr/bin/python3.13),
+    which is expected to resolve identically on every device running the
+    same Raspberry Pi OS image this was built for. Only the archive
+    member paths themselves are restricted to the destination tree; hard
+    links and device nodes are still rejected -- venv has no legitimate
+    use for either."""
+    destination.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(archive, "r:gz") as bundle:
+        members = bundle.getmembers()
+        for member in members:
+            path = Path(member.name)
+            if path.is_absolute() or ".." in path.parts or member.isdev() or member.islnk():
+                raise UpdateError(f"unsafe venv archive member: {member.name}")
+        bundle.extractall(destination)
+    roots = [entry for entry in destination.iterdir()]
+    root = roots[0] if len(roots) == 1 and roots[0].is_dir() else destination
+    if not (root / "bin" / "python").exists() or not (root / "pyvenv.cfg").is_file():
+        raise UpdateError("precompiled venv asset does not contain a valid virtualenv")
     return root
 
 
@@ -319,6 +406,8 @@ class Updater:
                     # console-script's baked-in shebang.
                     logger.info("requirements unchanged since %s; reusing its venv", previous.name)
                     shutil.copytree(previous / ".venv", target / ".venv", symlinks=True)
+                elif self._try_install_precompiled_venv(release, tag, target):
+                    logger.info("installed precompiled venv for this device's OS/architecture")
                 else:
                     subprocess.run(["python3", "-m", "venv", str(target / ".venv")], check=True, timeout=180)
                     subprocess.run(
@@ -397,6 +486,54 @@ class Updater:
             if previous_lock.read_bytes() != target_lock.read_bytes():
                 return False
         return True
+
+    @staticmethod
+    def _try_install_precompiled_venv(release: dict, tag: str, target: Path) -> bool:
+        """When dependencies changed since the previous release (so
+        _venv_reusable above can't apply), try installing a venv
+        prebuilt in CI for this exact device's OS codename and dpkg
+        architecture instead of `pip install`-ing from source on the Pi
+        Zero itself -- that on-device build is what has been timing out
+        and triggering a rollback on every dependency bump (see
+        docs/UPDATE.md). This is purely a fast path: on a mismatched
+        codename/architecture, a missing asset, a checksum failure, or
+        any other problem, it cleans up after itself and returns False so
+        the caller falls back to the slow but always-available on-device
+        build below."""
+        target_venv = target / ".venv"
+        try:
+            codename = _os_codename()
+            arch = _dpkg_architecture()
+            if codename is None or arch is None:
+                return False
+            selection = _select_precompiled_venv_asset(release, tag, codename, arch)
+            if selection is None:
+                return False
+            asset, expected = selection
+            _write_update_status(phase="downloading_venv", tag=tag)
+            with tempfile.TemporaryDirectory(dir=target.parent) as temp_name:
+                temp = Path(temp_name)
+                archive = temp / asset["name"]
+                _download(asset["browser_download_url"], archive, max_size=MAX_VENV_DOWNLOAD)
+                if _sha256(archive) != expected:
+                    logger.warning("precompiled venv checksum mismatch; falling back to on-device build")
+                    return False
+                extracted = _safe_extract_venv(archive, temp / "extract")
+                if target_venv.exists():
+                    shutil.rmtree(target_venv)
+                shutil.move(str(extracted), target_venv)
+            # The extracted venv was built on a GitHub Actions QEMU
+            # runner, not this device -- confirm it actually runs and
+            # that the compiled PyIndi extension loads before trusting it
+            # for the install this method is otherwise skipping.
+            subprocess.run(
+                [str(target_venv / "bin" / "python"), "-c", "import PyIndi"], check=True, timeout=30,
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — a glitch in this optimization must never fail the update
+            logger.warning("precompiled venv install failed (%s); falling back to on-device build", exc)
+            shutil.rmtree(target_venv, ignore_errors=True)
+            return False
 
     @staticmethod
     def _sync_system_files(release: Path, required: bool = True) -> None:
