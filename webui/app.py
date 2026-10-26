@@ -235,13 +235,19 @@ def create_app(
         address = request.remote_addr or "unknown"
         now = time.monotonic()
         with attempts_lock:
-            record = attempts.setdefault(address, {"count": 0, "until": 0})
+            for stale_address, stale_record in list(attempts.items()):
+                if now - stale_record.get("last_attempt", now) > 600:
+                    del attempts[stale_address]
+            record = attempts.setdefault(address, {"count": 0, "until": 0, "last_attempt": now})
+            record["last_attempt"] = now
             if record["until"] > now:
                 flash(f"Locked out. Try again in {int(record['until'] - now) + 1}s.", "error")
                 return render_template("login.html"), 429
         code = request.form.get("code", "").strip()
         with db_session(app.config["DATABASE"]) as conn:
-            valid = bool(code) and AccessCodeRepo(conn).is_valid(code)
+            codes = AccessCodeRepo(conn)
+            codes.purge_expired()
+            valid = bool(code) and codes.consume(code)
         with attempts_lock:
             record = attempts[address]
             if not valid:
@@ -252,7 +258,7 @@ def create_app(
                     return render_template("login.html"), 429
                 flash(f"Wrong or expired code ({int(record['count'])}/5 attempts).", "error")
                 return render_template("login.html"), 401
-            record.update(count=0, until=0)
+            record.update(count=0, until=0, last_attempt=now)
         session.clear()
         session["authenticated"] = True
         session["csrf_token"] = secrets.token_urlsafe(24)
