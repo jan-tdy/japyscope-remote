@@ -98,21 +98,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class StartupInterrupted(Exception):
+    """Raised when shutdown is requested before the controller UI is running."""
+
+
+_stop_requested = False
+
+
 def connect_indi(client: IndiClient, timeout: float = 15.0) -> None:
     """Wait for the just-spawned indiserver socket instead of racing it."""
     deadline = time.monotonic() + timeout
     last_error: Optional[ConnectionError] = None
     while time.monotonic() < deadline:
+        if _stop_requested:
+            raise StartupInterrupted()
         try:
             client.connect()
+            if _stop_requested:
+                raise StartupInterrupted()
             return
         except ConnectionError as exc:
             last_error = exc
+            if _stop_requested:
+                raise StartupInterrupted() from exc
             time.sleep(0.5)
+    if _stop_requested:
+        raise StartupInterrupted()
     raise ConnectionError("indiserver did not accept a connection in time") from last_error
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    global _stop_requested
+    _stop_requested = False
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db_path = args.db or (str(Path.cwd() / "japyscope-sim.db") if args.simulate else DEFAULT_DB_PATH)
@@ -121,6 +138,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     input_hal = indi = manager = None
 
     def stop(_signum=None, _frame=None) -> None:
+        global _stop_requested
+        _stop_requested = True
         if ui is not None:
             ui.running = False
 
@@ -137,14 +156,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             backlight = make_backlight(flags["backlight"])
             manager = None if flags["mount"] else IndiServerManager(driver_binary=args.driver)
             indi = SimulatedIndiClient() if flags["mount"] else IndiClient(settings=settings)
+            if _stop_requested:
+                return 0
             if manager is not None:
                 manager.start()
+                if _stop_requested:
+                    return 0
                 connect_indi(indi)
+            if _stop_requested:
+                return 0
             ui = ControllerUI(
                 display, input_hal, indi, conn, backlight=backlight, indi_manager=manager,
                 power_control=None if args.simulate else _poweroff,
             )
             ui.run()
+        return 0
+    except StartupInterrupted:
+        logging.getLogger(__name__).info("Shutdown requested during startup")
         return 0
     except (FileNotFoundError, ConnectionError) as exc:
         logging.getLogger(__name__).error("INDI-001/INDI-002 startup failed: %s", exc)
