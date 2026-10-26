@@ -131,9 +131,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
-          else
-            gh release create "$TAG" "$ASSET" "${ASSET}.sha256" \
-              --title "$TAG" --generate-notes
+          # Never gh release create here: install/update.py's _select_asset
+          # requires exactly one application .tar.gz asset on the release,
+          # and this venv asset is never that. If release.yml hasn't
+          # created the release yet (e.g. its publish step failed or
+          # hasn't run), creating one here would leave a venv-only release
+          # that every device rejects outright instead of just falling
+          # back to the on-device build.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG does not exist yet -- release.yml must publish the application asset first" >&2
+            exit 1
           fi
+          gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
