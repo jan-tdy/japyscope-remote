@@ -406,6 +406,7 @@ class AccessCodeRepo:
 
     def issue(self, code: str, ttl_seconds: int) -> None:
         now = time.time()
+        self.purge_expired()
         self.conn.execute(
             "INSERT OR REPLACE INTO access_codes(code, created_at, expires_at) VALUES (?, ?, ?)",
             (code, now, now + ttl_seconds),
@@ -417,6 +418,22 @@ class AccessCodeRepo:
             "SELECT expires_at FROM access_codes WHERE code = ?", (code,)
         ).fetchone()
         return bool(row) and row["expires_at"] >= time.time()
+
+    def consume(self, code: str) -> bool:
+        """Atomically validate and remove a one-time login code."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT expires_at FROM access_codes WHERE code = ?", (code,)
+            ).fetchone()
+            valid = bool(row) and row["expires_at"] >= time.time()
+            if valid:
+                self.conn.execute("DELETE FROM access_codes WHERE code = ?", (code,))
+            self.conn.commit()
+            return valid
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def purge_expired(self) -> None:
         self.conn.execute("DELETE FROM access_codes WHERE expires_at < ?", (time.time(),))
