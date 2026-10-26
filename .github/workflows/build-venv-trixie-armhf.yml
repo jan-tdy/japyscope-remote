@@ -43,9 +43,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Resolve tag
         id: ref
         run: |
@@ -55,6 +52,16 @@ jobs:
           else
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout the resolved tag
+        uses: actions/checkout@v4
+        with:
+          # On a tag push, github.ref is already that tag -- this just
+          # makes it explicit. On workflow_dispatch, the default checkout
+          # ref is whatever branch the run was dispatched from, not
+          # inputs.tag, which would silently build the venv against that
+          # branch's requirements.lock instead of the selected release's.
+          ref: refs/tags/${{ steps.ref.outputs.tag }}
 
       - name: Build the venv under QEMU (Raspberry Pi OS Trixie armhf, ARMv6-compatible)
         uses: pguyot/arm-runner-action@v2
