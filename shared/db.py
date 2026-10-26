@@ -26,6 +26,7 @@ import os
 import secrets
 import sqlite3
 import time
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator, Optional
@@ -210,11 +211,21 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# Initialize schema/default rows once per database path in this process instead of
+# repeating DDL and write transactions for every short-lived request session.
+_initialized_db_paths: set[str] = set()
+_init_db_lock = threading.Lock()
+
+
 @contextmanager
 def db_session(db_path: str = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
     conn = connect(db_path)
     try:
-        init_db(conn)
+        normalized_path = os.path.realpath(db_path)
+        with _init_db_lock:
+            if normalized_path not in _initialized_db_paths:
+                init_db(conn)
+                _initialized_db_paths.add(normalized_path)
         yield conn
     finally:
         conn.close()
