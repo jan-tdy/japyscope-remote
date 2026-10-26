@@ -29,7 +29,7 @@ install -o root -g root -m 755 "$source_dir/install/wifi-switch.sh" /usr/local/s
 install -o root -g root -m 755 "$source_dir/install/bluetooth-mount.sh" /usr/local/sbin/japyscope-bluetooth-mount
 install -o root -g root -m 755 "$source_dir/install/official-script-runner.sh" /usr/local/sbin/japyscope-run-official-script
 
-printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /usr/local/sbin/japyscope-wifi-switch *, /usr/local/sbin/japyscope-bluetooth-mount *, /usr/local/sbin/japyscope-run-official-script *, /bin/systemctl restart japyscope-app.service, /bin/systemctl start japyscope-update.service, /bin/systemctl reboot, /bin/systemctl poweroff, /bin/journalctl *, /usr/bin/journalctl *' > /etc/sudoers.d/japyscope
+printf '%s\n' 'japyscope ALL=(root) NOPASSWD: /usr/local/sbin/japyscope-wifi *, /usr/local/sbin/japyscope-wifi-ap --force, /usr/local/sbin/japyscope-wifi-switch *, /usr/local/sbin/japyscope-bluetooth-mount *, /usr/local/sbin/japyscope-run-official-script *, /bin/systemctl restart japyscope-app.service, /bin/systemctl start japyscope-update.service, /bin/systemctl reboot, /bin/systemctl poweroff, /bin/systemctl enable --now ssh, /bin/journalctl *, /usr/bin/journalctl *' > /etc/sudoers.d/japyscope
 chmod 440 /etc/sudoers.d/japyscope
 visudo -cf /etc/sudoers.d/japyscope
 

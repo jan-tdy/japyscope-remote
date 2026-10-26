@@ -1601,7 +1601,7 @@ class ControllerUI:
 
     def _devtools_ssh(self) -> None:
         try:
-            subprocess.run(["systemctl", "enable", "--now", "ssh"], check=True, timeout=10)
+            subprocess.run(["sudo", "/bin/systemctl", "enable", "--now", "ssh"], check=True, timeout=10)
             status = "SSH enabled"
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("Dev Tools: could not enable ssh: %s", exc)
