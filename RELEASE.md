@@ -86,6 +86,29 @@ release is still fully installable without it.
      `docs/UPDATE.md` / `docs/TROUBLESHOOTING.md` for the `OTA-00x` error
      codes this can log.
 
+## If a release is missing its application asset
+
+`gh release view <tag>` lists what's actually attached — if the GitHub
+Release for a pushed tag has only a `japyscope-venv-*.tar.gz` (no plain
+`japyscope-remote-<tag>.tar.gz`), `release.yml` never ran for that tag
+(commonly a tag pushed with the wrong case, e.g. `V0.47.0` instead of
+`v0.47.0` — the workflow's push trigger matches both `v*` and `V*`, but a
+tag typed some other way, or pushed before this fix, can still slip
+through). Backfill it without cutting a new tag:
+
+```
+gh workflow run release.yml -f tag=<the tag, exactly as it was pushed>
+```
+
+Devices running an `install/update.py` from before the precompiled-venv
+feature (commit adding `VENV_ASSET_PREFIX`) don't know to ignore the
+`japyscope-venv-*.tar.gz` asset — on a venv-only release they install it
+as if it were the application tree and crash on its symlinks ("unsafe
+archive member") instead of cleanly rejecting the release. On any current
+`install/update.py` this fails safely instead ("release must contain
+exactly one application .tar.gz asset"), but with no update installed
+either way, so backfilling the missing asset is still the fix.
+
 ## If you ever need to build the release asset by hand
 
 (The Action should make this unnecessary — this is a fallback.)

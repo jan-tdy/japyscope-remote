@@ -4,11 +4,32 @@ name: Release
 # it (with a .sha256 sidecar) to the GitHub Release for the pushed tag.
 # See RELEASE.md for the full release process and exactly what
 # install/update.py validates about this asset.
+#
+# The push trigger below matches both `v*` and `V*` -- a tag pushed with
+# the wrong case (e.g. `V0.47.0` instead of the documented `v0.47.0`)
+# used to silently never trigger this workflow at all, while
+# build-venv-trixie-armhf.yml's tag push trigger has the same gap *and*
+# its workflow_dispatch input lets it be run by hand regardless of case.
+# That combination once produced a real "venv-only" release (no
+# application .tar.gz asset, only the precompiled venv one) that every
+# device's install/update.py rejects -- on update.py versions that
+# predate VENV_ASSET_PREFIX filtering (see install/update.py), it's
+# worse: the lone venv archive gets treated as the application asset and
+# fails extraction instead (its symlinks look "unsafe" to the
+# application tree's stricter _safe_extract). The workflow_dispatch input
+# here lets a tag matching neither pattern -- or a release this workflow
+# otherwise failed to run for -- be backfilled without needing a new tag.
 
 on:
   push:
     tags:
       - "v*"
+      - "V*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build/attach the application release asset for"
+        required: true
 
 permissions:
   contents: write
@@ -17,24 +38,37 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout tag
+      - name: Resolve tag
+        id: ref
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the resolved tag
         uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.ref.outputs.tag }}
 
       - name: Build release tarball
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ steps.ref.outputs.tag }}"
           ASSET="japyscope-remote-${TAG}.tar.gz"
           git archive --format=tar.gz --prefix="japyscope-remote-${TAG}/" -o "$ASSET" "$TAG"
           sha256sum "$ASSET" > "${ASSET}.sha256"
           echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ steps.ref.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
           else

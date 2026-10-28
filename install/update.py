@@ -194,7 +194,12 @@ def _safe_extract(archive: Path, destination: Path) -> Path:
             path = Path(member.name)
             if path.is_absolute() or ".." in path.parts or member.isdev() or member.issym() or member.islnk():
                 raise UpdateError(f"unsafe archive member: {member.name}")
-        bundle.extractall(destination)
+        # filter="data" (PEP 706): members are already restricted to
+        # plain files/dirs above, so this changes nothing extraction
+        # actually does here -- it only silences the DeprecationWarning
+        # tarfile.extractall() raises without an explicit filter, and
+        # keeps this future-proof for Python 3.14's stricter default.
+        bundle.extractall(destination, filter="data")
     roots = [entry for entry in destination.iterdir() if entry.name != archive.name]
     root = roots[0] if len(roots) == 1 and roots[0].is_dir() else destination
     if (
@@ -224,7 +229,16 @@ def _safe_extract_venv(archive: Path, destination: Path) -> Path:
             path = Path(member.name)
             if path.is_absolute() or ".." in path.parts or member.isdev() or member.islnk():
                 raise UpdateError(f"unsafe venv archive member: {member.name}")
-        bundle.extractall(destination)
+        # filter="data" would reject the legitimate absolute-target
+        # symlinks this function exists to allow (see docstring), so use
+        # "tar" instead -- it still normalizes/rejects absolute member
+        # paths and ".." traversal (redundant with the manual check
+        # above, which stays as the actual enforcement), without
+        # touching symlink targets. This only silences the
+        # DeprecationWarning tarfile.extractall() raises without an
+        # explicit filter (PEP 706) and keeps this future-proof for
+        # Python 3.14's stricter default.
+        bundle.extractall(destination, filter="tar")
     roots = [entry for entry in destination.iterdir()]
     root = roots[0] if len(roots) == 1 and roots[0].is_dir() else destination
     if not (root / "bin" / "python").exists() or not (root / "pyvenv.cfg").is_file():
