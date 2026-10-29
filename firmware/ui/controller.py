@@ -18,7 +18,7 @@ from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.backlight.simulator import SimulatorBacklight
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL, released_key, tapped_key
-from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from firmware.hal.input.keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared import astro
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
 from shared.version import current_version
@@ -654,7 +654,7 @@ class ControllerUI:
         elif screen in {"DEVTOOLS", "SUDO_SET"}:
             entered = " ".join(map(str, s.digits))
             slots = (entered + " " if entered else "") + " ".join([str(s.digit_value), *(["_"] * max(0, 3 - len(s.digits)))])
-            lines = ["Dev Tools" if screen == "DEVTOOLS" else "Set sudo password", f"[ {slots} ]", "rotate=digit push=lock", "9=cancel"]
+            lines = ["Dev Tools" if screen == "DEVTOOLS" else "Set sudo password", f"[ {slots} ]", *(("type code  BKSP=del", "0000=exit") if screen == "DEVTOOLS" else ("type 4 digits  BKSP=del", "FN2=cancel"))]
         elif screen == "LOCATION":
             lines = ["Location", f"Lat {self.settings.get('latitude')}", f"Lon {self.settings.get('longitude')}", "push/9=back"]
         elif screen == "ABOUT":
@@ -996,15 +996,16 @@ class ControllerUI:
         # over from scrolling's partial refreshes, since nothing does
         # that automatically; excluded on TYPE, where it's still a T9
         # letter key ("ghi").
-        if key == "3" and s.screen != "TYPE":
+        if key == "3" and s.screen not in ("TYPE", "DEVTOOLS", "SUDO_SET"):
             self.render()
             return
         # Keypad "5" — the center key below the 2/4/6/8 jog directions,
         # phone-keypad "OK" position — stands in for ENC_PUSH everywhere
         # except TYPE, where it's still a T9 letter key ("mno"). Same
         # stopgap spirit as "1"/"7" standing in for ENC_UP/ENC_DOWN in
-        # _move() while the KY-040 rotary encoder is unreliable.
-        if key == "5" and s.screen != "TYPE":
+        # _move() while the KY-040 rotary encoder is unreliable. DEVTOOLS/
+        # SUDO_SET take the keypad's digits literally (see _digits()).
+        if key == "5" and s.screen not in ("TYPE", "DEVTOOLS", "SUDO_SET"):
             key = ENC_PUSH
         if s.screen == "BOOT_PARK_CHECK":
             if self._move(key, 2): return
@@ -1450,29 +1451,44 @@ class ControllerUI:
         self._set("SLEW")
 
     def _digits(self, key: str) -> None:
+        """Dev Tools code / sudo password entry. Keypad digits 0-9 are typed
+        literally (so "9" is a digit here, not Back -- leave Dev Tools with
+        code 0000); BKSP deletes the last one. The encoder (rotate to pick a
+        digit, push to lock it in) stays as a fallback for builds without a
+        keypad."""
         s = self.state
-        # Same "1"/"7" encoder stand-in as _move() (see its docstring) —
-        # DEVTOOLS/SUDO_SET read ENC_UP/ENC_DOWN directly rather than going
-        # through _move(), so they need their own translation here too.
-        if key == "1":
-            key = ENC_UP
-        elif key == "7":
-            key = ENC_DOWN
-        if key == "9": self._set(s.return_screen if s.screen == "DEVTOOLS" else "MENU"); return
+        if key == FN2:
+            if s.screen == "SUDO_SET":
+                self._set("MENU")
+            else:
+                s.digits = []; s.digit_value = 0
+                self.render(coalesce=True)
+            return
+        if key == BKSP:
+            if s.digits: s.digits.pop()
+            s.digit_value = 0
+            self.render(coalesce=True)
+            return
+        if key in DIGITS: self._enter_digit(int(key)); return
         if key == ENC_UP: s.digit_value = (s.digit_value + 1) % 10; self.render(coalesce=True); return
         if key == ENC_DOWN: s.digit_value = (s.digit_value - 1) % 10; self.render(coalesce=True); return
-        if key == ENC_PUSH:
-            s.digits.append(s.digit_value); s.digit_value = 0
-            if len(s.digits) == 4:
-                code = "".join(map(str, s.digits))
-                if s.screen == "SUDO_SET":
-                    self.settings.set_password("sudo_password", code)
-                    self.settings.set("sudo_password_is_default", "0")
-                    self.runtime.delete("sudo_password_first_boot")
-                    self._set("MENU")
-                else:
-                    self._devtools_code(code)
-            else: self.render(coalesce=True)
+        if key == ENC_PUSH: self._enter_digit(s.digit_value)
+
+    def _enter_digit(self, value: int) -> None:
+        s = self.state
+        s.digits.append(value); s.digit_value = 0
+        if len(s.digits) < 4:
+            self.render(coalesce=True)
+            return
+        code = "".join(map(str, s.digits))
+        s.digits = []
+        if s.screen == "SUDO_SET":
+            self.settings.set_password("sudo_password", code)
+            self.settings.set("sudo_password_is_default", "0")
+            self.runtime.delete("sudo_password_first_boot")
+            self._set("MENU")
+        else:
+            self._devtools_code(code)
 
     def _devtools_code(self, code: str) -> None:
         """Dispatch a 4-digit Dev Tools code — see docs/CODES.md for the
