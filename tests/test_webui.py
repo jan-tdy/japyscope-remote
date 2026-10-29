@@ -442,3 +442,26 @@ def test_service_worker_route_needs_no_authentication(tmp_path):
     client = app.test_client()
     response = client.get("/sw.js")
     assert response.status_code == 200
+
+
+def test_sidebar_has_logout_and_it_logs_out(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    page = client.get("/status").data
+    assert b'action="/logout"' in page
+    assert b"<h3>Session</h3>" not in client.get("/system").data
+    response = client.post("/logout", data={"csrf_token": csrf(client)})
+    assert response.status_code == 302
+    assert client.get("/status").status_code in (302, 401)
+
+
+def test_connectors_page_lists_four_connectors(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    page = client.get("/connectors").data
+    for name in (b"Stellarium", b"CCDciel", b"Visual Astro", b"MCP"):
+        assert name in page
+    assert page.count(b"Coming soon") == 4
+
+
+def test_connectors_requires_login(tmp_path):
+    client = create_app(str(tmp_path / "web.db")).test_client()
+    assert client.get("/connectors").status_code in (302, 401)

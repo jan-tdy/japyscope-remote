@@ -94,14 +94,4 @@
     </form>
   </div>
 </section>
-
-<section>
-  <h3>Session</h3>
-  <div style="margin-top: 0.5rem;">
-    <form method="post" action="{{ url_for('logout') }}" class="inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit">Log out</button>
-    </form>
-  </div>
-</section>
 {% endblock %}
