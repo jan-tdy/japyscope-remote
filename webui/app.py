@@ -12,16 +12,26 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import platform
+import socket
 import threading
 import time
+import urllib.parse
 from functools import wraps
 from typing import Callable, Optional
 
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
 from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
+from shared.version import current_version
 
 logger = logging.getLogger(__name__)
+DEVELOPER_EMAIL = "j44soft@gmail.com"
+ISSUES_NEW_URL = "https://github.com/jan-tdy/japyscope-remote/issues/new"
+MAILTO_MAX_LENGTH = 1800
+LOG_BUNDLE_UNITS = ["japyscope-app", "japyscope-webui", "japyscope-wifi-ap", "japyscope-splash", "japyscope-update"]
+_SECRET_RE = re.compile(r"(?i)((?<![a-z])(?:password|passwd|passphrase|psk|secret\w*|token|access[_ -]?code)\s*[=:]\s*)\S+")
+
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 30
@@ -84,6 +94,139 @@ def parse_journal_entries(log_text: str) -> list[dict[str, str]]:
                 "message": line, "raw": line, "details": "",
             })
     return entries
+
+
+def collect_journal(active_units: list[str], lines: int) -> tuple[str, str]:
+    """Newest `lines` journal entries for the units, oldest-on-top, plus the
+    reason retrieval failed ("" when it didn't)."""
+    args = []
+    for u in active_units:
+        args.extend(["-u", u])
+    # --reverse forces journalctl to seek from the tail and collect
+    # backward, guaranteeing the newest N entries. Without it, -n
+    # combined with multiple -u filters is unreliable on some systemd
+    # versions (it can return the OLDEST N matches instead) — the
+    # Lines dropdown was cutting off the newest entries, not the
+    # oldest. Output comes back newest-first; reversed below to
+    # restore the usual oldest-on-top display order.
+    args.extend(["--reverse", "-n", str(lines), "--no-pager"])
+
+    permission_hints = (
+        "Hint: You are currently not seeing messages",
+        "Permission denied",
+        "No journal files were opened due to insufficient permissions",
+    )
+
+    def run_journalctl(use_sudo: bool) -> subprocess.CompletedProcess:
+        command = (["sudo", "-n"] if use_sudo else []) + ["journalctl"] + args
+        return subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+
+    # The webui service account has no journal/adm group membership (see
+    # install/systemd/japyscope-webui.service) — the plain call below
+    # almost always needs the sudo fallback. We still try it first so a
+    # future group grant works without a sudo hop, but the real bug this
+    # replaces was swallowing every failure (bad sudoers, no tty, sudo
+    # itself missing) into a generic "no entries" message that hid a real
+    # permission problem from whoever was looking at Diagnostics.
+    raw = ""
+    failure_detail = ""
+    direct = None
+    try:
+        direct = run_journalctl(use_sudo=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure_detail = f"journalctl failed: {exc}"
+
+    needs_sudo = True
+    if direct is not None:
+        raw = (direct.stdout or "").strip()
+        direct_err = (direct.stderr or "").strip()
+        needs_sudo = (
+            direct.returncode != 0
+            or not raw
+            or any(hint in raw or hint in direct_err for hint in permission_hints)
+        )
+
+    if needs_sudo:
+        try:
+            sudo_proc = run_journalctl(use_sudo=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            if not raw:
+                failure_detail = f"sudo journalctl failed: {exc}"
+        else:
+            if sudo_proc.returncode == 0:
+                raw = (sudo_proc.stdout or "").strip()
+                failure_detail = ""
+            elif not raw:
+                failure_detail = (
+                    (sudo_proc.stderr or "").strip()
+                    or f"sudo journalctl exited with status {sudo_proc.returncode}"
+                )
+
+    log_text = raw
+
+    if log_text:
+        cleaned = [
+            line for line in log_text.splitlines()
+            if not line.strip().startswith("Hint: You are currently not seeing messages")
+            and not line.strip().startswith("Users in the 'adm' or 'systemd-journal' group")
+        ]
+        # --reverse above made journalctl emit newest-first; flip back
+        # to the usual oldest-on-top, newest-on-bottom reading order.
+        log_text = "\n".join(reversed(cleaned)).strip()
+    return log_text, failure_detail
+
+
+def redact_secrets(text: str) -> str:
+    return _SECRET_RE.sub(r"\1<redacted>", text)
+
+
+def build_log_bundle(version: str, log_text: str, failure_detail: str) -> str:
+    try:
+        uptime = get_system_telemetry()["uptime"]
+    except Exception:
+        uptime = "N/A"
+    header = [
+        "JapyScope Remote log bundle",
+        f"Version: {version}",
+        f"Host: {socket.gethostname()}",
+        f"Platform: {platform.platform()}",
+        f"Uptime: {uptime}",
+        "",
+    ]
+    body = log_text or f"No log entries. {failure_detail}".strip()
+    return redact_secrets("\n".join(header) + body) + "\n"
+
+
+def build_mailto(version: str, log_text: str) -> str:
+    """mailto: cannot carry attachments, so the body only holds the version
+    and the newest warning/error lines; the full bundle is downloaded
+    separately. Stays under MAILTO_MAX_LENGTH once percent-encoded."""
+    subject = f"JapyScope Remote logs ({version}, {socket.gethostname()})"
+    intro = f"Version: {version}\nFull log bundle attached (downloaded from Diagnostics).\n\nRecent warnings/errors:\n"
+    errors = [
+        line for line in redact_secrets(log_text).splitlines()
+        if re.search(r"\b(error|warning|critical)\b|[A-Z]{2,5}-\d{3}", line, re.IGNORECASE)
+    ]
+    chosen: list[str] = []
+    for line in reversed(errors[-15:]):
+        candidate = intro + "\n".join([line[:200], *chosen])
+        if len(build_mailto_url(subject, candidate)) > MAILTO_MAX_LENGTH:
+            break
+        chosen.insert(0, line[:200])
+    return build_mailto_url(subject, intro + "\n".join(chosen))
+
+
+def build_mailto_url(subject: str, body: str) -> str:
+    query = urllib.parse.urlencode({"subject": subject, "body": body}, quote_via=urllib.parse.quote)
+    return f"mailto:{DEVELOPER_EMAIL}?{query}"
+
+
+def build_issue_url(version: str) -> str:
+    query = urllib.parse.urlencode(
+        {"template": "bug_report.yml", "component": "Web UI (webui/)", "version": version},
+        quote_via=urllib.parse.quote,
+    )
+    return f"{ISSUES_NEW_URL}?{query}"
 
 
 def get_system_telemetry() -> dict[str, str]:
@@ -483,80 +626,7 @@ def create_app(
             "update": ["japyscope-update"],
         }
         active_units = unit_mapping.get(unit_arg, unit_mapping["all"])
-        args = []
-        for u in active_units:
-            args.extend(["-u", u])
-        # --reverse forces journalctl to seek from the tail and collect
-        # backward, guaranteeing the newest N entries. Without it, -n
-        # combined with multiple -u filters is unreliable on some systemd
-        # versions (it can return the OLDEST N matches instead) — the
-        # Lines dropdown was cutting off the newest entries, not the
-        # oldest. Output comes back newest-first; reversed below to
-        # restore the usual oldest-on-top display order.
-        args.extend(["--reverse", "-n", str(lines), "--no-pager"])
-
-        permission_hints = (
-            "Hint: You are currently not seeing messages",
-            "Permission denied",
-            "No journal files were opened due to insufficient permissions",
-        )
-
-        def run_journalctl(use_sudo: bool) -> subprocess.CompletedProcess:
-            command = (["sudo", "-n"] if use_sudo else []) + ["journalctl"] + args
-            return subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
-
-        # The webui service account has no journal/adm group membership (see
-        # install/systemd/japyscope-webui.service) — the plain call below
-        # almost always needs the sudo fallback. We still try it first so a
-        # future group grant works without a sudo hop, but the real bug this
-        # replaces was swallowing every failure (bad sudoers, no tty, sudo
-        # itself missing) into a generic "no entries" message that hid a real
-        # permission problem from whoever was looking at Diagnostics.
-        raw = ""
-        failure_detail = ""
-        direct = None
-        try:
-            direct = run_journalctl(use_sudo=False)
-        except (OSError, subprocess.SubprocessError) as exc:
-            failure_detail = f"journalctl failed: {exc}"
-
-        needs_sudo = True
-        if direct is not None:
-            raw = (direct.stdout or "").strip()
-            direct_err = (direct.stderr or "").strip()
-            needs_sudo = (
-                direct.returncode != 0
-                or not raw
-                or any(hint in raw or hint in direct_err for hint in permission_hints)
-            )
-
-        if needs_sudo:
-            try:
-                sudo_proc = run_journalctl(use_sudo=True)
-            except (OSError, subprocess.SubprocessError) as exc:
-                if not raw:
-                    failure_detail = f"sudo journalctl failed: {exc}"
-            else:
-                if sudo_proc.returncode == 0:
-                    raw = (sudo_proc.stdout or "").strip()
-                    failure_detail = ""
-                elif not raw:
-                    failure_detail = (
-                        (sudo_proc.stderr or "").strip()
-                        or f"sudo journalctl exited with status {sudo_proc.returncode}"
-                    )
-
-        log_text = raw
-
-        if log_text:
-            cleaned = [
-                line for line in log_text.splitlines()
-                if not line.strip().startswith("Hint: You are currently not seeing messages")
-                and not line.strip().startswith("Users in the 'adm' or 'systemd-journal' group")
-            ]
-            # --reverse above made journalctl emit newest-first; flip back
-            # to the usual oldest-on-top, newest-on-bottom reading order.
-            log_text = "\n".join(reversed(cleaned)).strip()
+        log_text, failure_detail = collect_journal(active_units, lines)
 
         if not log_text:
             header = f"-- No log entries found for {' + '.join(active_units)} (last {lines} lines) --"
@@ -565,9 +635,12 @@ def create_app(
             else:
                 log_text = f"{header}\nThe selected services may not have generated journal entries yet."
 
+        version = current_version() or "dev"
         return render_template(
             "diagnostics.html",
             logs=log_text,
+            mailto_url=build_mailto(version, log_text),
+            issue_url=build_issue_url(version),
             # Newest-first for the structured list -- the raw log above
             # stays oldest-on-top (the usual journalctl reading order);
             # parsing first and reversing the resulting entries (rather
@@ -576,6 +649,17 @@ def create_app(
             entries=list(reversed(parse_journal_entries(log_text))),
             selected_unit=unit_arg,
             selected_lines=lines,
+        )
+
+    @app.route("/diagnostics/logs.txt")
+    @auth_required
+    def diagnostics_bundle():
+        log_text, failure_detail = collect_journal(LOG_BUNDLE_UNITS, 300)
+        bundle = build_log_bundle(current_version() or "dev", log_text, failure_detail)
+        return Response(
+            bundle,
+            mimetype="text/plain",
+            headers={"Content-Disposition": 'attachment; filename="japyscope-logs.txt"'},
         )
 
     @app.route("/api/telemetry")
