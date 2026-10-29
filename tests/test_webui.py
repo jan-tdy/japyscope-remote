@@ -465,3 +465,29 @@ def test_connectors_page_lists_four_connectors(tmp_path):
 def test_connectors_requires_login(tmp_path):
     client = create_app(str(tmp_path / "web.db")).test_client()
     assert client.get("/connectors").status_code in (302, 401)
+
+
+def test_log_bundle_requires_login_and_redacts_secrets(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    secret_log = "Oct 29 10:00:00 pi japyscope-app[1]: sudo_password=hunter2 psk: abcdefgh passed: 3"
+    monkeypatch.setattr(webui_app, "collect_journal", lambda units, lines: (secret_log, ""))
+    anonymous = create_app(str(tmp_path / "anon.db")).test_client()
+    assert anonymous.get("/diagnostics/logs.txt").status_code in (302, 401)
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/diagnostics/logs.txt")
+    assert response.status_code == 200
+    assert "attachment" in response.headers["Content-Disposition"]
+    text = response.get_data(as_text=True)
+    assert "hunter2" not in text and "abcdefgh" not in text
+    assert "passed: 3" in text and text.startswith("JapyScope Remote log bundle")
+
+
+def test_diagnostics_has_send_logs_mailto_and_report_issue(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    noisy = "\n".join(f"Oct 29 10:00:{i:02d} pi japyscope-app[1]: ERROR INDI-002 failure {i} " + "x" * 150 for i in range(40))
+    monkeypatch.setattr(webui_app, "collect_journal", lambda units, lines: (noisy, ""))
+    client, _ = authenticated_client(tmp_path)
+    page = client.get("/diagnostics").get_data(as_text=True)
+    assert "mailto:j44soft@gmail.com?subject=" in page
+    assert "https://github.com/jan-tdy/japyscope-remote/issues/new?template=bug_report.yml" in page
+    assert len(webui_app.build_mailto("v1", noisy)) <= webui_app.MAILTO_MAX_LENGTH
