@@ -41,9 +41,14 @@
     <nav class="nav-menu" id="mobile-nav">
       <a class="nav-link {% if request.endpoint == 'status' %}active{% endif %}" href="{{ url_for('status') }}">Status</a>
       <a class="nav-link {% if request.endpoint in ['catalog', 'catalog_create', 'catalog_rename', 'catalog_delete', 'item_add', 'item_delete', 'item_edit', 'catalog_import'] %}active{% endif %}" href="{{ url_for('catalog') }}">Catalogs</a>
+      <a class="nav-link {% if request.endpoint == 'connectors' %}active{% endif %}" href="{{ url_for('connectors') }}">Connectors</a>
       <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
       <a class="nav-link {% if request.endpoint == 'diagnostics' %}active{% endif %}" href="{{ url_for('diagnostics') }}">Diagnostics</a>
       <a class="nav-link {% if request.endpoint == 'system' %}active{% endif %}" href="{{ url_for('system') }}">System</a>
+      <form method="post" action="{{ url_for('logout') }}" class="nav-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="nav-link">Log out</button>
+      </form>
     </nav>
   </aside>
   {% endif %}

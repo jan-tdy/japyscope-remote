@@ -80,6 +80,17 @@ body {
   transition: all 0.15s ease;
 }
 
+.nav-form {
+  margin: 0;
+}
+
+button.nav-link {
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .nav-link:hover {
   background: #f0f2f5;
   border-color: #bbc0c4;
@@ -526,4 +537,57 @@ code {
     flex-basis: 100%;
     white-space: normal;
   }
+}
+
+.connector-list {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+
+.connector {
+  border-top: 1px solid var(--border-color);
+}
+
+.connector:first-child {
+  border-top: 0;
+}
+
+.connector-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem;
+}
+
+.connector-badge {
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.connector-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.connector-info strong {
+  display: block;
+}
+
+.connector-info span {
+  color: var(--text-muted, #6a737d);
+  font-size: 0.85rem;
+}
+
+.connector-panel {
+  padding: 0 1rem 1rem 4.25rem;
+  color: var(--text-muted, #6a737d);
 }

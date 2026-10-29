@@ -443,6 +443,11 @@ def create_app(
         flash(f"Imported {len(items)} object(s).", "ok")
         return redirect(url_for("catalog"))
 
+    @app.route("/connectors")
+    @auth_required
+    def connectors():
+        return render_template("connectors.html")
+
     @app.route("/settings", methods=["GET", "POST"])
     @auth_required
     def settings():

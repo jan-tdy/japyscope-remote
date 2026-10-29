@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Connectors</h2>
+<p class="muted">Manage external applications and API access.</p>
+
+{% set connectors = [
+  ("stellarium", "Stellarium", "S", "#2547b8", "#ffffff", "Control the telescope from Stellarium through JapyScope Remote.", "Configure"),
+  ("ccdciel", "CCDciel", "CC", "#f0c23c", "#1f2328", "Control the telescope from CCDciel through JapyScope Remote.", "Configure"),
+  ("visual-astro", "Visual Astro", "VA", "#6f42a8", "#ffffff", "Send observed objects to Inbox from telescope in Visual Astro.", "Connect"),
+  ("mcp", "MCP", "M", "#2f353b", "#ffffff", "Connect an AI client to JapyScope Remote.", "Configure"),
+] %}
+<div class="connector-list">
+  {% for key, name, badge, bg, fg, description, action in connectors %}
+  <div class="connector">
+    <div class="connector-row">
+      <div class="connector-badge" style="background: {{ bg }}; color: {{ fg }};">{{ badge }}</div>
+      <div class="connector-info">
+        <strong>{{ name }}</strong>
+        <span>{{ description }}</span>
+      </div>
+      <button type="button" class="connector-toggle" aria-expanded="false" aria-controls="connector-{{ key }}">{{ action }}</button>
+    </div>
+    <div class="connector-panel" id="connector-{{ key }}" hidden>Coming soon.</div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+document.querySelectorAll('.connector-toggle').forEach(function (button) {
+  button.addEventListener('click', function () {
+    var panel = document.getElementById(button.getAttribute('aria-controls'));
+    var open = panel.hidden;
+    panel.hidden = !open;
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+});
+</script>
+{% endblock %}
