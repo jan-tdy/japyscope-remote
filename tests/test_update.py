@@ -439,3 +439,60 @@ def test_sync_system_files_optional_is_a_quiet_no_op_when_script_missing(tmp_pat
     monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: calls.append((a, k)))
     Updater._sync_system_files(tmp_path / "no-such-release", required=False)
     assert calls == []
+
+
+def test_current_version_ignores_dangling_current_symlink(tmp_path):
+    root = tmp_path / "root"; root.mkdir()
+    (root / "current").symlink_to(root / "releases" / "gone")
+    assert Updater(root).current_version() is None
+
+
+def _stub_release(updater, monkeypatch, tmp_path, tag):
+    monkeypatch.setattr(updater, "latest", lambda: {"tag_name": tag})
+    monkeypatch.setattr(update_module, "_select_asset", lambda _release: ({"name": "release.tar.gz", "browser_download_url": "unused"}, "hash"))
+    monkeypatch.setattr(update_module, "_download", lambda _url, path: path.write_bytes(b"archive"))
+    monkeypatch.setattr(update_module, "_sha256", lambda _path: "hash")
+    extracted = tmp_path / "extracted"; extracted.mkdir()
+    monkeypatch.setattr(update_module, "_safe_extract", lambda *_args: extracted)
+    monkeypatch.setattr(update_module.shutil, "move", lambda _source, target: Path(target).mkdir())
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(updater, "_sync_system_files", lambda *_a, **_k: None)
+    monkeypatch.setattr(updater, "_health_check", lambda: None)
+
+
+def test_apply_reinstalls_when_current_points_at_a_deleted_release(tmp_path, monkeypatch):
+    root = tmp_path / "root"; (root / "releases").mkdir(parents=True)
+    (root / "current").symlink_to(root / "releases" / "new")  # dangling
+    updater = Updater(root)
+    _stub_release(updater, monkeypatch, tmp_path, "new")
+    assert updater.apply() == "new"
+    assert (root / "releases" / "new").is_dir()
+    assert updater.current.resolve() == root / "releases" / "new"
+
+
+def test_apply_replaces_leftover_release_directory(tmp_path, monkeypatch):
+    root = tmp_path / "root"; releases = root / "releases"; previous = releases / "old"
+    previous.mkdir(parents=True); (root / "current").symlink_to(previous)
+    leftover = releases / "new"; leftover.mkdir(); (leftover / "stale").touch()
+    updater = Updater(root)
+    _stub_release(updater, monkeypatch, tmp_path, "new")
+    assert updater.apply() == "new"
+    assert not (releases / "new" / "stale").exists()
+    assert updater.current.resolve() == releases / "new"
+
+
+def test_fix_venv_shebangs_points_scripts_at_the_new_venv(tmp_path):
+    venv = tmp_path / "releases" / "v1" / ".venv"; bin_dir = venv / "bin"; bin_dir.mkdir(parents=True)
+    (bin_dir / "flask").write_bytes(b"#!/tmp/japyscope-venv/bin/python\nimport flask\n")
+    (bin_dir / "pip").write_bytes(b"#!/opt/japyscope/releases/v0/.venv/bin/python3.13\nimport pip\n")
+    (bin_dir / "system").write_bytes(b"#!/usr/bin/python3\nprint(1)\n")
+    (bin_dir / "native").write_bytes(b"\x7fELF binary")
+    (bin_dir / "python3").symlink_to("/usr/bin/python3")
+    update_module._fix_venv_shebangs(venv)
+    assert (bin_dir / "flask").read_bytes() == f"#!{bin_dir}/python\nimport flask\n".encode()
+    assert (bin_dir / "pip").read_bytes() == f"#!{bin_dir}/python3.13\nimport pip\n".encode()
+    assert (bin_dir / "system").read_bytes() == b"#!/usr/bin/python3\nprint(1)\n"
+    assert (bin_dir / "native").read_bytes() == b"\x7fELF binary"
+    assert (bin_dir / "python3").is_symlink()
+    update_module._fix_venv_shebangs(venv)  # idempotent
+    assert (bin_dir / "flask").read_bytes().startswith(f"#!{bin_dir}/python\n".encode())
