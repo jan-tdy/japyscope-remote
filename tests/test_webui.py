@@ -2,7 +2,7 @@ import io
 import re
 import subprocess
 
-from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, db_session
+from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, db_session
 from webui.app import create_app
 
 
@@ -491,3 +491,36 @@ def test_diagnostics_has_send_logs_mailto_and_report_issue(tmp_path, monkeypatch
     assert "mailto:j44soft@gmail.com?subject=" in page
     assert "https://github.com/jan-tdy/japyscope-remote/issues/new?template=bug_report.yml" in page
     assert len(webui_app.build_mailto("v1", noisy)) <= webui_app.MAILTO_MAX_LENGTH
+
+
+def test_system_restart_indi_kills_only_indiserver(tmp_path):
+    db_path = str(tmp_path / "web.db")
+    with db_session(db_path) as conn: AccessCodeRepo(conn).issue("123456", 60)
+    commands = []
+    app = create_app(db_path, wifi_configurator=lambda *_: None, action_runner=commands.append)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.get("/")
+    client.post("/", data={"code": "123456", "csrf_token": csrf(client)})
+    assert b"Restart INDI" in client.get("/system").data
+    response = client.post("/system", data={"csrf_token": csrf(client), "action": "restart-indi"})
+    assert response.status_code == 302
+    assert commands == [["pkill", "-x", "indiserver"]]
+
+
+def test_status_shows_indi_process_and_connection_state(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app, "indi_process_status", lambda: {"indiserver": True, "driver": False})
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn: StateRepo(conn).set("indi_connected", "True")
+    page = client.get("/status").get_data(as_text=True)
+    assert "indiserver process</strong></td>\n      <td>running" in page
+    assert "Mount driver process</strong></td>\n      <td>not running" in page
+    assert "Mount connection</strong></td>\n      <td>connected" in page
+
+
+def test_indi_process_status_handles_missing_pgrep(monkeypatch):
+    import webui.app as webui_app
+    def fail(*_a, **_k): raise FileNotFoundError("pgrep")
+    monkeypatch.setattr(webui_app.subprocess, "run", fail)
+    assert webui_app.indi_process_status() == {"indiserver": False, "driver": False}

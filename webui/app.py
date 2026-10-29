@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
+from firmware.indi.manager import DEFAULT_DRIVER_BINARY
 from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
 from shared.version import current_version
 
@@ -329,6 +330,18 @@ def _default_action_runner(command: list[str]) -> None:
     subprocess.Popen(command, start_new_session=True)
 
 
+def indi_process_status() -> dict[str, bool]:
+    """Whether the indiserver and mount driver processes are alive. Both run
+    as children of the controller's IndiServerManager under the same
+    account as the Web UI, so pgrep can see them without privileges."""
+    def running(name: str) -> bool:
+        try:
+            return subprocess.run(["pgrep", "-x", name], capture_output=True, timeout=3, check=False).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return {"indiserver": running("indiserver"), "driver": running(DEFAULT_DRIVER_BINARY)}
+
+
 def create_app(
     db_path: Optional[str] = None,
     wifi_configurator: Callable[..., None] = _default_wifi_configurator,
@@ -466,7 +479,9 @@ def create_app(
             return redirect(url_for("status"))
         with db_session(app.config["DATABASE"]) as conn:
             values = StateRepo(conn).all()
-        return render_template("status.html", state=values, live=session.get("live_position", False))
+        return render_template(
+            "status.html", state=values, live=session.get("live_position", False), indi=indi_process_status(),
+        )
 
     @app.route("/catalog")
     @auth_required
@@ -671,6 +686,9 @@ def create_app(
     @auth_required
     def system():
         commands = {
+            # The controller's IndiServerManager watchdog respawns indiserver
+            # (and its driver) a few seconds after it dies.
+            "restart-indi": ["pkill", "-x", "indiserver"],
             "restart-controller": ["sudo", "systemctl", "restart", "japyscope-app.service"],
             "wifi-setup": ["sudo", "/usr/local/sbin/japyscope-wifi-ap", "--force"],
             "update-now": ["sudo", "systemctl", "start", "japyscope-update.service"],

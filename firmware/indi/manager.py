@@ -9,7 +9,8 @@ used here. Its property names (used by ``firmware/indi/client.py``'s
 ``IndiClient``) are sourced from the driver's own upstream code, not
 guessed.
 
-TODO: Add Indi restart option to WebUI
+The Web UI's "Restart INDI" button just kills indiserver; the watchdog below
+respawns it.
 """
 from __future__ import annotations
 
