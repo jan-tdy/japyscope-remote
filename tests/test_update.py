@@ -479,3 +479,20 @@ def test_apply_replaces_leftover_release_directory(tmp_path, monkeypatch):
     assert updater.apply() == "new"
     assert not (releases / "new" / "stale").exists()
     assert updater.current.resolve() == releases / "new"
+
+
+def test_fix_venv_shebangs_points_scripts_at_the_new_venv(tmp_path):
+    venv = tmp_path / "releases" / "v1" / ".venv"; bin_dir = venv / "bin"; bin_dir.mkdir(parents=True)
+    (bin_dir / "flask").write_bytes(b"#!/tmp/japyscope-venv/bin/python\nimport flask\n")
+    (bin_dir / "pip").write_bytes(b"#!/opt/japyscope/releases/v0/.venv/bin/python3.13\nimport pip\n")
+    (bin_dir / "system").write_bytes(b"#!/usr/bin/python3\nprint(1)\n")
+    (bin_dir / "native").write_bytes(b"\x7fELF binary")
+    (bin_dir / "python3").symlink_to("/usr/bin/python3")
+    update_module._fix_venv_shebangs(venv)
+    assert (bin_dir / "flask").read_bytes() == f"#!{bin_dir}/python\nimport flask\n".encode()
+    assert (bin_dir / "pip").read_bytes() == f"#!{bin_dir}/python3.13\nimport pip\n".encode()
+    assert (bin_dir / "system").read_bytes() == b"#!/usr/bin/python3\nprint(1)\n"
+    assert (bin_dir / "native").read_bytes() == b"\x7fELF binary"
+    assert (bin_dir / "python3").is_symlink()
+    update_module._fix_venv_shebangs(venv)  # idempotent
+    assert (bin_dir / "flask").read_bytes().startswith(f"#!{bin_dir}/python\n".encode())

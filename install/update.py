@@ -246,6 +246,36 @@ def _safe_extract_venv(archive: Path, destination: Path) -> Path:
     return root
 
 
+def _fix_venv_shebangs(venv: Path) -> None:
+    """Point console-script shebangs at `venv`'s own interpreter.
+
+    A venv is not relocatable: the scripts in bin/ (flask, pip, ...) hard-code
+    the absolute path they were created under -- /tmp/japyscope-venv for the
+    precompiled asset, the previous release's .venv for a reused one -- so
+    running them on the device fails with "required file not found".
+    Only shebangs naming another virtualenv's bin/python* are rewritten;
+    system interpreters and non-script files are left alone."""
+    bin_dir = venv / "bin"
+    if not bin_dir.is_dir():
+        return
+    interpreter_dir = f"{bin_dir}/"
+    for script in bin_dir.iterdir():
+        if script.is_symlink() or not script.is_file():
+            continue
+        with script.open("rb") as handle:
+            first = handle.readline(512)
+        if not first.startswith(b"#!") or not first.endswith(b"\n"):
+            continue
+        interpreter = first[2:].strip().decode("utf-8", "replace")
+        match = re.fullmatch(r"(/\S+)/bin/(python[0-9.]*)", interpreter)
+        if match is None or Path(match.group(1)).name not in (".venv", "japyscope-venv"):
+            continue
+        if interpreter.startswith(interpreter_dir):
+            continue
+        data = script.read_bytes()
+        script.write_bytes(f"#!{interpreter_dir}{match.group(2)}\n".encode() + data[len(first):])
+
+
 _APT_LOCK = Path("/var/lib/dpkg/lock-frontend")
 _WRITABLE_PROBE = Path("/var/tmp/.japyscope-write-test")
 
@@ -427,6 +457,7 @@ class Updater:
                     # console-script's baked-in shebang.
                     logger.info("requirements unchanged since %s; reusing its venv", previous.name)
                     shutil.copytree(previous / ".venv", target / ".venv", symlinks=True)
+                    _fix_venv_shebangs(target / ".venv")
                 elif self._try_install_precompiled_venv(release, tag, target):
                     logger.info("installed precompiled venv for this device's OS/architecture")
                 else:
@@ -543,6 +574,7 @@ class Updater:
                 if target_venv.exists():
                     shutil.rmtree(target_venv)
                 shutil.move(str(extracted), target_venv)
+                _fix_venv_shebangs(target_venv)
             # The extracted venv was built on a GitHub Actions QEMU
             # runner, not this device -- confirm it actually runs and
             # that the compiled PyIndi extension loads before trusting it
