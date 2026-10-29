@@ -8,7 +8,7 @@ import requests
 from firmware.hal.backlight.base import BacklightHAL
 from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL, key_up
-from firmware.hal.input.keys import ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
+from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from firmware.indi.client import MountStatus
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
 from firmware.ui import controller as controller_module
@@ -986,21 +986,67 @@ def test_abort_on_slew_screen_calls_indi_abort():
     finally: conn.close(); os.unlink(path)
 
 
-def test_devtools_code_enterable_via_keypad_1_7_5_stand_ins():
-    # "1"/"7" (ENC_UP/ENC_DOWN) and "5" (ENC_PUSH) should work for entering
-    # a Dev Tools code too, not just the real encoder — DEVTOOLS/SUDO_SET
-    # read ENC_UP/ENC_DOWN directly (not via _move()), so they need their
-    # own translation in _digits(), separate from _move()'s.
+def open_devtools(ui):
+    ui.state.screen = "IDLE"; ui.state.index = 2  # Home -> Dev Tools
+    ui.handle("5")  # ENC_PUSH stand-in on Home
+    assert ui.state.screen == "DEVTOOLS"
+
+
+def test_devtools_code_typed_directly_on_keypad():
+    # Every digit, including 1/3/5/7/9, is literal in Dev Tools: no
+    # ENC_UP/ENC_DOWN/ENC_PUSH/Back/force-refresh meaning there.
     ui, conn, path = make_ui()
     try:
-        ui.state.screen = "IDLE"; ui.state.index = 2  # Home -> Dev Tools
-        ui.handle("5")  # ENC_PUSH stand-in
-        assert ui.state.screen == "DEVTOOLS"
+        open_devtools(ui)
         for digit in "0022":
-            for _ in range(int(digit)):
-                ui.handle("1")  # ENC_UP stand-in
-            ui.handle("5")  # ENC_PUSH stand-in
+            ui.handle(digit)
         assert ui.state.screen == "DEV_REPO_SELECT"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_nine_is_a_digit_and_0000_exits():
+    ui, conn, path = make_ui()
+    try:
+        open_devtools(ui)
+        ui.handle("9")
+        assert ui.state.screen == "DEVTOOLS" and ui.state.digits == [9]
+        ui.handle(BKSP)
+        assert ui.state.digits == []
+        for digit in "0000":
+            ui.handle(digit)
+        assert ui.state.screen == "IDLE"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_devtools_bksp_and_fn2_edit_the_entry():
+    ui, conn, path = make_ui()
+    try:
+        open_devtools(ui)
+        for digit in "135": ui.handle(digit)
+        assert ui.state.digits == [1, 3, 5]
+        ui.handle(BKSP)
+        assert ui.state.digits == [1, 3]
+        ui.handle(FN2)
+        assert ui.state.digits == [] and ui.state.screen == "DEVTOOLS"
+        ui.handle(BKSP)  # no-op when empty
+        assert ui.state.digits == []
+        for digit in "0022": ui.handle(digit)
+        assert ui.state.screen == "DEV_REPO_SELECT"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_sudo_set_takes_keypad_digits_and_fn2_cancels():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "MENU"; ui.state.index = 8
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "SUDO_SET"
+        ui.handle("9"); ui.handle(FN2)
+        assert ui.state.screen == "MENU"
+        ui.state.index = 8; ui.handle(ENC_PUSH)
+        for digit in "0000": ui.handle(digit)  # 0000 is a valid password here, not "exit"
+        assert ui.state.screen == "MENU"
+        assert SettingsRepo(conn).verify_password("sudo_password", "0000")
     finally: conn.close(); os.unlink(path)
 
 

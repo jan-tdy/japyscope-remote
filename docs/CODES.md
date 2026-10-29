@@ -18,7 +18,7 @@ permalink: /codes/
 | 8 | Jog Down, "wxyz" in SmartSearch |
 | 7 | Menu Down, Jog speed, "tuv" in SmartSearch |
 | 5 | OK, "mno" in SmartSearch |
-| 9 | Back, "wxyz" in SmartSearch |
+| 9 | Back, "wxyz" in SmartSearch (a plain digit in Dev Tools) |
 | 0 | digit "0" |
 | FN2 | inside SmartSearch: cancel/back out |
 | BKSP | delete last character in SmartSearch |
@@ -47,9 +47,11 @@ permalink: /codes/
 
 ## Dev Tools codes
 
+Type the four digits on the keypad: every key 0–9 is a literal digit here (so 9 is not Back and 3/5 are not refresh/OK), BKSP deletes the last digit and FN2 clears the entry. Without a keypad, rotate the encoder to pick a digit and push to lock it in.
+
 | Code | Action | Notes |
 |---|---|---|
-| `0000` | Exit Dev Tools | |
+| `0000` | Exit Dev Tools | back to where Dev Tools was opened from (normally the idle screen) |
 | `0022` | Set repo | opens repo selection |
 | `0033` | Set update channel | opens channel selection, Stable only / Stable + prereleases |
 | `0044` | SSH | runs `systemctl enable --now ssh`, then shows the result plus IP/hostname and login user |
@@ -76,7 +78,7 @@ permalink: /codes/
   (default!)" every time the screen is opened, driven by
   `settings.sudo_password_is_default` reading `1` — a nag the owner can't
   miss by only seeing once, nudging them to pick their own.
-- Set via Menu → Sudo Password (same rotary-dial 4-digit entry as Dev Tools codes, and no need to know the current code first) — this also clears the reminder and erases the generated code from `state`.
+- Set via Menu → Sudo Password (same 4-digit entry as Dev Tools codes — except 0000 is accepted as a password, and FN2 cancels, and no need to know the current code first) — this also clears the reminder and erases the generated code from `state`.
 - Intended to guard destructive Dev Tools actions — none of the current codes need it (see table above), since none are destructive yet.
 - **Not a real security boundary** — same spirit as the Web UI access code below: a deterrent, not encryption-grade auth. Don't build anything safety-critical behind it without upgrading the mechanism first.
 
