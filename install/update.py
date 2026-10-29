@@ -361,7 +361,10 @@ class Updater:
         return _fetch_json(self.api_url)
 
     def current_version(self) -> Optional[str]:
-        if not self.current.is_symlink(): return None
+        # A `current` whose release directory is gone (deleted by hand, or an
+        # interrupted update) is not a running version: reporting its name
+        # makes apply() think the device is already up to date.
+        if not self.current.is_symlink() or not self.current.exists(): return None
         return self.current.resolve().name
 
     def check(self) -> tuple[str, bool]:
@@ -388,9 +391,13 @@ class Updater:
                     _write_update_status(status="idle", phase="up_to_date")
                     return tag
                 target = self.releases / tag
-                if target.exists(): raise UpdateError(f"release directory already exists: {target}")
+                if target.exists():
+                    # The live release was handled above, so this is what an
+                    # earlier update that died mid-install left behind.
+                    logger.warning("removing leftover release directory from an interrupted update: %s", target)
+                    shutil.rmtree(target)
                 asset, expected = _select_asset(release)
-                previous = self.current.resolve() if self.current.is_symlink() else None
+                previous = self.current.resolve() if self.current.exists() else None
                 _write_update_status(phase="downloading", tag=tag)
                 with tempfile.TemporaryDirectory(dir=self.root) as temp_name:
                     temp = Path(temp_name); archive = temp / asset["name"]
