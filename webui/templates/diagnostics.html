@@ -32,6 +32,9 @@
     <div style="margin-top: 1.3rem;">
       <button type="submit" class="primary">Refresh</button>
       <button type="button" id="copy-btn">Copy logs</button>
+      <a class="button" href="{{ url_for('diagnostics_bundle') }}" download id="send-logs-download">Download logs</a>
+      <a class="button" href="{{ mailto_url }}" id="send-logs-mail" title="Download the logs first and attach them to the mail">Send logs</a>
+      <a class="button" href="{{ issue_url }}" target="_blank" rel="noopener" id="report-issue">Report issue</a>
       <span id="copy-feedback" class="muted" style="margin-left: 0.5rem;"></span>
     </div>
   </div>
@@ -112,6 +115,10 @@ function filterLogs() {
 
 levelFilters.forEach(function(filter) { filter.addEventListener('change', filterLogs); });
 textFilter.addEventListener('input', filterLogs);
+
+document.getElementById('send-logs-mail').addEventListener('click', function() {
+  document.getElementById('send-logs-download').click();
+});
 
 document.getElementById('copy-btn').addEventListener('click', function() {
   var text = rawLog.textContent;
