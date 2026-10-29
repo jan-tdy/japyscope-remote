@@ -23,6 +23,30 @@
   </tbody>
 </table>
 
+<h3>INDI</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>indiserver process</strong></td>
+      <td>{{ 'running' if indi.indiserver else 'not running' }}</td>
+    </tr>
+    <tr>
+      <td><strong>Mount driver process</strong></td>
+      <td>{{ 'running' if indi.driver else 'not running' }}</td>
+    </tr>
+    <tr>
+      <td><strong>Mount connection</strong></td>
+      <td>{% if 'indi_connected' not in state %}unknown{% elif state['indi_connected']|lower in ['1', 'true', 'yes', 'on'] %}connected{% else %}disconnected{% endif %}</td>
+    </tr>
+  </tbody>
+</table>
+
 <form method="post" style="margin: 1rem 0;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="action" value="{{ 'stop' if live else 'start' }}">

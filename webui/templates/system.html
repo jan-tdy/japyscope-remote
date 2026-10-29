@@ -58,6 +58,12 @@
       <button type="submit">Restart controller service</button>
     </form>
     
+    <form method="post" class="inline" onsubmit="return confirm('Restart the INDI server? The mount connection drops for a few seconds.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="restart-indi">
+      <button type="submit">Restart INDI</button>
+    </form>
+
     <form method="post" class="inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="wifi-setup">
