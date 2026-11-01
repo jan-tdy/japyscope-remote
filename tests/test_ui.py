@@ -12,6 +12,7 @@ from firmware.hal.input.keys import BKSP, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_L
 from firmware.indi.client import MountStatus
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
 from firmware.ui import controller as controller_module
+from firmware.ui.controller import MOUNT_RECONNECT_RETRY_SECONDS
 from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 
@@ -1689,6 +1690,95 @@ def test_poll_indi_restart_skips_reconnect_if_indiserver_never_comes_back(monkey
         ui._poll_indi_restart()
         assert setprop_calls == [], "must not attempt the reconnect against an unreachable indiserver"
         assert any("did not come back up" in r.message for r in caplog.records)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_mount_connection_retries_reconnect_when_driver_reports_disconnected(monkeypatch):
+    # The driver can report CONNECTION.CONNECT off (e.g. the mount's own
+    # WiFi link drops) without indiserver/the driver process ever
+    # restarting -- _poll_indi_restart()'s restart_count check sees
+    # nothing happen in that case, so nothing else replayed the
+    # reconnect until now.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        ui.indi_manager = object()  # non-None marks this as real hardware, not --simulate
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+
+        StateRepo(conn).set("indi_connected", "true")
+        ui._poll_mount_connection()
+        assert calls == [], "reported connected -- must not reconnect"
+
+        StateRepo(conn).set("indi_connected", "false")
+        ui._poll_mount_connection()
+        assert calls, "expected the WiFi reconnect to be retried once the driver reported disconnected"
+
+        calls.clear()
+        ui._poll_mount_connection()
+        assert calls == [], "within the retry cooldown -- must not retry again immediately"
+
+        now[0] += MOUNT_RECONNECT_RETRY_SECONDS
+        ui._poll_mount_connection()
+        assert calls, "cooldown elapsed and still disconnected -- expected another retry"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_mount_connection_ignores_interfaces_with_no_reconnect(monkeypatch):
+    # RJ12/Bluetooth have no automatic reconnect to replay yet (see
+    # _menu_reconnect()) -- nothing useful to retry there.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_interface", "rj12")
+        ui.indi_manager = object()
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        StateRepo(conn).set("indi_connected", "false")
+        ui._poll_mount_connection()
+        assert calls == []
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_mount_connection_skips_in_simulate_mode(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        assert ui.indi_manager is None
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        StateRepo(conn).set("indi_connected", "false")
+        ui._poll_mount_connection()
+        assert calls == []
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_mount_connection_does_nothing_before_first_status_read(monkeypatch):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        ui.indi_manager = object()
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        assert StateRepo(conn).get("indi_connected") is None
+        ui._poll_mount_connection()
+        assert calls == []
     finally: conn.close(); os.unlink(path)
 
 
