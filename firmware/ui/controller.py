@@ -56,6 +56,13 @@ PARK_CONFIRM_TIMEOUT_SECONDS = 60
 # A full-sky alt-az GOTO can take several minutes, so leave a generous
 # window before aborting motion that may still be progressing.
 SLEW_CONFIRM_TIMEOUT_SECONDS = 600
+# How often to retry _reconnect_mount_interface() while the driver
+# reports CONNECTION.CONNECT off without indiserver's own process having
+# restarted (see _poll_mount_connection()) -- e.g. the mount's WiFi link
+# dropping on its own, not indiserver/the driver binary crashing. Chosen
+# to match IndiServerManager.HEALTH_CHECK_INTERVAL_S's own cadence for
+# the same class of "keep trying quietly" recovery.
+MOUNT_RECONNECT_RETRY_SECONDS = 5.0
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -263,6 +270,10 @@ class ControllerUI:
         # below has done the initial reconnect, so the first tick() doesn't
         # immediately see a "change" and redo it.
         self._indi_restart_count = 0
+        # Next time _poll_mount_connection() may retry a disconnected mount
+        # -- 0 means "try as soon as a disconnect is seen" (see its
+        # docstring for why this needs its own cooldown).
+        self._mount_reconnect_due_at = 0.0
 
     def start(self) -> None:
         self.render()
@@ -332,6 +343,7 @@ class ControllerUI:
         self._poll_parking()
         self._poll_slew()
         self._poll_indi_restart()
+        self._poll_mount_connection()
 
     def _poll_parking(self) -> None:
         """PARK_CONFIRM's `self.indi.park()` call only issues the park
@@ -456,6 +468,46 @@ class ControllerUI:
             except ConnectionError:
                 time.sleep(delay)
         return False
+
+    def _poll_mount_connection(self) -> None:
+        """Notices the driver itself reporting disconnected
+        (`CONNECTION.CONNECT` off, mirrored into `runtime["indi_connected"]`
+        by `_refresh_status()`) and retries the same WiFi/app reconnect
+        `_poll_indi_restart()` replays after an indiserver respawn --
+        but for the case that one doesn't cover: the mount's own WiFi link
+        (to the SynScan module, or the phone running the SynScan app)
+        dropping on its own while indiserver and the driver process keep
+        running fine. `restart_count` never changes in that case, so
+        nothing before this replayed the connection, and every
+        jog/goto/sync/park kept silently failing against a driver that
+        was never told to reconnect -- until the owner noticed and used
+        Menu -> Connection -> Reconnect by hand.
+
+        Only meaningful for interfaces `_reconnect_mount_interface()`
+        itself knows how to replay (WiFi/app) -- RJ12/Bluetooth have no
+        automatic reconnect yet (see `_menu_reconnect()`), so there's
+        nothing useful to retry there and this leaves them alone.
+
+        Retries on a cooldown (`MOUNT_RECONNECT_RETRY_SECONDS`) rather
+        than every tick: a genuinely absent/powered-off mount would
+        otherwise mean a fresh indi_setprop subprocess every 0.2s for as
+        long as it stays off."""
+        if self.indi_manager is None:
+            return
+        if self.settings.get("mount_interface", "rj12") not in ("wifi", "synscan_app"):
+            return
+        raw = self.runtime.get("indi_connected")
+        if raw is None:
+            return  # no status read yet -- nothing to react to
+        if self._truth(raw):
+            self._mount_reconnect_due_at = 0.0
+            return
+        now = self.clock()
+        if now < self._mount_reconnect_due_at:
+            return
+        self._mount_reconnect_due_at = now + MOUNT_RECONNECT_RETRY_SECONDS
+        logger.info("mount reports disconnected -- retrying WiFi/app reconnect")
+        self._reconnect_mount_interface()
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
