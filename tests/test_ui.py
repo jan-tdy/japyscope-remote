@@ -1557,6 +1557,57 @@ def test_boot_logs_but_does_not_raise_on_reconnect_failure(monkeypatch, caplog):
     finally: conn.close(); os.unlink(path)
 
 
+def test_poll_indi_restart_replays_reconnect_when_indiserver_respawns(monkeypatch):
+    # Confirmed from a v0.49.1 log bundle: once indiserver crashes and the
+    # IndiServerManager watchdog respawns it (or the Web UI's "Restart
+    # INDI" button pkills it and the same watchdog respawns it, or Dev
+    # Tools 1111's own restart() runs), the fresh driver never got the
+    # WiFi CONNECTION.CONNECT this app only ever sent once, at the
+    # previous boot -- every slew/sync/park then failed for the rest of
+    # the session. tick() must notice indi_manager.restart_count moving
+    # and replay the same reconnect start() does at boot.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+
+        class Manager:
+            restart_count = 0
+
+        ui.indi_manager = Manager()
+        assert ui._indi_restart_count == 0
+
+        ui._poll_indi_restart()
+        assert calls == [], "restart_count unchanged -- must not replay reconnect"
+
+        Manager.restart_count = 1  # a crash+respawn (or a manual restart) happened
+        ui._poll_indi_restart()
+        assert calls, "expected the WiFi reconnect to be replayed after indiserver restarted"
+        assert ui._indi_restart_count == 1
+
+        calls.clear()
+        ui._poll_indi_restart()
+        assert calls == [], "same restart_count again -- must not replay a second time"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_start_baselines_indi_restart_count():
+    ui, conn, path = make_ui()
+    try:
+        class Manager:
+            restart_count = 3  # e.g. start() itself already bumped it once
+            def restart(self): pass
+        ui.indi_manager = Manager()
+        ui.start()
+        assert ui._indi_restart_count == 3
+    finally: conn.close(); os.unlink(path)
+
+
 def test_boot_sends_configured_location_and_time_to_driver():
     # Confirmed on hardware as a real gap: GEOGRAPHIC_COORD/TIME_UTC on
     # the driver read back as 0/0 and empty -- this app's Settings page

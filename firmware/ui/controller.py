@@ -259,12 +259,17 @@ class ControllerUI:
         self.clock = clock
         self.state = UIState()
         self.running = True
+        # Baseline for _poll_indi_restart() -- set for real once start()
+        # below has done the initial reconnect, so the first tick() doesn't
+        # immediately see a "change" and redo it.
+        self._indi_restart_count = 0
 
     def start(self) -> None:
         self.render()
         if self.indi_manager is not None:
             self._reconnect_mount_interface()
             self._sync_indi_location_and_time()
+            self._indi_restart_count = self.indi_manager.restart_count
         update_status = self.runtime.get("update_status")
         if update_status in ("success", "failed"):
             # A finished OTA update (`install/update.py`'s `apply()`)
@@ -326,6 +331,7 @@ class ControllerUI:
         self._poll_update_status()
         self._poll_parking()
         self._poll_slew()
+        self._poll_indi_restart()
 
     def _poll_parking(self) -> None:
         """PARK_CONFIRM's `self.indi.park()` call only issues the park
@@ -391,6 +397,36 @@ class ControllerUI:
             # issue another slew with this one's outcome still unknown.
             s.return_screen = "IDLE"
             self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
+
+    def _poll_indi_restart(self) -> None:
+        """Notices a fresh indiserver/driver process -- `IndiServerManager`'s
+        watchdog respawning a crashed one, the Web UI's "Restart INDI"
+        button (which just `pkill`s indiserver and leaves the respawn to
+        that same watchdog), or Dev Tools 1111's own `restart()` call --
+        and replays start()'s boot-time mount reconnect and location/time
+        sync on it.
+
+        Confirmed from a v0.49.1 log bundle: without this, a driver that
+        comes back from any of those three paths keeps the connection
+        settings nothing told it (CONNECTION.CONNECT for WiFi/app,
+        GEOGRAPHIC_COORD, TIME_UTC) -- every indi_setprop/indi_getprop
+        then fails for the rest of the session, since only `start()`
+        itself ever sent that setup, exactly once, at the previous boot.
+
+        Reads `indi_manager.restart_count` rather than reacting to a
+        callback from the watchdog thread: that thread doesn't own the
+        sqlite connection `self.settings` reads through, so the replay has
+        to run on this thread, the same way every other `_poll_*()` here
+        already does."""
+        if self.indi_manager is None:
+            return
+        count = self.indi_manager.restart_count
+        if count == self._indi_restart_count:
+            return
+        self._indi_restart_count = count
+        logger.info("indiserver restarted -- replaying mount reconnect")
+        self._reconnect_mount_interface()
+        self._sync_indi_location_and_time()
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
