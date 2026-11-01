@@ -33,6 +33,21 @@ def test_restart_replaces_process():
         mgr.stop()
 
 
+def test_restart_bumps_restart_count():
+    # ControllerUI._poll_indi_restart() watches this counter to know when
+    # to replay the mount's WiFi/app CONNECTION.CONNECT and
+    # GEOGRAPHIC_COORD/TIME_UTC setup on a freshly spawned driver --
+    # start() must bump it every time it actually spawns a process.
+    mgr = IndiServerManager(command=_FAKE_LONG_RUNNING)
+    mgr.start()
+    try:
+        assert mgr.restart_count == 1
+        mgr.restart()
+        assert mgr.restart_count == 2
+    finally:
+        mgr.stop()
+
+
 def test_watchdog_restarts_after_crash():
     mgr = IndiServerManager(command=_FAKE_SHORT_LIVED)
     mgr.start()
@@ -49,3 +64,7 @@ def test_watchdog_restarts_after_crash():
         assert len(pids_seen) > 1, "expected the watchdog to have restarted the crashed process"
     finally:
         mgr.stop()
+    # Each pid change above was a respawn (the first start() plus every
+    # watchdog respawn after) -- restart_count must have kept pace, or
+    # ControllerUI would never notice and would never replay mount setup.
+    assert mgr.restart_count >= len(pids_seen)

@@ -259,12 +259,17 @@ class ControllerUI:
         self.clock = clock
         self.state = UIState()
         self.running = True
+        # Baseline for _poll_indi_restart() -- set for real once start()
+        # below has done the initial reconnect, so the first tick() doesn't
+        # immediately see a "change" and redo it.
+        self._indi_restart_count = 0
 
     def start(self) -> None:
         self.render()
         if self.indi_manager is not None:
             self._reconnect_mount_interface()
             self._sync_indi_location_and_time()
+            self._indi_restart_count = self.indi_manager.restart_count
         update_status = self.runtime.get("update_status")
         if update_status in ("success", "failed"):
             # A finished OTA update (`install/update.py`'s `apply()`)
@@ -326,6 +331,7 @@ class ControllerUI:
         self._poll_update_status()
         self._poll_parking()
         self._poll_slew()
+        self._poll_indi_restart()
 
     def _poll_parking(self) -> None:
         """PARK_CONFIRM's `self.indi.park()` call only issues the park
@@ -391,6 +397,65 @@ class ControllerUI:
             # issue another slew with this one's outcome still unknown.
             s.return_screen = "IDLE"
             self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
+
+    def _poll_indi_restart(self) -> None:
+        """Notices a fresh indiserver/driver process -- `IndiServerManager`'s
+        watchdog respawning a crashed one, the Web UI's "Restart INDI"
+        button (which just `pkill`s indiserver and leaves the respawn to
+        that same watchdog), or Dev Tools 1111's own `restart()` call --
+        and replays start()'s boot-time mount reconnect and location/time
+        sync on it.
+
+        Confirmed from a v0.49.1 log bundle: without this, a driver that
+        comes back from any of those three paths keeps the connection
+        settings nothing told it (CONNECTION.CONNECT for WiFi/app,
+        GEOGRAPHIC_COORD, TIME_UTC) -- every indi_setprop/indi_getprop
+        then fails for the rest of the session, since only `start()`
+        itself ever sent that setup, exactly once, at the previous boot.
+
+        Reads `indi_manager.restart_count` rather than reacting to a
+        callback from the watchdog thread: that thread doesn't own the
+        sqlite connection `self.settings` reads through, so the replay has
+        to run on this thread, the same way every other `_poll_*()` here
+        already does.
+
+        Waits for indiserver's control port to actually accept a
+        connection first (`_wait_for_indiserver()`) -- `restart_count`
+        bumps the instant `IndiServerManager` calls `Popen()`, well before
+        indiserver has bound its port or started the driver, and unlike
+        boot (where `firmware/main.py`'s `connect_indi()` already does
+        this same wait before `ControllerUI.start()` ever runs) there's
+        no later retry: `restart_count` only changes again on the *next*
+        restart, so a reconnect attempted too early would otherwise fail
+        outright and stay failed for the rest of the session -- the exact
+        bug this method exists to fix, just moved earlier."""
+        if self.indi_manager is None:
+            return
+        count = self.indi_manager.restart_count
+        if count == self._indi_restart_count:
+            return
+        self._indi_restart_count = count
+        logger.info("indiserver restarted -- replaying mount reconnect")
+        if not self._wait_for_indiserver():
+            logger.error("INDI-002 indiserver did not come back up in time for mount reconnect replay")
+            return
+        self._reconnect_mount_interface()
+        self._sync_indi_location_and_time()
+
+    def _wait_for_indiserver(self, attempts: int = 30, delay: float = 0.5) -> bool:
+        """Bounded poll of indiserver's plain TCP reachability (same check
+        `IndiClient.connect()` does at boot) -- blocks this thread (so the
+        UI is briefly unresponsive) for up to `attempts * delay` seconds
+        (15s by default, matching `connect_indi()`'s own default timeout
+        in `firmware/main.py`), which only happens right after an
+        indiserver restart, a rare event. Returns whether it came up."""
+        for _ in range(attempts):
+            try:
+                self.indi.connect()
+                return True
+            except ConnectionError:
+                time.sleep(delay)
+        return False
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as
@@ -547,7 +612,8 @@ class ControllerUI:
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
             lines = self._visible(
-                self._t("boot.park_question"), [self._t("boot.park_yes"), self._t("boot.park_no")]
+                self._t("boot.park_question"),
+                [self._t("boot.park_yes"), self._t("boot.park_no"), self._t("park.home")],
             )
         elif screen == "BOOT_SYNC_FAILED":
             lines = [
@@ -1008,14 +1074,23 @@ class ControllerUI:
         if key == "5" and s.screen not in ("TYPE", "DEVTOOLS", "SUDO_SET"):
             key = ENC_PUSH
         if s.screen == "BOOT_PARK_CHECK":
-            if self._move(key, 2): return
-            if key == ENC_PUSH:
+            if self._move(key, 3): return
+            if key == "9":
+                # Same destination as the Home option below -- lets the
+                # owner reach Home (and through it Menu -> Wi-Fi / Web
+                # access) without first committing to either park answer.
+                # Nothing sent to the mount, same contract as PARKED's own
+                # Home option: it keeps coming up parked after every
+                # restart until explicitly unparked (Menu -> Park/Unpark,
+                # or BOOT_PARK_CHECK's own "No" next boot).
+                self._set("IDLE")
+            elif key == ENC_PUSH:
                 if s.index == 0:
                     if not self._sync_park_position():
                         return
                     self.runtime.set("parked", "true")
                     self._set("PARKED")
-                else:
+                elif s.index == 1:
                     # "No — sync now": point at a known star, center it, and
                     # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
                     # below, entered here with boot_sync set so confirming
@@ -1029,6 +1104,8 @@ class ControllerUI:
                     s.boot_sync = True
                     s.align_points = 0
                     self._set("ALIGN_STAR_PICK")
+                else:
+                    self._set("IDLE")
             return
         if s.screen == "BOOT_SYNC_FAILED":
             if key == ENC_PUSH:

@@ -37,6 +37,7 @@ class Indi:
         self.synced = None; self.synced_alt_az = None; self.goto_target = None; self.parked = False
         self.park_position = None; self.location = None; self.time_set = False
         self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
+    def connect(self): pass
     def sync(self, ra, dec): self.synced = (ra, dec)
     def sync_alt_az(self, alt_deg, az_deg, latitude_deg, longitude_deg):
         self.synced_alt_az = (alt_deg, az_deg, latitude_deg, longitude_deg)
@@ -241,6 +242,40 @@ def test_boot_sync_now_stops_when_the_driver_cannot_be_unparked():
         assert StateRepo(conn).get("parked") is None
         ui.handle(ENC_PUSH)  # dismiss -> back to the boot question, can retry
         assert ui.state.screen == "BOOT_PARK_CHECK"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_park_check_home_shortcut_key_skips_the_question():
+    # "9" jumps straight to Home without answering either way -- same
+    # contract as PARKED's own Home option: nothing at all sent to the
+    # mount, so the driver's own parked state (it comes back up parked
+    # after every restart) is left for the owner to resolve later via
+    # Menu -> Park/Unpark or by answering the question on the next boot.
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        for name in ("unpark", "park", "sync_alt_az", "set_park_position"):
+            setattr(ui.indi, name, lambda *a, _n=name, **kw: calls.append(_n))
+        ui.start()
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+        assert calls == []
+        assert StateRepo(conn).get("parked") is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_park_check_home_menu_item_skips_the_question():
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        for name in ("unpark", "park", "sync_alt_az", "set_park_position"):
+            setattr(ui.indi, name, lambda *a, _n=name, **kw: calls.append(_n))
+        ui.start()
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # "Yes" -> "No" -> "Home"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert calls == []
+        assert StateRepo(conn).get("parked") is None
     finally: conn.close(); os.unlink(path)
 
 
@@ -1554,6 +1589,118 @@ def test_boot_logs_but_does_not_raise_on_reconnect_failure(monkeypatch, caplog):
         ui.indi_manager = object()
         ui._reconnect_mount_interface()  # must not raise
         assert any("Boot: mount wifi reconnect" in r.message for r in caplog.records)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_indi_restart_replays_reconnect_when_indiserver_respawns(monkeypatch):
+    # Confirmed from a v0.49.1 log bundle: once indiserver crashes and the
+    # IndiServerManager watchdog respawns it (or the Web UI's "Restart
+    # INDI" button pkills it and the same watchdog respawns it, or Dev
+    # Tools 1111's own restart() runs), the fresh driver never got the
+    # WiFi CONNECTION.CONNECT this app only ever sent once, at the
+    # previous boot -- every slew/sync/park then failed for the rest of
+    # the session. tick() must notice indi_manager.restart_count moving
+    # and replay the same reconnect start() does at boot.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+
+        class Manager:
+            restart_count = 0
+
+        ui.indi_manager = Manager()
+        assert ui._indi_restart_count == 0
+
+        ui._poll_indi_restart()
+        assert calls == [], "restart_count unchanged -- must not replay reconnect"
+
+        Manager.restart_count = 1  # a crash+respawn (or a manual restart) happened
+        ui._poll_indi_restart()
+        assert calls, "expected the WiFi reconnect to be replayed after indiserver restarted"
+        assert ui._indi_restart_count == 1
+
+        calls.clear()
+        ui._poll_indi_restart()
+        assert calls == [], "same restart_count again -- must not replay a second time"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_indi_restart_waits_for_indiserver_before_replaying(monkeypatch):
+    # restart_count bumps the instant IndiServerManager calls Popen() --
+    # well before indiserver has actually bound its port. _wait_for_
+    # indiserver() must retry the plain TCP check instead of attempting
+    # the reconnect (and thus the indi_setprop calls) immediately.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        setprop_calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: setprop_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        connect_attempts = []
+
+        def flaky_connect():
+            connect_attempts.append(1)
+            if len(connect_attempts) < 3:
+                raise ConnectionError("not up yet")
+
+        monkeypatch.setattr(ui.indi, "connect", flaky_connect)
+
+        class Manager:
+            restart_count = 1
+
+        ui.indi_manager = Manager()
+        ui._poll_indi_restart()
+        assert len(connect_attempts) == 3, "expected it to retry the TCP check until it succeeded"
+        assert setprop_calls, "expected the reconnect to run once indiserver was reachable"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_indi_restart_skips_reconnect_if_indiserver_never_comes_back(monkeypatch, caplog):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        setprop_calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: setprop_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+
+        def never_up():
+            raise ConnectionError("still down")
+
+        monkeypatch.setattr(ui.indi, "connect", never_up)
+
+        class Manager:
+            restart_count = 1
+
+        ui.indi_manager = Manager()
+        ui._poll_indi_restart()
+        assert setprop_calls == [], "must not attempt the reconnect against an unreachable indiserver"
+        assert any("did not come back up" in r.message for r in caplog.records)
+    finally: conn.close(); os.unlink(path)
+
+
+def test_start_baselines_indi_restart_count():
+    ui, conn, path = make_ui()
+    try:
+        class Manager:
+            restart_count = 3  # e.g. start() itself already bumped it once
+            def restart(self): pass
+        ui.indi_manager = Manager()
+        ui.start()
+        assert ui._indi_restart_count == 3
     finally: conn.close(); os.unlink(path)
 
 

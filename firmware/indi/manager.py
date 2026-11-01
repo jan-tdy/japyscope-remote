@@ -47,6 +47,16 @@ class IndiServerManager:
         self._watchdog_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        # Bumped every time a driver process is (re)spawned -- by start(),
+        # restart(), or the watchdog respawning a crashed one -- so
+        # ControllerUI can notice a fresh driver (which has no memory of
+        # the CONNECTION.CONNECT/GEOGRAPHIC_COORD/TIME_UTC this app sent
+        # the previous one) and replay that setup. A plain int rather than
+        # a callback: callers live in a different thread (the watchdog)
+        # than the one that owns the sqlite connection ControllerUI's
+        # settings reads go through, so the replay has to happen on
+        # ControllerUI's own thread, polling this counter, not here.
+        self.restart_count = 0
 
     def start(self) -> None:
         with self._lock:
@@ -57,6 +67,7 @@ class IndiServerManager:
                 self._command,
                 stderr=subprocess.STDOUT,
             )
+            self.restart_count += 1
         if self._watchdog_thread is None:
             self._stop.clear()
             self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
@@ -105,3 +116,4 @@ class IndiServerManager:
                     self._command,
                     stderr=subprocess.STDOUT,
                 )
+                self.restart_count += 1
