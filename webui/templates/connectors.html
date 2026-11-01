@@ -35,7 +35,7 @@
       {% endif %}
     </div>
     {% if not visual_astro_linked and visual_astro_code %}
-    <div class="connector-panel" id="visual-astro-pairing" data-poll-url="{{ url_for('visual_astro_pair_poll') }}" data-csrf="{{ csrf_token }}" data-connectors-url="{{ url_for('connectors') }}">
+    <div class="connector-panel" id="visual-astro-pairing" data-poll-url="{{ url_for('visual_astro_pair_poll') }}" data-csrf="{{ csrf_token }}">
       <p>Enter this code in Visual Astro &rarr; Settings &rarr; link telescope:</p>
       <p style="font-size: 1.6rem; font-weight: 700; letter-spacing: 0.15em;">{{ visual_astro_code }}</p>
       <p class="muted" id="visual-astro-countdown" data-remaining="{{ visual_astro_remaining }}"></p>
@@ -74,7 +74,6 @@ document.querySelectorAll('.connector-toggle[aria-controls]').forEach(function (
   var remaining = parseInt(countdown.getAttribute('data-remaining'), 10) || 0;
   var pollUrl = panel.getAttribute('data-poll-url');
   var csrfToken = panel.getAttribute('data-csrf');
-  var connectorsUrl = panel.getAttribute('data-connectors-url');
 
   function renderCountdown() {
     var m = Math.floor(remaining / 60), s = remaining % 60;
@@ -101,7 +100,7 @@ document.querySelectorAll('.connector-toggle[aria-controls]').forEach(function (
         if (data.status === 'claimed' || data.status === 'expired') {
           clearInterval(pollTimer);
           clearInterval(tickTimer);
-          window.location.href = connectorsUrl;
+          window.location.reload();
         }
       })
       .catch(function () { /* transient network hiccup -- next poll tries again */ });
