@@ -2,7 +2,8 @@ import io
 import re
 import subprocess
 
-from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, db_session
+from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, TelescopePairingRepo, db_session
+from shared.visual_astro import PairFetchResult
 from webui.app import create_app
 
 
@@ -459,7 +460,10 @@ def test_connectors_page_lists_four_connectors(tmp_path):
     page = client.get("/connectors").data
     for name in (b"Stellarium", b"CCDciel", b"Visual Astro", b"MCP"):
         assert name in page
-    assert page.count(b"Coming soon") == 4
+    # Visual Astro has a real pairing flow now (see the dedicated
+    # test_visual_astro_* tests below) -- only the other three are still
+    # placeholders.
+    assert page.count(b"Coming soon") == 3
 
 
 def test_connectors_requires_login(tmp_path):
@@ -524,3 +528,128 @@ def test_indi_process_status_handles_missing_pgrep(monkeypatch):
     def fail(*_a, **_k): raise FileNotFoundError("pgrep")
     monkeypatch.setattr(webui_app.subprocess, "run", fail)
     assert webui_app.indi_process_status() == {"indiserver": False, "driver": False}
+
+
+def test_visual_astro_connectors_page_shows_connect_when_not_linked(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    page = client.get("/connectors").get_data(as_text=True)
+    assert "Visual Astro" in page
+    assert "Connect" in page
+    assert "Disconnect" not in page
+
+
+def test_visual_astro_pair_start_shows_code_and_stores_pairing(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    client, db_path = authenticated_client(tmp_path)
+
+    response = client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
+    assert response.status_code == 302
+
+    with db_session(db_path) as conn:
+        pairing = TelescopePairingRepo(conn).current()
+    assert pairing is not None and len(pairing["code"]) == 6 and pairing["code"].isdigit()
+
+    page = client.get("/connectors").get_data(as_text=True)
+    assert pairing["code"] in page
+
+
+def test_visual_astro_pair_start_failure_does_not_store_pairing(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: False)
+    client, db_path = authenticated_client(tmp_path)
+
+    client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
+    with db_session(db_path) as conn:
+        assert TelescopePairingRepo(conn).current() is None
+
+
+def test_visual_astro_pair_poll_claims_token_and_links(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    client, db_path = authenticated_client(tmp_path)
+    client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
+
+    monkeypatch.setattr(
+        webui_app.VisualAstroClient, "pair_fetch",
+        lambda self, pairing_id: PairFetchResult(status="claimed", device_token="tok-abc"),
+    )
+    response = client.post(
+        "/connectors/visual-astro/poll",
+        data={"csrf_token": csrf(client)},
+        content_type="application/x-www-form-urlencoded",
+    )
+    assert response.get_json() == {"status": "claimed"}
+
+    with db_session(db_path) as conn:
+        settings = SettingsRepo(conn)
+        assert settings.get("visual_astro_device_token") == "tok-abc"
+        assert TelescopePairingRepo(conn).current() is None
+
+    page = client.get("/connectors").get_data(as_text=True)
+    assert "Disconnect" in page
+
+
+def test_visual_astro_pair_poll_expired_clears_pairing(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    client, db_path = authenticated_client(tmp_path)
+    client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
+
+    monkeypatch.setattr(
+        webui_app.VisualAstroClient, "pair_fetch", lambda self, pairing_id: PairFetchResult(status="expired")
+    )
+    response = client.post("/connectors/visual-astro/poll", data={"csrf_token": csrf(client)})
+    assert response.get_json() == {"status": "expired"}
+    with db_session(db_path) as conn:
+        assert TelescopePairingRepo(conn).current() is None
+
+
+def test_visual_astro_pair_poll_with_no_pending_pairing_reports_expired(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    response = client.post("/connectors/visual-astro/poll", data={"csrf_token": csrf(client)})
+    assert response.get_json() == {"status": "expired"}
+
+
+def test_visual_astro_disconnect_clears_token_and_revokes(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    revoked = []
+    monkeypatch.setattr(webui_app.VisualAstroClient, "revoke", lambda self, token: revoked.append(token) or True)
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn:
+        SettingsRepo(conn).set("visual_astro_device_token", "tok-abc")
+
+    response = client.post("/connectors/visual-astro/disconnect", data={"csrf_token": csrf(client)})
+    assert response.status_code == 302
+    assert revoked == ["tok-abc"]
+    with db_session(db_path) as conn:
+        assert not SettingsRepo(conn).get("visual_astro_device_token")
+
+    page = client.get("/connectors").get_data(as_text=True)
+    assert "Connect" in page and "Disconnect" not in page
+
+
+def test_visual_astro_disconnect_clears_token_even_if_revoke_fails(tmp_path, monkeypatch):
+    import webui.app as webui_app
+    monkeypatch.setattr(webui_app.VisualAstroClient, "revoke", lambda self, token: False)
+    client, db_path = authenticated_client(tmp_path)
+    with db_session(db_path) as conn:
+        SettingsRepo(conn).set("visual_astro_device_token", "tok-abc")
+
+    client.post("/connectors/visual-astro/disconnect", data={"csrf_token": csrf(client)})
+    with db_session(db_path) as conn:
+        assert not SettingsRepo(conn).get("visual_astro_device_token")
+
+
+def test_settings_page_exposes_japyscope_min_duration(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    page = client.get("/settings").get_data(as_text=True)
+    assert 'name="japyscope_min_duration_seconds"' in page
+    assert 'value="85"' in page
+
+    response = client.post(
+        "/settings",
+        data={"csrf_token": csrf(client), "japyscope_min_duration_seconds": "120"},
+        follow_redirects=True,
+    )
+    assert 'value="120"' in response.get_data(as_text=True)

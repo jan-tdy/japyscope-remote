@@ -2601,3 +2601,126 @@ def test_refresh_status_skips_a_locked_key_instead_of_crashing(monkeypatch):
         assert StateRepo(conn).get("dec") == "+10:00:00"  # other keys still wrote fine
         assert StateRepo(conn).get("indi_connected") == "true"
     finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_queued_when_closed_by_next_goto():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        SettingsRepo(conn).set("japyscope_min_duration_seconds", "60")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+
+        ui._confirm_slew(SearchResult("V445Her", ra="1h", dec="+1d"), "LIST")
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+
+        now[0] += 120.0  # above the 60s threshold
+        # Bypasses _confirm_slew()'s below-horizon WARN gate (irrelevant
+        # here, and the sidereal position of a fixed RA/Dec a couple of
+        # minutes later isn't worth pinning down) -- this is exactly what
+        # _confirm_slew() itself calls once that gate passes.
+        ui.state.selected = SearchResult("AG Dra", ra="1h", dec="+1d")
+        ui._begin_slew()
+        assert ui.state.screen == "SLEW"
+
+        assert ui.events.count() == 1
+        row = ui.events.list_batch()[0]
+        assert row["object_name"] == "V445Her"
+        assert row["ra"] == "1h" and row["dec"] == "+1d"
+        assert row["started_at"] == 1002.0
+        assert row["ended_at"] == 1122.0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_below_threshold_is_discarded():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        SettingsRepo(conn).set("japyscope_min_duration_seconds", "60")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+
+        ui._confirm_slew(SearchResult("V445Her", ra="1h", dec="+1d"), "LIST")
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+
+        now[0] += 10.0  # below the 60s threshold
+        ui.state.selected = SearchResult("AG Dra", ra="1h", dec="+1d")
+        ui._begin_slew()
+
+        assert ui.events.count() == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_queued_when_closed_by_park():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        SettingsRepo(conn).set("japyscope_min_duration_seconds", "60")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+
+        ui._confirm_slew(SearchResult("V445Her", ra="1h", dec="+1d"), "LIST")
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+
+        now[0] += 90.0
+        ui.state.screen = "PARK_CONFIRM"; ui.state.index = 0
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "PARKING"
+        assert ui.indi.parked is True
+
+        assert ui.events.count() == 1
+        row = ui.events.list_batch()[0]
+        assert row["object_name"] == "V445Her" and row["ended_at"] == 1092.0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_auto_closes_after_inactivity_timeout():
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        SettingsRepo(conn).set("japyscope_min_duration_seconds", "60")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+
+        ui._confirm_slew(SearchResult("V445Her", ra="1h", dec="+1d"), "LIST")
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+        assert ui._active_japyscope_event is not None
+
+        now[0] += controller_module.JAPYSCOPE_EVENT_INACTIVITY_SECONDS + 1
+        ui.tick()
+
+        assert ui._active_japyscope_event is None
+        assert ui.events.count() == 1
+        assert ui.events.list_batch()[0]["object_name"] == "V445Her"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_not_started_without_a_selected_object():
+    # Guards the (should-be-impossible) case of reaching TRACK with no
+    # selected object -- must not crash trying to read obj.name.
+    ui, conn, path = make_ui()
+    try:
+        ui.state.selected = None
+        ui._start_japyscope_event()
+        assert ui._active_japyscope_event is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_closing_twice_is_a_noop():
+    ui, conn, path = make_ui()
+    try:
+        ui._close_japyscope_event()  # nothing open -- must not raise
+        assert ui.events.count() == 0
+    finally: conn.close(); os.unlink(path)

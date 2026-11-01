@@ -6,10 +6,42 @@
 {% set connectors = [
   ("stellarium", "Stellarium", "S", "#2547b8", "#ffffff", "Control the telescope from Stellarium through JapyScope Remote.", "Configure"),
   ("ccdciel", "CCDciel", "CC", "#f0c23c", "#1f2328", "Control the telescope from CCDciel through JapyScope Remote.", "Configure"),
-  ("visual-astro", "Visual Astro", "VA", "#6f42a8", "#ffffff", "Send observed objects to Inbox from telescope in Visual Astro.", "Connect"),
   ("mcp", "MCP", "M", "#2f353b", "#ffffff", "Connect an AI client to JapyScope Remote.", "Configure"),
 ] %}
 <div class="connector-list">
+  <div class="connector">
+    <div class="connector-row">
+      <div class="connector-badge" style="background: #6f42a8; color: #ffffff;">VA</div>
+      <div class="connector-info">
+        <strong>Visual Astro</strong>
+        <span>
+          {% if visual_astro_linked %}
+            Connected — observing events are queued here and uploaded automatically.
+          {% else %}
+            Send observed objects from the telescope to Visual Astro's JapyScope tab.
+          {% endif %}
+        </span>
+      </div>
+      {% if visual_astro_linked %}
+      <form method="post" action="{{ url_for('visual_astro_disconnect') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="connector-toggle">Disconnect</button>
+      </form>
+      {% elif not visual_astro_code %}
+      <form method="post" action="{{ url_for('visual_astro_pair_start') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="connector-toggle">Connect</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if not visual_astro_linked and visual_astro_code %}
+    <div class="connector-panel" id="visual-astro-pairing" data-poll-url="{{ url_for('visual_astro_pair_poll') }}" data-csrf="{{ csrf_token }}" data-connectors-url="{{ url_for('connectors') }}">
+      <p>Enter this code in Visual Astro &rarr; Settings &rarr; link telescope:</p>
+      <p style="font-size: 1.6rem; font-weight: 700; letter-spacing: 0.15em;">{{ visual_astro_code }}</p>
+      <p class="muted" id="visual-astro-countdown" data-remaining="{{ visual_astro_remaining }}"></p>
+    </div>
+    {% endif %}
+  </div>
   {% for key, name, badge, bg, fg, description, action in connectors %}
   <div class="connector">
     <div class="connector-row">
@@ -26,7 +58,7 @@
 </div>
 
 <script>
-document.querySelectorAll('.connector-toggle').forEach(function (button) {
+document.querySelectorAll('.connector-toggle[aria-controls]').forEach(function (button) {
   button.addEventListener('click', function () {
     var panel = document.getElementById(button.getAttribute('aria-controls'));
     var open = panel.hidden;
@@ -34,5 +66,46 @@ document.querySelectorAll('.connector-toggle').forEach(function (button) {
     button.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
 });
+
+(function () {
+  var panel = document.getElementById('visual-astro-pairing');
+  if (!panel) return;
+  var countdown = document.getElementById('visual-astro-countdown');
+  var remaining = parseInt(countdown.getAttribute('data-remaining'), 10) || 0;
+  var pollUrl = panel.getAttribute('data-poll-url');
+  var csrfToken = panel.getAttribute('data-csrf');
+  var connectorsUrl = panel.getAttribute('data-connectors-url');
+
+  function renderCountdown() {
+    var m = Math.floor(remaining / 60), s = remaining % 60;
+    countdown.textContent = remaining > 0
+      ? 'Expires in ' + m + ':' + (s < 10 ? '0' : '') + s
+      : 'Expired — click Connect to try again.';
+  }
+  renderCountdown();
+
+  var tickTimer = setInterval(function () {
+    remaining = Math.max(0, remaining - 1);
+    renderCountdown();
+    if (remaining <= 0) clearInterval(tickTimer);
+  }, 1000);
+
+  var pollTimer = setInterval(function () {
+    fetch(pollUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'csrf_token=' + encodeURIComponent(csrfToken),
+    })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        if (data.status === 'claimed' || data.status === 'expired') {
+          clearInterval(pollTimer);
+          clearInterval(tickTimer);
+          window.location.href = connectorsUrl;
+        }
+      })
+      .catch(function () { /* transient network hiccup -- next poll tries again */ });
+  }, 3000);
+})();
 </script>
 {% endblock %}

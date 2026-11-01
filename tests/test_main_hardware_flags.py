@@ -6,9 +6,9 @@ import tempfile
 import pytest
 
 from firmware import main as main_module
-from firmware.main import HARDWARE_COMPONENTS, _poweroff, build_parser, resolve_simulation_flags
+from firmware.main import HARDWARE_COMPONENTS, _poweroff, build_parser, resolve_simulation_flags, run_telescope_flush_loop
 from firmware.hal.display.profiles import PROFILE_2_13
-from shared.db import SettingsRepo, connect, init_db
+from shared.db import SettingsRepo, TelescopeEventOutboxRepo, connect, init_db
 
 
 def make_settings():
@@ -159,3 +159,67 @@ def test_poweroff_propagates_a_failed_sudo_as_a_subprocess_error(monkeypatch):
 
     with pytest.raises(subprocess.SubprocessError):
         _poweroff()
+
+
+class _StopAfterOneWait:
+    """Duck-typed threading.Event stand-in: lets run_telescope_flush_loop's
+    outer while-loop run exactly once (and its inner drain-until-empty loop
+    run to completion) without a real thread or sleep."""
+
+    def __init__(self):
+        self._stopped = False
+
+    def is_set(self):
+        return self._stopped
+
+    def wait(self, timeout=None):
+        self._stopped = True
+        return True
+
+
+def test_run_telescope_flush_loop_drains_outbox_when_linked(monkeypatch):
+    settings, conn, path = make_settings()
+    settings.set("visual_astro_device_token", "tok-abc")
+    outbox = TelescopeEventOutboxRepo(conn)
+    outbox.enqueue("event-1", "V445Her", started_at=1000.0, ended_at=1100.0)
+    outbox.enqueue("event-2", "AG Dra", started_at=1200.0, ended_at=1260.0)
+    conn.close()
+
+    import shared.visual_astro as visual_astro_module
+    sent_event_ids = []
+
+    def fake_ingest(self, device_token, events):
+        assert device_token == "tok-abc"
+        sent_event_ids.extend(e["event_id"] for e in events)
+        return True
+
+    monkeypatch.setattr(visual_astro_module.VisualAstroClient, "ingest", fake_ingest)
+
+    run_telescope_flush_loop(path, _StopAfterOneWait())
+
+    assert sorted(sent_event_ids) == ["event-1", "event-2"]
+    conn = connect(path)
+    assert TelescopeEventOutboxRepo(conn).count() == 0
+    conn.close()
+    os.unlink(path)
+
+
+def test_run_telescope_flush_loop_skips_when_not_linked(monkeypatch):
+    settings, conn, path = make_settings()
+    outbox = TelescopeEventOutboxRepo(conn)
+    outbox.enqueue("event-1", "V445Her", started_at=1000.0, ended_at=1100.0)
+    conn.close()
+
+    import shared.visual_astro as visual_astro_module
+
+    def fail_ingest(self, device_token, events):
+        raise AssertionError("must not call Visual Astro without a linked device token")
+
+    monkeypatch.setattr(visual_astro_module.VisualAstroClient, "ingest", fail_ingest)
+
+    run_telescope_flush_loop(path, _StopAfterOneWait())
+
+    conn = connect(path)
+    assert TelescopeEventOutboxRepo(conn).count() == 1
+    conn.close()
+    os.unlink(path)

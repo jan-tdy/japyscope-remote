@@ -22,6 +22,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import sqlite3
@@ -30,6 +31,8 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator, Optional
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = os.environ.get("JAPYSCOPE_DB_PATH", "/var/lib/japyscope/japyscope.db")
 PASSWORD_SCHEME = "pbkdf2_sha256"
@@ -68,6 +71,31 @@ CREATE TABLE IF NOT EXISTS state (
 
 CREATE TABLE IF NOT EXISTS access_codes (
     code TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+-- Offline outbox for observed-target events headed to Visual Astro's
+-- telescope-ingest Edge Function (see shared/visual_astro.py). One row per
+-- closed, above-threshold observing event not yet confirmed delivered.
+CREATE TABLE IF NOT EXISTS telescope_event_outbox (
+    event_id TEXT PRIMARY KEY,
+    object_name TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    ended_at REAL NOT NULL,
+    ra TEXT NOT NULL DEFAULT '',
+    dec TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_telescope_event_outbox_created_at ON telescope_event_outbox(created_at);
+
+-- A single in-flight Visual Astro pairing attempt (Web UI Connectors page).
+-- Singleton row (id = 1): only one pairing can be in progress at a time --
+-- starting a new one overwrites whatever the previous attempt left behind.
+CREATE TABLE IF NOT EXISTS telescope_pairing (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    pairing_id TEXT NOT NULL,
+    code TEXT NOT NULL,
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
@@ -120,7 +148,31 @@ DEFAULT_SETTINGS = {
     "hw_sim_backlight": "0",
     "hw_sim_mount": "0",
     "hw_sim_joystick": "0",
+    # Minimum tracked-on-target duration (seconds) before an observing event
+    # is queued for Visual Astro at all -- the "1.42 min (~85s)" default from
+    # the JapyScope <-> Visual Astro spec. Applied locally, before an event
+    # ever reaches the offline outbox, so a brief mis-slew never costs a
+    # queue slot or an upload. Visual Astro's own "pending" confirmation step
+    # is a separate, manual decision on top of this -- this setting only
+    # keeps obvious noise out of the queue.
+    "japyscope_min_duration_seconds": "85",
+    # Visual Astro's Supabase project -- overridable in case this device
+    # should ever point at a different deployment than the shipped default.
+    "visual_astro_project_url": "https://tbmyxbratepxomskzzsq.supabase.co",
+    "visual_astro_anon_key": (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRibXl4YnJhdGVweG9tc2t6enNxIiwi"
+        "cm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4ODQxOTAsImV4cCI6MjA5MzQ2MDE5MH0."
+        "ZwkV2ztqLMMEZlyVfyqVkh6FMKLdrFq7-fojXywj3OM"
+    ),
+    # visual_astro_device_token is deliberately absent here -- it only
+    # exists once a pairing actually completes (see TelescopePairingRepo /
+    # webui/app.py's connectors routes), not as an empty default row.
 }
+
+# Oldest-first eviction cap for telescope_event_outbox -- a Pi Zero's SD
+# card/RAM is small, and a device with no network for a long stretch (or no
+# Visual Astro link set up yet) must not grow this table without bound.
+MAX_TELESCOPE_EVENT_OUTBOX_ROWS = 2000
 
 
 def hash_password(password: str) -> str:
@@ -448,4 +500,99 @@ class AccessCodeRepo:
 
     def purge_expired(self) -> None:
         self.conn.execute("DELETE FROM access_codes WHERE expires_at < ?", (time.time(),))
+        self.conn.commit()
+
+
+class TelescopeEventOutboxRepo:
+    """Offline outbox for observed-target events bound for Visual Astro.
+
+    Written by `firmware.ui.controller.ControllerUI`'s tick loop (one row
+    per closed, above-threshold event); drained by the background flush
+    loop in `firmware.main` via `shared.visual_astro.flush_outbox()`, which
+    deletes each row only once Visual Astro's telescope-ingest Edge
+    Function has actually confirmed it (never on a timeout/connection
+    error) -- `event_id` is the idempotency key on both ends, so sending
+    the same row twice after an ambiguous failure is harmless.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def enqueue(
+        self,
+        event_id: str,
+        object_name: str,
+        started_at: float,
+        ended_at: float,
+        ra: str = "",
+        dec: str = "",
+    ) -> None:
+        self.conn.execute(
+            """INSERT OR IGNORE INTO telescope_event_outbox
+               (event_id, object_name, started_at, ended_at, ra, dec, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (event_id, object_name, started_at, ended_at, ra, dec, time.time()),
+        )
+        self.conn.commit()
+        self._evict_overflow()
+
+    def _evict_overflow(self) -> None:
+        count = self.conn.execute("SELECT COUNT(*) AS c FROM telescope_event_outbox").fetchone()["c"]
+        overflow = count - MAX_TELESCOPE_EVENT_OUTBOX_ROWS
+        if overflow <= 0:
+            return
+        self.conn.execute(
+            """DELETE FROM telescope_event_outbox WHERE event_id IN (
+                   SELECT event_id FROM telescope_event_outbox ORDER BY created_at ASC LIMIT ?
+               )""",
+            (overflow,),
+        )
+        self.conn.commit()
+        logger.warning("telescope_event_outbox exceeded %d rows -- dropped %d oldest", MAX_TELESCOPE_EVENT_OUTBOX_ROWS, overflow)
+
+    def list_batch(self, limit: int = 25) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM telescope_event_outbox ORDER BY created_at ASC LIMIT ?", (limit,)
+        ).fetchall()
+
+    def delete_many(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
+        self.conn.executemany(
+            "DELETE FROM telescope_event_outbox WHERE event_id = ?", [(event_id,) for event_id in event_ids]
+        )
+        self.conn.commit()
+
+    def count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) AS c FROM telescope_event_outbox").fetchone()["c"]
+
+
+class TelescopePairingRepo:
+    """The single in-flight Visual Astro pairing attempt, if any (Web UI
+    Connectors page). A fresh `start()` replaces whatever attempt came
+    before it -- only one code can be on screen at a time."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def start(self, pairing_id: str, code: str, ttl_seconds: int) -> None:
+        now = time.time()
+        self.conn.execute(
+            """INSERT INTO telescope_pairing(id, pairing_id, code, created_at, expires_at)
+               VALUES (1, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   pairing_id = excluded.pairing_id, code = excluded.code,
+                   created_at = excluded.created_at, expires_at = excluded.expires_at""",
+            (pairing_id, code, now, now + ttl_seconds),
+        )
+        self.conn.commit()
+
+    def current(self) -> Optional[sqlite3.Row]:
+        row = self.conn.execute("SELECT * FROM telescope_pairing WHERE id = 1").fetchone()
+        if row is None or row["expires_at"] < time.time():
+            return None
+        return row
+
+    def clear(self) -> None:
+        self.conn.execute("DELETE FROM telescope_pairing WHERE id = 1")
         self.conn.commit()
