@@ -4,7 +4,7 @@ import tempfile
 import pytest
 
 from shared.db import TelescopeEventOutboxRepo, connect, init_db
-from shared.visual_astro import PairFetchResult, VisualAstroClient, _functions_url, flush_outbox, sha256_hex
+from shared.visual_astro import PairFetchResult, PairInitResult, VisualAstroClient, _functions_url, flush_outbox
 
 
 @pytest.fixture
@@ -32,29 +32,32 @@ def test_functions_url_derives_functions_host_from_project_url():
     assert _functions_url("https://abc123.supabase.co", "telescope-ingest") == "https://abc123.functions.supabase.co/telescope-ingest"
 
 
-def test_sha256_hex_is_stable():
-    assert sha256_hex("123456") == sha256_hex("123456")
-    assert sha256_hex("123456") != sha256_hex("654321")
-
-
-def test_pair_init_posts_hash_not_plaintext(monkeypatch):
+def test_pair_init_sends_empty_body_and_returns_server_minted_values(monkeypatch):
     captured = {}
 
     def fake_post(url, json=None, headers=None, timeout=None):
         captured["url"] = url
         captured["json"] = json
         captured["headers"] = headers
-        return FakeResponse(ok=True)
+        return FakeResponse(ok=True, json_data={"ok": True, "pairing_id": "pairing-1", "code": "123456"})
 
     monkeypatch.setattr("shared.visual_astro.requests.post", fake_post)
     client = VisualAstroClient(project_url="https://abc123.supabase.co", anon_key="anon-key")
-    assert client.pair_init("pairing-1", "123456") is True
+    assert client.pair_init() == PairInitResult(pairing_id="pairing-1", code="123456")
     assert captured["url"] == "https://abc123.functions.supabase.co/telescope-pair-init"
-    assert captured["json"]["pairing_id"] == "pairing-1"
-    assert captured["json"]["code_hash"] == sha256_hex("123456")
-    assert "123456" not in captured["json"].values()
+    # Nothing device-chosen crosses the wire here -- pairing_id/code are
+    # Visual Astro's own to mint (see pair_init's docstring for why).
+    assert captured["json"] == {}
     assert captured["headers"]["apikey"] == "anon-key"
     assert "Authorization" not in captured["headers"]
+
+
+def test_pair_init_returns_none_on_failure(monkeypatch):
+    monkeypatch.setattr(
+        "shared.visual_astro.requests.post",
+        lambda *a, **k: FakeResponse(ok=False, status_code=500),
+    )
+    assert VisualAstroClient().pair_init() is None
 
 
 def test_pair_fetch_claimed_returns_device_token(monkeypatch):

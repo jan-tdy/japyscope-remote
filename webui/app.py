@@ -17,7 +17,6 @@ import socket
 import threading
 import time
 import urllib.parse
-import uuid
 from functools import wraps
 from typing import Callable, Optional
 
@@ -630,15 +629,18 @@ def create_app(
     @app.route("/connectors/visual-astro/start", methods=["POST"])
     @auth_required
     def visual_astro_pair_start():
-        code = f"{secrets.randbelow(1_000_000):06d}"
-        pairing_id = str(uuid.uuid4())
         with db_session(app.config["DATABASE"]) as conn:
             settings = SettingsRepo(conn)
             client = _visual_astro_client(settings)
-            if not client.pair_init(pairing_id, code):
+            # pairing_id and code are both minted by Visual Astro itself, not
+            # here -- telescope-pair-init has no auth, so a value this device
+            # picked and merely reported the hash of could be pre-empted by
+            # anyone else calling the same endpoint first (see its docstring).
+            result = client.pair_init()
+            if result is None:
                 flash("Could not reach Visual Astro — check the network and try again.", "error")
                 return redirect(url_for("connectors"))
-            TelescopePairingRepo(conn).start(pairing_id, code, VISUAL_ASTRO_PAIRING_TTL_SECONDS)
+            TelescopePairingRepo(conn).start(result.pairing_id, result.code, VISUAL_ASTRO_PAIRING_TTL_SECONDS)
         return redirect(url_for("connectors"))
 
     @app.route("/connectors/visual-astro/poll", methods=["POST"])

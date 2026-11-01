@@ -3,7 +3,7 @@ import re
 import subprocess
 
 from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, TelescopePairingRepo, db_session
-from shared.visual_astro import PairFetchResult
+from shared.visual_astro import PairFetchResult, PairInitResult
 from webui.app import create_app
 
 
@@ -540,7 +540,10 @@ def test_visual_astro_connectors_page_shows_connect_when_not_linked(tmp_path):
 
 def test_visual_astro_pair_start_shows_code_and_stores_pairing(tmp_path, monkeypatch):
     import webui.app as webui_app
-    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    monkeypatch.setattr(
+        webui_app.VisualAstroClient, "pair_init",
+        lambda self: PairInitResult(pairing_id="pairing-1", code="123456"),
+    )
     client, db_path = authenticated_client(tmp_path)
 
     response = client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
@@ -556,7 +559,7 @@ def test_visual_astro_pair_start_shows_code_and_stores_pairing(tmp_path, monkeyp
 
 def test_visual_astro_pair_start_failure_does_not_store_pairing(tmp_path, monkeypatch):
     import webui.app as webui_app
-    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: False)
+    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self: None)
     client, db_path = authenticated_client(tmp_path)
 
     client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
@@ -566,7 +569,10 @@ def test_visual_astro_pair_start_failure_does_not_store_pairing(tmp_path, monkey
 
 def test_visual_astro_pair_poll_claims_token_and_links(tmp_path, monkeypatch):
     import webui.app as webui_app
-    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    monkeypatch.setattr(
+        webui_app.VisualAstroClient, "pair_init",
+        lambda self: PairInitResult(pairing_id="pairing-1", code="123456"),
+    )
     client, db_path = authenticated_client(tmp_path)
     client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
 
@@ -592,7 +598,10 @@ def test_visual_astro_pair_poll_claims_token_and_links(tmp_path, monkeypatch):
 
 def test_visual_astro_pair_poll_expired_clears_pairing(tmp_path, monkeypatch):
     import webui.app as webui_app
-    monkeypatch.setattr(webui_app.VisualAstroClient, "pair_init", lambda self, pairing_id, code: True)
+    monkeypatch.setattr(
+        webui_app.VisualAstroClient, "pair_init",
+        lambda self: PairInitResult(pairing_id="pairing-1", code="123456"),
+    )
     client, db_path = authenticated_client(tmp_path)
     client.post("/connectors/visual-astro/start", data={"csrf_token": csrf(client)})
 

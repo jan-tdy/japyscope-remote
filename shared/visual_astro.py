@@ -17,7 +17,6 @@ below derives the former from the latter.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,10 +35,6 @@ REQUEST_TIMEOUT_SECONDS = 10
 INGEST_BATCH_SIZE = 25
 
 
-def sha256_hex(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
 def _functions_url(project_url: str, name: str) -> str:
     ref = project_url.strip().rstrip("/").split("//", 1)[-1].split(".", 1)[0]
     return f"https://{ref}.functions.supabase.co/{name}"
@@ -53,6 +48,12 @@ def _iso_utc(epoch_seconds: float) -> str:
 class PairFetchResult:
     status: str  # "pending" | "claimed" | "expired"
     device_token: Optional[str] = None
+
+
+@dataclass
+class PairInitResult:
+    pairing_id: str
+    code: str
 
 
 class VisualAstroClient:
@@ -69,17 +70,25 @@ class VisualAstroClient:
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
 
-    def pair_init(self, pairing_id: str, code: str) -> bool:
-        """Registers a freshly generated pairing code with Visual Astro
-        before it's shown to the user. Only the code's hash crosses the
-        wire -- Visual Astro never sees the plaintext code itself, only
-        whatever the user later types into its own pairing field."""
+    def pair_init(self) -> Optional[PairInitResult]:
+        """Asks Visual Astro to mint a fresh pairing_id + 6-digit code,
+        which this call then displays to the user. Both are generated
+        server-side, not here -- telescope-pair-init has no auth (the Pi
+        has no Visual Astro user session yet), so a value this device
+        picked itself and merely told the server about could be
+        pre-empted by anyone else calling the same endpoint first."""
         try:
-            response = self._post("telescope-pair-init", {"pairing_id": pairing_id, "code_hash": sha256_hex(code)})
-            return response.ok
-        except requests.RequestException as exc:
+            response = self._post("telescope-pair-init", {})
+            if not response.ok:
+                return None
+            data = response.json()
+            pairing_id, code = data.get("pairing_id"), data.get("code")
+            if not isinstance(pairing_id, str) or not isinstance(code, str):
+                return None
+            return PairInitResult(pairing_id=pairing_id, code=code)
+        except (requests.RequestException, ValueError) as exc:
             logger.warning("Visual Astro pair-init failed: %s", exc)
-            return False
+            return None
 
     def pair_fetch(self, pairing_id: str) -> PairFetchResult:
         """Polled from the Connectors page while a pairing code is
