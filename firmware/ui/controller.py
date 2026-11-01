@@ -417,7 +417,18 @@ class ControllerUI:
         callback from the watchdog thread: that thread doesn't own the
         sqlite connection `self.settings` reads through, so the replay has
         to run on this thread, the same way every other `_poll_*()` here
-        already does."""
+        already does.
+
+        Waits for indiserver's control port to actually accept a
+        connection first (`_wait_for_indiserver()`) -- `restart_count`
+        bumps the instant `IndiServerManager` calls `Popen()`, well before
+        indiserver has bound its port or started the driver, and unlike
+        boot (where `firmware/main.py`'s `connect_indi()` already does
+        this same wait before `ControllerUI.start()` ever runs) there's
+        no later retry: `restart_count` only changes again on the *next*
+        restart, so a reconnect attempted too early would otherwise fail
+        outright and stay failed for the rest of the session -- the exact
+        bug this method exists to fix, just moved earlier."""
         if self.indi_manager is None:
             return
         count = self.indi_manager.restart_count
@@ -425,8 +436,26 @@ class ControllerUI:
             return
         self._indi_restart_count = count
         logger.info("indiserver restarted -- replaying mount reconnect")
+        if not self._wait_for_indiserver():
+            logger.error("INDI-002 indiserver did not come back up in time for mount reconnect replay")
+            return
         self._reconnect_mount_interface()
         self._sync_indi_location_and_time()
+
+    def _wait_for_indiserver(self, attempts: int = 30, delay: float = 0.5) -> bool:
+        """Bounded poll of indiserver's plain TCP reachability (same check
+        `IndiClient.connect()` does at boot) -- blocks this thread (so the
+        UI is briefly unresponsive) for up to `attempts * delay` seconds
+        (15s by default, matching `connect_indi()`'s own default timeout
+        in `firmware/main.py`), which only happens right after an
+        indiserver restart, a rare event. Returns whether it came up."""
+        for _ in range(attempts):
+            try:
+                self.indi.connect()
+                return True
+            except ConnectionError:
+                time.sleep(delay)
+        return False
 
     def _poll_update_status(self) -> None:
         """Surfaces `install/update.py`'s progress (written to `state` as

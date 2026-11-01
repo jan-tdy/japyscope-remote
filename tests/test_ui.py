@@ -37,6 +37,7 @@ class Indi:
         self.synced = None; self.synced_alt_az = None; self.goto_target = None; self.parked = False
         self.park_position = None; self.location = None; self.time_set = False
         self.tracking = False; self.aborted = False; self.jogs = []; self.jog_stops = []
+    def connect(self): pass
     def sync(self, ra, dec): self.synced = (ra, dec)
     def sync_alt_az(self, alt_deg, az_deg, latitude_deg, longitude_deg):
         self.synced_alt_az = (alt_deg, az_deg, latitude_deg, longitude_deg)
@@ -1593,6 +1594,67 @@ def test_poll_indi_restart_replays_reconnect_when_indiserver_respawns(monkeypatc
         calls.clear()
         ui._poll_indi_restart()
         assert calls == [], "same restart_count again -- must not replay a second time"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_indi_restart_waits_for_indiserver_before_replaying(monkeypatch):
+    # restart_count bumps the instant IndiServerManager calls Popen() --
+    # well before indiserver has actually bound its port. _wait_for_
+    # indiserver() must retry the plain TCP check instead of attempting
+    # the reconnect (and thus the indi_setprop calls) immediately.
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        setprop_calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: setprop_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+        connect_attempts = []
+
+        def flaky_connect():
+            connect_attempts.append(1)
+            if len(connect_attempts) < 3:
+                raise ConnectionError("not up yet")
+
+        monkeypatch.setattr(ui.indi, "connect", flaky_connect)
+
+        class Manager:
+            restart_count = 1
+
+        ui.indi_manager = Manager()
+        ui._poll_indi_restart()
+        assert len(connect_attempts) == 3, "expected it to retry the TCP check until it succeeded"
+        assert setprop_calls, "expected the reconnect to run once indiserver was reachable"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_poll_indi_restart_skips_reconnect_if_indiserver_never_comes_back(monkeypatch, caplog):
+    ui, conn, path = make_ui()
+    try:
+        SettingsRepo(conn).set("mount_wifi_host", "192.168.4.1")
+        SettingsRepo(conn).set("mount_interface", "wifi")
+        setprop_calls = []
+        monkeypatch.setattr(
+            controller_module.subprocess, "run",
+            lambda cmd, **kw: setprop_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, stdout=""),
+        )
+        monkeypatch.setattr(controller_module.time, "sleep", lambda s: None)
+
+        def never_up():
+            raise ConnectionError("still down")
+
+        monkeypatch.setattr(ui.indi, "connect", never_up)
+
+        class Manager:
+            restart_count = 1
+
+        ui.indi_manager = Manager()
+        ui._poll_indi_restart()
+        assert setprop_calls == [], "must not attempt the reconnect against an unreachable indiserver"
+        assert any("did not come back up" in r.message for r in caplog.records)
     finally: conn.close(); os.unlink(path)
 
 
