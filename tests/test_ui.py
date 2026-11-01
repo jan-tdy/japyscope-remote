@@ -245,6 +245,40 @@ def test_boot_sync_now_stops_when_the_driver_cannot_be_unparked():
     finally: conn.close(); os.unlink(path)
 
 
+def test_boot_park_check_home_shortcut_key_skips_the_question():
+    # "9" jumps straight to Home without answering either way -- same
+    # contract as PARKED's own Home option: nothing at all sent to the
+    # mount, so the driver's own parked state (it comes back up parked
+    # after every restart) is left for the owner to resolve later via
+    # Menu -> Park/Unpark or by answering the question on the next boot.
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        for name in ("unpark", "park", "sync_alt_az", "set_park_position"):
+            setattr(ui.indi, name, lambda *a, _n=name, **kw: calls.append(_n))
+        ui.start()
+        ui.handle("9")
+        assert ui.state.screen == "IDLE"
+        assert calls == []
+        assert StateRepo(conn).get("parked") is None
+    finally: conn.close(); os.unlink(path)
+
+
+def test_boot_park_check_home_menu_item_skips_the_question():
+    ui, conn, path = make_ui()
+    try:
+        calls = []
+        for name in ("unpark", "park", "sync_alt_az", "set_park_position"):
+            setattr(ui.indi, name, lambda *a, _n=name, **kw: calls.append(_n))
+        ui.start()
+        ui.handle(ENC_DOWN); ui.handle(ENC_DOWN)  # "Yes" -> "No" -> "Home"
+        ui.handle(ENC_PUSH)
+        assert ui.state.screen == "IDLE"
+        assert calls == []
+        assert StateRepo(conn).get("parked") is None
+    finally: conn.close(); os.unlink(path)
+
+
 def test_menu_alignment_unparks_before_offering_stars():
     ui, conn, path = make_ui()
     try:

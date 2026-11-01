@@ -612,7 +612,8 @@ class ControllerUI:
             lines = ["JapyScope Remote", "by JapySoft", "", "Starting…"]
         elif screen == "BOOT_PARK_CHECK":
             lines = self._visible(
-                self._t("boot.park_question"), [self._t("boot.park_yes"), self._t("boot.park_no")]
+                self._t("boot.park_question"),
+                [self._t("boot.park_yes"), self._t("boot.park_no"), self._t("park.home")],
             )
         elif screen == "BOOT_SYNC_FAILED":
             lines = [
@@ -1073,14 +1074,23 @@ class ControllerUI:
         if key == "5" and s.screen not in ("TYPE", "DEVTOOLS", "SUDO_SET"):
             key = ENC_PUSH
         if s.screen == "BOOT_PARK_CHECK":
-            if self._move(key, 2): return
-            if key == ENC_PUSH:
+            if self._move(key, 3): return
+            if key == "9":
+                # Same destination as the Home option below -- lets the
+                # owner reach Home (and through it Menu -> Wi-Fi / Web
+                # access) without first committing to either park answer.
+                # Nothing sent to the mount, same contract as PARKED's own
+                # Home option: it keeps coming up parked after every
+                # restart until explicitly unparked (Menu -> Park/Unpark,
+                # or BOOT_PARK_CHECK's own "No" next boot).
+                self._set("IDLE")
+            elif key == ENC_PUSH:
                 if s.index == 0:
                     if not self._sync_park_position():
                         return
                     self.runtime.set("parked", "true")
                     self._set("PARKED")
-                else:
+                elif s.index == 1:
                     # "No — sync now": point at a known star, center it, and
                     # sync on it for real — see ALIGN_STAR_PICK/ALIGN_JOG
                     # below, entered here with boot_sync set so confirming
@@ -1094,6 +1104,8 @@ class ControllerUI:
                     s.boot_sync = True
                     s.align_points = 0
                     self._set("ALIGN_STAR_PICK")
+                else:
+                    self._set("IDLE")
             return
         if s.screen == "BOOT_SYNC_FAILED":
             if key == ENC_PUSH:
