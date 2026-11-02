@@ -72,6 +72,14 @@ MOUNT_RECONNECT_RETRY_SECONDS = 5.0
 # never closing at all (the owner wanders off mid-session), not something
 # an observer would tune per device.
 JAPYSCOPE_EVENT_INACTIVITY_SECONDS = 1800
+# How close (in degrees) a manually-jogged-to position has to land to one
+# of the local catalog's items for `_find_catalog_match_by_position()` to
+# report it as a match, instead of leaving the event's object name for
+# Visual Astro's own manual-assignment UI. Loose enough to absorb the
+# mount's own pointing slop and this module's low-precision math, tight
+# enough that a sparse variable-star catalog won't false-match the wrong
+# neighbor.
+JAPYSCOPE_MATCH_TOLERANCE_DEGREES = 0.5
 
 
 @dataclass
@@ -86,6 +94,23 @@ class _ActiveJapyScopeEvent:
     started_at: float
     ra: str = ""
     dec: str = ""
+
+
+def _describe_unmatched_position(ra: str, dec: str) -> str:
+    """`object_name` to report for a jog-sourced event when
+    `_find_catalog_match_by_position()` found nothing close enough.
+    Visual Astro's telescope-ingest Edge Function rejects an empty or
+    whitespace-only `object_name` outright, so sending "" would silently
+    drop the event before it ever reached the observer's JapyScope
+    inbox -- and its fuzzy star matcher is keyed on catalog designations,
+    so a human-readable RA/Dec string reports the raw position while
+    being certain never to collide with a real star name. The observer's
+    JapyScope tab shows it as "Unmatched" (same as any other name its
+    matcher can't resolve) with the position visible, and picks the star
+    by hand."""
+    if ra or dec:
+        return f"RA {ra} Dec {dec}".strip()
+    return "Unknown object"
 
 
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
@@ -456,6 +481,57 @@ class ControllerUI:
             return
         self._active_japyscope_event = _ActiveJapyScopeEvent(
             object_name=obj.name, started_at=self.clock(), ra=obj.ra, dec=obj.dec,
+        )
+
+    def _find_catalog_match_by_position(self, ra_deg: float, dec_deg: float) -> Optional[str]:
+        """Best-effort reverse lookup for a manually-jogged-to position
+        with no catalog selection behind it: the nearest catalog item
+        within `JAPYSCOPE_MATCH_TOLERANCE_DEGREES` of (`ra_deg`,
+        `dec_deg`), or `None` if nothing is close enough. `ra_deg`/
+        `dec_deg` are equinox-of-date (the mount's own
+        EQUATORIAL_EOD_COORD, same as `get_status()` reports); catalog
+        items are stored in J2000 (`shared/astro.py`'s module docstring),
+        so each candidate is precessed forward before comparing -- the
+        same direction `IndiClient._ra_dec_to_indi()` precesses when
+        slewing to one."""
+        now = self.clock()
+        best_name: Optional[str] = None
+        best_sep = JAPYSCOPE_MATCH_TOLERANCE_DEGREES
+        for catalog in self.catalogs.list_catalogs():
+            for item in self.catalogs.list_items(catalog["id"]):
+                item_ra_deg = astro.ra_to_degrees(item["ra"])
+                item_dec_deg = astro.dec_to_degrees(item["dec"])
+                if item_ra_deg is None or item_dec_deg is None:
+                    continue
+                item_ra_deg, item_dec_deg = astro.precess_j2000_to_date(item_ra_deg, item_dec_deg, now)
+                sep = astro.angular_separation_degrees(ra_deg, dec_deg, item_ra_deg, item_dec_deg)
+                if sep <= best_sep:
+                    best_sep = sep
+                    best_name = item["name"]
+        return best_name
+
+    def _start_japyscope_event_from_jog(self) -> None:
+        """Opens a JapyScope observing event the first time a manual jog
+        settles with none already open -- the equivalent of
+        `_poll_slew()` confirming tracking after a catalog GoTo, but for
+        "nudge the mount by hand from IDLE/TRACK" instead (see the IDLE
+        jog comment above). Not from ALIGN_JOG: that jog centers a known
+        alignment star, not an observing target. A later jog stop while
+        this event is still open (fine-centering mid-observation) is a
+        no-op here -- JapyScope wants one continuing event per target,
+        not one per nudge -- and it only closes the same way a
+        GoTo-sourced one does: a new GoTo, a park, or
+        `_poll_japyscope_event_timeout()`'s inactivity timeout."""
+        if self.state.screen == "ALIGN_JOG" or self._active_japyscope_event is not None:
+            return
+        ra = self.runtime.get("ra", "")
+        dec = self.runtime.get("dec", "")
+        ra_deg = astro.ra_to_degrees(ra) if ra else None
+        dec_deg = astro.dec_to_degrees(dec) if dec else None
+        name = self._find_catalog_match_by_position(ra_deg, dec_deg) if ra_deg is not None and dec_deg is not None else None
+        self._active_japyscope_event = _ActiveJapyScopeEvent(
+            object_name=name or _describe_unmatched_position(ra, dec),
+            started_at=self.clock(), ra=ra, dec=dec,
         )
 
     def _close_japyscope_event(self) -> None:
@@ -1004,6 +1080,7 @@ class ControllerUI:
         axis_state.direction = ""
         axis_state.key = ""
         axis_state.started_at = 0.0
+        self._start_japyscope_event_from_jog()
         return True
 
     def _stop_jog(self, reason: str = "key released") -> bool:
