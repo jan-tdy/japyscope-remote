@@ -3,7 +3,17 @@ import tempfile
 
 import pytest
 
-from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, connect, init_db
+from shared.db import (
+    AccessCodeRepo,
+    CatalogRepo,
+    MAX_TELESCOPE_EVENT_OUTBOX_ROWS,
+    SettingsRepo,
+    StateRepo,
+    TelescopeEventOutboxRepo,
+    TelescopePairingRepo,
+    connect,
+    init_db,
+)
 
 
 @pytest.fixture
@@ -144,3 +154,64 @@ def test_access_code_expiry(conn):
 
     codes.issue("999999", ttl_seconds=-1)  # already expired
     assert codes.is_valid("999999") is False
+
+
+def test_telescope_event_outbox_enqueue_and_drain(conn):
+    outbox = TelescopeEventOutboxRepo(conn)
+    outbox.enqueue("event-1", "V445Her", started_at=1000.0, ended_at=1100.0, ra="18h", dec="+45d")
+    outbox.enqueue("event-2", "AG Dra", started_at=1200.0, ended_at=1260.0)
+    assert outbox.count() == 2
+
+    batch = outbox.list_batch(limit=10)
+    assert [row["event_id"] for row in batch] == ["event-1", "event-2"]
+    assert batch[0]["object_name"] == "V445Her"
+    assert batch[0]["ra"] == "18h" and batch[0]["dec"] == "+45d"
+    assert batch[1]["ra"] == "" and batch[1]["dec"] == ""
+
+    outbox.delete_many(["event-1"])
+    assert outbox.count() == 1
+    assert outbox.list_batch()[0]["event_id"] == "event-2"
+
+
+def test_telescope_event_outbox_enqueue_is_idempotent_on_event_id(conn):
+    outbox = TelescopeEventOutboxRepo(conn)
+    outbox.enqueue("event-1", "V445Her", started_at=1000.0, ended_at=1100.0)
+    outbox.enqueue("event-1", "V445Her", started_at=1000.0, ended_at=1100.0)
+    assert outbox.count() == 1
+
+
+def test_telescope_event_outbox_evicts_oldest_past_cap(conn):
+    outbox = TelescopeEventOutboxRepo(conn)
+    for i in range(MAX_TELESCOPE_EVENT_OUTBOX_ROWS + 5):
+        outbox.enqueue(f"event-{i}", "V445Her", started_at=float(i), ended_at=float(i) + 100)
+    assert outbox.count() == MAX_TELESCOPE_EVENT_OUTBOX_ROWS
+    # The oldest five (by created_at, effectively insertion order here) were
+    # dropped, not the newest.
+    remaining_ids = {row["event_id"] for row in outbox.list_batch(limit=MAX_TELESCOPE_EVENT_OUTBOX_ROWS)}
+    assert "event-0" not in remaining_ids
+    assert f"event-{MAX_TELESCOPE_EVENT_OUTBOX_ROWS + 4}" in remaining_ids
+
+
+def test_telescope_pairing_lifecycle(conn):
+    pairing = TelescopePairingRepo(conn)
+    assert pairing.current() is None
+
+    pairing.start("pairing-1", "123456", ttl_seconds=60)
+    row = pairing.current()
+    assert row is not None
+    assert row["pairing_id"] == "pairing-1" and row["code"] == "123456"
+
+    # Starting a new attempt replaces the previous one -- only one code can
+    # be on screen at a time.
+    pairing.start("pairing-2", "654321", ttl_seconds=60)
+    row = pairing.current()
+    assert row["pairing_id"] == "pairing-2" and row["code"] == "654321"
+
+    pairing.clear()
+    assert pairing.current() is None
+
+
+def test_telescope_pairing_expires(conn):
+    pairing = TelescopePairingRepo(conn)
+    pairing.start("pairing-1", "123456", ttl_seconds=-1)  # already expired
+    assert pairing.current() is None

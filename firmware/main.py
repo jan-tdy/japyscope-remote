@@ -7,6 +7,7 @@ import os
 import signal
 import sqlite3
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,38 @@ from firmware.indi.client import IndiClient, MountStatus
 from firmware.indi.manager import DEFAULT_DRIVER_BINARY, IndiServerManager
 from firmware.ui import ControllerUI
 from shared.db import DEFAULT_DB_PATH, HARDWARE_COMPONENTS, SettingsRepo, db_session
+from shared.visual_astro import VisualAstroClient, flush_outbox
+
+# How often the background flush loop below wakes up to check for a device
+# token and queued events -- network I/O has no place in ControllerUI's own
+# tick loop (firmware/ui/controller.py), which must stay responsive to
+# keypad input, so this runs on its own daemon thread instead.
+TELESCOPE_FLUSH_INTERVAL_SECONDS = 30.0
+
+
+def run_telescope_flush_loop(db_path: str, stop_event: threading.Event) -> None:
+    """Drains shared.db's telescope_event_outbox to Visual Astro whenever a
+    device token is linked. Runs until `stop_event` is set. Each pass reads
+    the token/project settings fresh (a pairing completed or was revoked
+    from the Web UI, in a different process, since the last pass) rather
+    than caching them once at thread start."""
+    logger = logging.getLogger(__name__)
+    while not stop_event.is_set():
+        try:
+            with db_session(db_path) as conn:
+                settings = SettingsRepo(conn)
+                token = settings.get("visual_astro_device_token")
+                if token:
+                    client = VisualAstroClient(
+                        project_url=settings.get("visual_astro_project_url", "") or VisualAstroClient().project_url,
+                        anon_key=settings.get("visual_astro_anon_key", "") or VisualAstroClient().anon_key,
+                    )
+                    sent = flush_outbox(conn, client, token)
+                    while sent and not stop_event.is_set():
+                        sent = flush_outbox(conn, client, token)
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+            logger.warning("telescope event flush skipped: %s", exc)
+        stop_event.wait(TELESCOPE_FLUSH_INTERVAL_SECONDS)
 
 
 def _show_fatal_error(display, code: str, detail: str) -> None:
@@ -136,6 +169,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ui = None
     display = None
     input_hal = indi = manager = None
+    flush_stop_event = threading.Event()
+    flush_thread: Optional[threading.Thread] = None
 
     def stop(_signum=None, _frame=None) -> None:
         global _stop_requested
@@ -169,6 +204,17 @@ def main(argv: Optional[list[str]] = None) -> int:
                 display, input_hal, indi, conn, backlight=backlight, indi_manager=manager,
                 power_control=None if args.simulate else _poweroff,
             )
+            # Started only now, not at the top of main() -- the db_session
+            # above has already created the schema (or confirmed it exists)
+            # on the main thread by this point, so this thread's own later
+            # db_session() calls never race the one-time init_db() against
+            # a file that doesn't exist yet (confirmed: that race produced
+            # real "database is locked" failures when both ran at once).
+            flush_thread = threading.Thread(
+                target=run_telescope_flush_loop, args=(db_path, flush_stop_event), daemon=True,
+                name="telescope-event-flush",
+            )
+            flush_thread.start()
             ui.run()
         return 0
     except StartupInterrupted:
@@ -201,6 +247,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         _show_fatal_error(display, "SYS-970", str(exc))
         return 1
     finally:
+        flush_stop_event.set()
         stop_motion = getattr(ui, "stop_motion", None)
         if stop_motion is not None:
             stop_motion()
@@ -210,6 +257,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             indi.disconnect()
         if manager is not None:
             manager.stop()
+        if flush_thread is not None:
+            flush_thread.join(timeout=5.0)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import socket
 import sqlite3
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from firmware.hal.display.base import DisplayHAL
 from firmware.hal.input.base import InputHAL, released_key, tapped_key
 from firmware.hal.input.keys import BKSP, DIGITS, ENC_DOWN, ENC_PUSH, ENC_UP, FN2, JOY_LEFT, JOY_RIGHT
 from shared import astro
-from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo
+from shared.db import AccessCodeRepo, CatalogRepo, SettingsRepo, StateRepo, TelescopeEventOutboxRepo
 from shared.version import current_version
 
 from .i18n import DEFAULT_LANGUAGE, LANGUAGES
@@ -63,6 +64,30 @@ SLEW_CONFIRM_TIMEOUT_SECONDS = 600
 # to match IndiServerManager.HEALTH_CHECK_INTERVAL_S's own cadence for
 # the same class of "keep trying quietly" recovery.
 MOUNT_RECONNECT_RETRY_SECONDS = 5.0
+# How long a JapyScope observing event (see _start_japyscope_event()/
+# _close_japyscope_event()) can stay open with no further goto/park before
+# it's closed on its own -- "dlhá nečinnosť" in the JapyScope Remote <->
+# Visual Astro spec. A fixed constant, not a Settings value: unlike the
+# minimum-duration threshold below, this is a safety net against an event
+# never closing at all (the owner wanders off mid-session), not something
+# an observer would tune per device.
+JAPYSCOPE_EVENT_INACTIVITY_SECONDS = 1800
+
+
+@dataclass
+class _ActiveJapyScopeEvent:
+    """One open observing event: tracking confirmed on `object_name` since
+    `started_at`. Lives only in process memory, never written to
+    `shared.db` until it closes -- a firmware restart while an event is
+    open loses it rather than guessing at how long the mount kept tracking
+    unattended."""
+
+    object_name: str
+    started_at: float
+    ra: str = ""
+    dec: str = ""
+
+
 # A full e-paper refresh (see firmware/hal/display/epaper.py) is
 # electromechanical — on the order of a second, visibly flashing — but a
 # *partial* refresh (same module) is much faster at the cost of some
@@ -262,10 +287,14 @@ class ControllerUI:
         self.settings = SettingsRepo(conn)
         self.runtime = StateRepo(conn)
         self.codes = AccessCodeRepo(conn)
+        self.events = TelescopeEventOutboxRepo(conn)
         self.search = search or SmartSearch()
         self.clock = clock
         self.state = UIState()
         self.running = True
+        # The currently-open JapyScope observing event, if any -- see
+        # _start_japyscope_event()/_close_japyscope_event().
+        self._active_japyscope_event: Optional[_ActiveJapyScopeEvent] = None
         # Baseline for _poll_indi_restart() -- set for real once start()
         # below has done the initial reconnect, so the first tick() doesn't
         # immediately see a "change" and redo it.
@@ -344,6 +373,7 @@ class ControllerUI:
         self._poll_slew()
         self._poll_indi_restart()
         self._poll_mount_connection()
+        self._poll_japyscope_event_timeout()
 
     def _poll_parking(self) -> None:
         """PARK_CONFIRM's `self.indi.park()` call only issues the park
@@ -399,6 +429,7 @@ class ControllerUI:
         if self._truth(self.runtime.get("tracking", "false")):
             s.transition_at = 0
             self._set("TRACK")
+            self._start_japyscope_event()
         elif s.transition_at and self.clock() >= s.transition_at:
             s.transition_at = 0
             logger.error("INDI-002 slew did not confirm tracking within %ss", SLEW_CONFIRM_TIMEOUT_SECONDS)
@@ -409,6 +440,59 @@ class ControllerUI:
             # issue another slew with this one's outcome still unknown.
             s.return_screen = "IDLE"
             self._devtools_message(["Slew did not confirm", "check mount position", "before trusting TRACK"])
+
+    def _start_japyscope_event(self) -> None:
+        """Called the moment `_poll_slew()` confirms tracking on a fresh
+        goto -- opens a JapyScope observing event for whatever object was
+        selected. Any previously open event must already have been closed
+        by whichever of `_begin_slew()`/the PARK_CONFIRM handler issued the
+        command that led here; this never overwrites one still open (that
+        would silently drop it instead of queuing it)."""
+        if self._active_japyscope_event is not None:
+            logger.warning("JapyScope event for %r still open at new tracking confirmation -- closing it first", self._active_japyscope_event.object_name)
+            self._close_japyscope_event()
+        obj = self.state.selected
+        if obj is None or not obj.name:
+            return
+        self._active_japyscope_event = _ActiveJapyScopeEvent(
+            object_name=obj.name, started_at=self.clock(), ra=obj.ra, dec=obj.dec,
+        )
+
+    def _close_japyscope_event(self) -> None:
+        """Closes the open JapyScope event, if any, and queues it for
+        Visual Astro -- unless it tracked its target for less than the
+        configured minimum duration (`japyscope_min_duration_seconds`,
+        default 85s per the spec's "1.42 min"), in which case it's
+        discarded here and never reaches the offline outbox at all."""
+        event = self._active_japyscope_event
+        if event is None:
+            return
+        self._active_japyscope_event = None
+        ended_at = self.clock()
+        duration = ended_at - event.started_at
+        try:
+            threshold = float(self.settings.get("japyscope_min_duration_seconds", "85"))
+        except (TypeError, ValueError):
+            threshold = 85.0
+        if duration < threshold:
+            logger.debug("JapyScope event for %r discarded: %.1fs below %.1fs threshold", event.object_name, duration, threshold)
+            return
+        self.events.enqueue(
+            event_id=str(uuid.uuid4()), object_name=event.object_name,
+            started_at=event.started_at, ended_at=ended_at, ra=event.ra, dec=event.dec,
+        )
+
+    def _poll_japyscope_event_timeout(self) -> None:
+        """Closes an open JapyScope event on its own once it's been open
+        for `JAPYSCOPE_EVENT_INACTIVITY_SECONDS` with no new goto/park --
+        the "dlhá nečinnosť" auto-close case. Otherwise an event the owner
+        never explicitly ends (walking away mid-session, leaving the mount
+        tracking) would simply never queue for upload."""
+        event = self._active_japyscope_event
+        if event is None:
+            return
+        if self.clock() - event.started_at >= JAPYSCOPE_EVENT_INACTIVITY_SECONDS:
+            self._close_japyscope_event()
 
     def _poll_indi_restart(self) -> None:
         """Notices a fresh indiserver/driver process -- `IndiServerManager`'s
@@ -1293,6 +1377,11 @@ class ControllerUI:
                 except (NotImplementedError, ConnectionError) as exc:
                     logger.error("INDI-002 park failed: %s", exc)
                     return
+                # Same reasoning as _begin_slew(): the mount is no longer
+                # pointed at whatever it was observing the instant park()
+                # is accepted, regardless of how long the physical slew to
+                # the park position actually takes.
+                self._close_japyscope_event()
                 s.transition_at = self.clock() + PARK_CONFIRM_TIMEOUT_SECONDS
                 self._set("PARKING")
             return
@@ -1566,6 +1655,10 @@ class ControllerUI:
             self._best_effort_abort()
             self._set(self.state.return_screen)
             return
+        # The mount has accepted a new target -- whatever JapyScope event
+        # was open for the previous one ends here, the instant it stopped
+        # being pointed there, not whenever this new slew happens to finish.
+        self._close_japyscope_event()
         # runtime["tracking"] is only ever refreshed by _refresh_status()'s
         # periodic get_status() poll (no synchronous reset the way
         # _unpark() clears "parked" immediately) -- if the mount was

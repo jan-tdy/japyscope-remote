@@ -23,8 +23,9 @@ from typing import Callable, Optional
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
 from firmware.indi.manager import DEFAULT_DRIVER_BINARY
-from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, db_session
+from shared.db import AccessCodeRepo, CatalogRepo, HARDWARE_COMPONENTS, SettingsRepo, StateRepo, TelescopePairingRepo, db_session
 from shared.version import current_version
+from shared.visual_astro import VisualAstroClient
 
 logger = logging.getLogger(__name__)
 DEVELOPER_EMAIL = "j44soft@gmail.com"
@@ -32,6 +33,9 @@ ISSUES_NEW_URL = "https://github.com/jan-tdy/japyscope-remote/issues/new"
 MAILTO_MAX_LENGTH = 1800
 LOG_BUNDLE_UNITS = ["japyscope-app", "japyscope-webui", "japyscope-wifi-ap", "japyscope-splash", "japyscope-update"]
 _SECRET_RE = re.compile(r"(?i)((?<![a-z])(?:password|passwd|passphrase|psk|secret\w*|token|access[_ -]?code)\s*[=:]\s*)\S+")
+# How long a Visual Astro pairing code stays valid once shown on the
+# Connectors page (TelescopePairingRepo.start()'s ttl_seconds).
+VISUAL_ASTRO_PAIRING_TTL_SECONDS = 600
 
 MAX_UPLOAD_BYTES = 1_000_000
 MAX_LOGIN_ATTEMPTS = 5
@@ -330,6 +334,13 @@ def _default_action_runner(command: list[str]) -> None:
     subprocess.Popen(command, start_new_session=True)
 
 
+def _visual_astro_client(settings: SettingsRepo) -> VisualAstroClient:
+    return VisualAstroClient(
+        project_url=settings.get("visual_astro_project_url", "") or VisualAstroClient().project_url,
+        anon_key=settings.get("visual_astro_anon_key", "") or VisualAstroClient().anon_key,
+    )
+
+
 def indi_process_status() -> dict[str, bool]:
     """Whether the indiserver and mount driver processes are alive. Both run
     as children of the controller's IndiServerManager under the same
@@ -604,12 +615,77 @@ def create_app(
     @app.route("/connectors")
     @auth_required
     def connectors():
-        return render_template("connectors.html")
+        with db_session(app.config["DATABASE"]) as conn:
+            linked = bool(SettingsRepo(conn).get("visual_astro_device_token"))
+            pairing = TelescopePairingRepo(conn).current()
+        remaining = max(0, int(pairing["expires_at"] - time.time())) if pairing is not None else 0
+        return render_template(
+            "connectors.html",
+            visual_astro_linked=linked,
+            visual_astro_code=(pairing["code"] if pairing is not None else None),
+            visual_astro_remaining=remaining,
+        )
+
+    @app.route("/connectors/visual-astro/start", methods=["POST"])
+    @auth_required
+    def visual_astro_pair_start():
+        with db_session(app.config["DATABASE"]) as conn:
+            settings = SettingsRepo(conn)
+            client = _visual_astro_client(settings)
+            # pairing_id and code are both minted by Visual Astro itself, not
+            # here -- telescope-pair-init has no auth, so a value this device
+            # picked and merely reported the hash of could be pre-empted by
+            # anyone else calling the same endpoint first (see its docstring).
+            result = client.pair_init()
+            if result is None:
+                flash("Could not reach Visual Astro — check the network and try again.", "error")
+                return redirect(url_for("connectors"))
+            TelescopePairingRepo(conn).start(result.pairing_id, result.code, VISUAL_ASTRO_PAIRING_TTL_SECONDS)
+        return redirect(url_for("connectors"))
+
+    @app.route("/connectors/visual-astro/poll", methods=["POST"])
+    @auth_required
+    def visual_astro_pair_poll():
+        with db_session(app.config["DATABASE"]) as conn:
+            pairing_repo = TelescopePairingRepo(conn)
+            pairing = pairing_repo.current()
+            if pairing is None:
+                return jsonify(status="expired")
+            settings = SettingsRepo(conn)
+            result = _visual_astro_client(settings).pair_fetch(pairing["pairing_id"])
+            if result.status == "claimed" and result.device_token:
+                settings.set("visual_astro_device_token", result.device_token)
+                settings.set("visual_astro_linked_at", str(time.time()))
+                pairing_repo.clear()
+                return jsonify(status="claimed")
+            if result.status == "expired":
+                pairing_repo.clear()
+                return jsonify(status="expired")
+        return jsonify(status="pending")
+
+    @app.route("/connectors/visual-astro/disconnect", methods=["POST"])
+    @auth_required
+    def visual_astro_disconnect():
+        with db_session(app.config["DATABASE"]) as conn:
+            settings = SettingsRepo(conn)
+            token = settings.get("visual_astro_device_token")
+            if token:
+                # Best-effort: the local link is cleared either way below --
+                # a revoke that fails to reach Visual Astro must not leave
+                # the owner stuck "connected" here with no way out.
+                _visual_astro_client(settings).revoke(token)
+            settings.set("visual_astro_device_token", "")
+            settings.set("visual_astro_linked_at", "")
+        flash("Visual Astro disconnected.", "ok")
+        return redirect(url_for("connectors"))
 
     @app.route("/settings", methods=["GET", "POST"])
     @auth_required
     def settings():
-        editable = ("latitude", "longitude", "elevation_m", "timezone", "park_mode", "park_alt", "park_az")
+        editable = (
+            "latitude", "longitude", "elevation_m", "timezone", "park_mode", "park_alt", "park_az",
+            "japyscope_min_duration_seconds",
+        )
         with db_session(app.config["DATABASE"]) as conn:
             repo = SettingsRepo(conn)
             if request.method == "POST":

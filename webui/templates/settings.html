@@ -55,6 +55,17 @@
   </section>
 
   <section>
+    <h3>JapyScope &rarr; Visual Astro</h3>
+    <p class="muted">Minimum time tracking a target before it's queued as an observing event for Visual Astro (see the <a href="{{ url_for('connectors') }}">Connectors</a> page to link/unlink the two). A brief mis-slew below this never gets queued at all; the default matches the "~85s" the integration is specified against.</p>
+    <div class="grid-cols-2">
+      <div>
+        <label for="japyscope_min_duration_seconds">Minimum tracked duration (s)</label>
+        <input id="japyscope_min_duration_seconds" name="japyscope_min_duration_seconds" type="number" min="0" step="1" value="{{ settings.japyscope_min_duration_seconds }}" placeholder="85">
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h3>Joystick (optional)</h3>
     <p class="muted">An external KY-023-style analog joystick can be wired up on its own cable (see <code>docs/WIRING.md</code>) as an alternative to the rotary encoder for menu navigation, plus manual N/S/E/W jogging during alignment and while tracking. Leave this unchecked if you don't have one connected — the controller works exactly the same without it.</p>
     <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: normal; margin: 0;">
