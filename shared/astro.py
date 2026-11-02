@@ -62,6 +62,16 @@ def dec_to_degrees(dec: str) -> Optional[float]:
     return max(-90.0, min(90.0, value))
 
 
+def angular_separation_degrees(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: float) -> float:
+    """Great-circle separation between two RA/Dec points, in degrees
+    (spherical law of cosines). Both points must already be in the same
+    equinox -- this does no precession of its own; see
+    `precess_j2000_to_date` for that."""
+    ra1, dec1, ra2, dec2 = (math.radians(v) for v in (ra1_deg, dec1_deg, ra2_deg, dec2_deg))
+    cos_sep = math.sin(dec1) * math.sin(dec2) + math.cos(dec1) * math.cos(dec2) * math.cos(ra1 - ra2)
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos_sep))))
+
+
 def _julian_date(when_utc: datetime) -> float:
     y, mo = when_utc.year, when_utc.month
     if mo <= 2:

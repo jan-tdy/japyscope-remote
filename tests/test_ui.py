@@ -13,6 +13,7 @@ from firmware.indi.client import MountStatus
 from firmware.ui import ControllerUI, SearchResult, SmartSearch
 from firmware.ui import controller as controller_module
 from firmware.ui.controller import MOUNT_RECONNECT_RETRY_SECONDS
+from shared import astro
 from shared.db import CatalogRepo, SettingsRepo, StateRepo, connect, init_db
 
 
@@ -2723,4 +2724,123 @@ def test_japyscope_event_closing_twice_is_a_noop():
     try:
         ui._close_japyscope_event()  # nothing open -- must not raise
         assert ui.events.count() == 0
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_opens_on_idle_jog_with_catalog_match():
+    # Requested so JapyScope also covers "manually slewed with the jog
+    # keys to something", not just a catalog GoTo -- the mount's live
+    # position (equinox-of-date) is reverse-matched against the catalog
+    # (stored J2000, so precessed forward the same way a GoTo does it).
+    ui, conn, path = make_ui()
+    try:
+        now = [1_700_000_000.0]
+        ui.clock = lambda: now[0]
+
+        repo = CatalogRepo(conn)
+        catalog_id = repo.create_catalog("Variables")
+        repo.add_item(catalog_id, "V445 Her", "18:24:11", "+12:09")
+
+        ra_j2000 = astro.ra_to_degrees("18:24:11")
+        dec_j2000 = astro.dec_to_degrees("+12:09")
+        ra_eod, dec_eod = astro.precess_j2000_to_date(ra_j2000, dec_j2000, now[0])
+        StateRepo(conn).set("ra", str(ra_eod))
+        StateRepo(conn).set("dec", str(dec_eod))
+
+        ui.state.screen = "IDLE"
+        ui.handle("6")  # jog East
+        ui.handle(key_up("6"))
+
+        assert ui._active_japyscope_event is not None
+        assert ui._active_japyscope_event.object_name == "V445 Her"
+        assert ui.events.count() == 0  # still open, not queued yet
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_opens_unmatched_when_no_catalog_item_is_close():
+    # No catalog match within JAPYSCOPE_MATCH_TOLERANCE_DEGREES -- the
+    # event still opens (so it isn't silently lost), with a position
+    # description standing in for a name Visual Astro's observer can
+    # resolve by hand, instead of an empty object_name (which
+    # telescope-ingest rejects outright and would drop the event before
+    # it ever reached the inbox).
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("ra", "123.0")
+        StateRepo(conn).set("dec", "45.0")
+
+        ui.state.screen = "IDLE"
+        ui.handle("6")
+        ui.handle(key_up("6"))
+
+        event = ui._active_japyscope_event
+        assert event is not None
+        assert event.object_name == "RA 123.0 Dec 45.0"
+        assert event.ra == "123.0" and event.dec == "45.0"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_from_jog_keeps_fine_tuning_as_one_continuing_event():
+    # "Jeden pokračujúci event" -- a further jog nudge while an event is
+    # already open (centering on the same target) must not split it into
+    # a second event or overwrite its recorded position.
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("ra", "10.0")
+        StateRepo(conn).set("dec", "20.0")
+        ui.state.screen = "IDLE"
+        ui.handle("6"); ui.handle(key_up("6"))
+        first_event = ui._active_japyscope_event
+        assert first_event is not None
+
+        StateRepo(conn).set("ra", "10.2")  # nudged a bit further
+        StateRepo(conn).set("dec", "20.1")
+        ui.handle("8"); ui.handle(key_up("8"))
+
+        assert ui._active_japyscope_event is first_event  # unchanged, not replaced
+        assert ui._active_japyscope_event.ra == "10.0"  # original position kept
+    finally: conn.close(); os.unlink(path)
+
+
+def test_japyscope_event_from_jog_does_not_disturb_one_already_open_from_a_goto():
+    # Same "one continuing event" rule, but fine-tuning from the TRACK
+    # screen after a catalog GoTo rather than from IDLE -- must not
+    # overwrite the GoTo's own object_name/ra/dec with the jog position.
+    ui, conn, path = make_ui()
+    try:
+        StateRepo(conn).set("aligned", "true")
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+
+        ui._confirm_slew(SearchResult("V445Her", ra="1h", dec="+1d"), "LIST")
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+        goto_event = ui._active_japyscope_event
+        assert goto_event is not None and goto_event.object_name == "V445Her"
+
+        StateRepo(conn).set("ra", "99.0")
+        StateRepo(conn).set("dec", "-5.0")
+        ui.handle("6"); ui.handle(key_up("6"))
+
+        assert ui._active_japyscope_event is goto_event
+        assert ui._active_japyscope_event.object_name == "V445Her"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_align_jog_does_not_open_a_japyscope_event():
+    # ALIGN_JOG centers a known alignment star to sync on it -- that's
+    # not an observation, and must never queue a JapyScope event.
+    ui, conn, path = make_ui()
+    try:
+        star = controller_module.STARS[1]
+        ui.state.screen = "ALIGN_JOG"
+        ui.state.align_star = star; ui.state.jog_target = star.name; ui.state.align_points = 0
+        StateRepo(conn).set("ra", "10.0")
+        StateRepo(conn).set("dec", "20.0")
+
+        ui.handle("6"); ui.handle(key_up("6"))
+
+        assert ui._active_japyscope_event is None
     finally: conn.close(); os.unlink(path)

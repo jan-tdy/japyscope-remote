@@ -85,3 +85,21 @@ def test_ra_dec_from_alt_az_at_zenith_does_not_crash():
     ra_deg, dec_deg = astro.ra_dec_from_alt_az(90.0, 0.0, 48.0, 17.0, 1_700_000_000.0)
     assert round(dec_deg, 6) == 48.0  # straight up at latitude L has dec == L
     assert 0.0 <= ra_deg < 360.0
+
+
+def test_angular_separation_degrees_is_zero_for_the_same_point():
+    assert astro.angular_separation_degrees(123.4, 45.6, 123.4, 45.6) == 0.0
+
+
+def test_angular_separation_degrees_matches_known_right_angle_case():
+    # Two points on the celestial equator 90 degrees apart in RA are
+    # exactly 90 degrees apart on the sky.
+    sep = astro.angular_separation_degrees(0.0, 0.0, 90.0, 0.0)
+    assert abs(sep - 90.0) < 1e-9
+
+
+def test_angular_separation_degrees_is_symmetric_and_antipodal():
+    sep_ab = astro.angular_separation_degrees(10.0, 20.0, 190.0, -20.0)
+    sep_ba = astro.angular_separation_degrees(190.0, -20.0, 10.0, 20.0)
+    assert sep_ab == sep_ba
+    assert abs(sep_ab - 180.0) < 1e-9  # opposite points on the sphere (ra+180, -dec)
