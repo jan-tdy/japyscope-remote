@@ -728,6 +728,7 @@ class ControllerUI:
             self._stop_jog("screen changed")
         self.state.screen = screen
         self.state.index = index
+        self._refresh_mount_busy()
         self.render()
 
     def _shutdown(self) -> None:
@@ -1015,6 +1016,15 @@ class ControllerUI:
     def _jog_axis_state(self, axis: str) -> JogAxisState:
         return self.state.jog_ns if axis == "ns" else self.state.jog_we
 
+    def _refresh_mount_busy(self) -> None:
+        """Persisted via StateRepo so install/update.py, a separate
+        process, can avoid running apt while the mount is moving. True
+        while any jog axis is held or a goto is in flight (SLEW, before
+        tracking is confirmed); not during steady tracking."""
+        s = self.state
+        busy = bool(s.jog_ns.direction or s.jog_we.direction or s.screen == "SLEW")
+        self.runtime.set("mount_busy", "true" if busy else "false")
+
     def _jog(self, key: str, momentary: bool = False) -> bool:
         """Continuous manual motion for held keys, with bounded encoder taps.
         N/S and E/W are independent axes (see JOG_AXES above) -- holding
@@ -1051,6 +1061,7 @@ class ControllerUI:
         except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-004 jog failed: %s", exc)
             self._best_effort_abort()
+        self._refresh_mount_busy()
         return True
 
     def _best_effort_abort(self) -> bool:
@@ -1080,6 +1091,7 @@ class ControllerUI:
         axis_state.direction = ""
         axis_state.key = ""
         axis_state.started_at = 0.0
+        self._refresh_mount_busy()
         self._start_japyscope_event_from_jog()
         return True
 

@@ -323,6 +323,39 @@ def _heal_dpkg() -> None:
     subprocess.run(["dpkg", "--configure", "-a"], check=False)
 
 
+_MOUNT_BUSY_WAIT_TIMEOUT_S = 600.0
+
+
+def _mount_is_busy() -> bool:
+    """True while ControllerUI._refresh_mount_busy() reports an active jog
+    or in-flight goto. Same DB-read tolerance as `_read_update_settings()`
+    above: fails open (not busy) so a shared.db hiccup never blocks this
+    update."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from shared.db import StateRepo, db_session
+
+        with db_session() as conn:
+            return StateRepo(conn).get("mount_busy", "false") == "true"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read mount_busy from shared.db: %s", exc)
+        return False
+
+
+def _wait_for_mount_idle(timeout: float = _MOUNT_BUSY_WAIT_TIMEOUT_S) -> None:
+    """Defer the upgrade while the mount is moving. Gives up past
+    `timeout` -- a stuck busy flag must not block updates forever."""
+    if not _mount_is_busy():
+        return
+    logger.info("mount is actively moving -- deferring system package upgrade")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        if not _mount_is_busy():
+            return
+    logger.warning("mount still reports busy after %ss -- proceeding with upgrade anyway", timeout)
+
+
 def _apt_upgrade() -> None:
     """Refresh and upgrade system packages within the currently configured
     the installed release's repos. Deliberately just `apt-get update && apt-get upgrade`
@@ -353,6 +386,7 @@ def _apt_upgrade() -> None:
     last_exc: Optional[BaseException] = None
     for attempt in range(1, 4):
         _check_writable_root()
+        _wait_for_mount_idle()
         _wait_for_apt_lock()
         _heal_dpkg()
         try:
