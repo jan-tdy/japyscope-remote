@@ -1028,10 +1028,6 @@ class ControllerUI:
             return False
         axis = JOG_AXES[direction]
         axis_state = self._jog_axis_state(axis)
-        logger.debug(  # TEMPORARY
-            "DIAG _jog() key=%r direction=%s momentary=%s current_axis_direction=%r blocked_key=%r",
-            key, direction, momentary, axis_state.direction, axis_state.blocked_key,
-        )
         if key == axis_state.blocked_key:
             return True
         if axis_state.direction:
@@ -1049,12 +1045,18 @@ class ControllerUI:
             if momentary:
                 self._stop_jog_axis(axis, "encoder detent")
         except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
+            # Issue #119's real-hardware DEBUG capture: indi_setprop/indi_getprop
+            # failing after ~2s (their own property-wait timeout, not the 10s
+            # subprocess timeout) under Pi load, confirming jog() itself never
+            # reaches the driver here -- no motion has started. Aborting
+            # unconditionally used to send a real TELESCOPE_ABORT_MOTION on
+            # every such glitch, which could stop an unrelated slew/track
+            # already in progress. Only a failed *stop* (_stop_jog_axis below)
+            # still aborts, since a real motion may already be running there.
             logger.error("INDI-004 jog failed: %s", exc)
-            self._best_effort_abort()
         return True
 
     def _best_effort_abort(self) -> bool:
-        logger.debug("DIAG _best_effort_abort() called at %.3f", self.clock())  # TEMPORARY
         try:
             self.indi.abort()
             return True
@@ -1065,10 +1067,6 @@ class ControllerUI:
     def _stop_jog_axis(self, axis: str, reason: str = "key released") -> bool:
         axis_state = self._jog_axis_state(axis)
         direction = axis_state.direction
-        logger.debug(  # TEMPORARY
-            "DIAG _stop_jog_axis() axis=%s reason=%r current_direction=%r at %.3f",
-            axis, reason, direction, self.clock(),
-        )
         if not direction:
             return True
         try:
