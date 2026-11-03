@@ -185,39 +185,21 @@ class IndiClient:
         self._setprop(f"TIME_UTC.UTC={now.strftime('%Y-%m-%dT%H:%M:%S')};OFFSET=0")
 
     def _setprop(self, spec: str) -> None:
-        # TEMPORARY DIAGNOSTIC LOGGING -- for the jog/abort "sometimes does
-        # nothing" report. Shows exact wall-clock timing and outcome for
-        # every property write, at DEBUG (JAPYSCOPE_LOG_LEVEL=DEBUG, no
-        # systemd unit edit needed -- see firmware/main.py's --log-level
-        # help). Deliberately doesn't log `spec`/stdout/stderr themselves
-        # (CodeQL flags that path as clear-text logging of command data) --
-        # timing + success/failure is enough to correlate against the
-        # direction/axis/key already logged one layer up in jog()/
-        # stop_jog()/abort() and controller.py's _jog()/_stop_jog_axis()/
-        # _best_effort_abort()/handle(). Revert this block (and those)
-        # once the real cause is found.
-        start = time.monotonic()
         try:
             subprocess.run(
                 ["indi_setprop", "-h", self.host, "-p", str(self.port), f"{self.device}.{spec}"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
-            logger.debug("DIAG indi_setprop OK in %.3fs", time.monotonic() - start)
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug("DIAG indi_setprop FAILED after %.3fs", time.monotonic() - start)
             raise ConnectionError(f"indi_setprop {self.device}.{spec} failed: {exc}") from exc
 
     def _getprop(self, spec: str) -> str:
-        # TEMPORARY DIAGNOSTIC LOGGING -- see _setprop() above.
-        start = time.monotonic()
         try:
             result = subprocess.run(
                 ["indi_getprop", "-1", "-h", self.host, "-p", str(self.port), f"{self.device}.{spec}"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
-            logger.debug("DIAG indi_getprop OK in %.3fs", time.monotonic() - start)
         except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug("DIAG indi_getprop FAILED after %.3fs", time.monotonic() - start)
             raise ConnectionError(f"indi_getprop {self.device}.{spec} failed: {exc}") from exc
         return result.stdout.strip()
 
@@ -371,7 +353,6 @@ class IndiClient:
         self._setprop(f"EQUATORIAL_EOD_COORD.RA={ra_hours:.6f};DEC={dec_deg:.6f}")
 
     def abort(self) -> None:
-        logger.debug("DIAG abort() at %.3f", self.clock())  # TEMPORARY
         self._setprop("TELESCOPE_ABORT_MOTION.ABORT=On")
 
     def set_park_position(self, alt_deg: float, az_deg: float) -> None:
@@ -437,7 +418,6 @@ class IndiClient:
 
     def jog(self, direction: str, speed: int) -> None:
         """Start continuous motion in one SynScan direction until stop_jog()."""
-        logger.debug("DIAG jog() direction=%s speed=%s at %.3f", direction, speed, self.clock())  # TEMPORARY
         jog_property = _JOG_PROPERTIES.get(direction)
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")
@@ -449,7 +429,6 @@ class IndiClient:
         self._setprop(f"{axis_property}.{on_element}=On")
 
     def stop_jog(self, direction: str) -> None:
-        logger.debug("DIAG stop_jog() direction=%s at %.3f", direction, self.clock())  # TEMPORARY
         jog_property = _JOG_PROPERTIES.get(direction)
         if jog_property is None:
             raise ConnectionError(f"unknown jog direction: {direction!r}")

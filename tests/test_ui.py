@@ -2370,15 +2370,35 @@ def test_process_teardown_aborts_active_slew():
     finally: conn.close(); os.unlink(path)
 
 
-def test_failed_jog_attempts_safety_abort():
+def test_failed_jog_start_does_not_safety_abort():
+    # Issue #119: a jog() failure means the command never reached the
+    # driver, so no motion started -- aborting here would send a real
+    # TELESCOPE_ABORT_MOTION that could stop an unrelated slew/track
+    # already in progress. A failed *stop* still aborts (see
+    # test_failed_jog_stop_attempts_safety_abort below), since a real
+    # motion may already be running there.
     ui, conn, path = make_ui()
     try:
         def fail(*_args): raise ConnectionError("mount stopped responding")
         ui.indi.jog = fail
         ui.state.screen = "TRACK"
         ui.handle("2")
-        assert ui.indi.aborted is True
+        assert ui.indi.aborted is False
         assert ui.state.jog_ns.direction == ""
+    finally: conn.close(); os.unlink(path)
+
+
+def test_failed_jog_stop_attempts_safety_abort():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        assert ui.state.jog_ns.direction == "N"
+
+        def fail(*_args): raise ConnectionError("mount stopped responding")
+        ui.indi.stop_jog = fail
+        ui.handle(key_up("2"))
+        assert ui.indi.aborted is True
     finally: conn.close(); os.unlink(path)
 
 
