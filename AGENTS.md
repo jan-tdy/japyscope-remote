@@ -26,6 +26,12 @@ This is production firmware for a real device, not a demo or a sandbox. PR descr
 - No unfinished-looking output: no "TODO later", no placeholder sections, no hedging language about whether something works -- verify it, then state it plainly.
 - If a generated file (README, this file, a workflow comment) starts accumulating restated obvious comments or got longer than the code it describes, trim it as part of the change instead of adding on top.
 
+## Comments
+
+- A comment states the current invariant/constraint only -- never the investigation that produced it. No "Issue #N's capture/log confirmed...", no "here's what we found", no narrating how a bug was tracked down. That belongs in the commit message and PR description, never in the file.
+- 1-3 lines max. If it takes a paragraph to justify one line of code, the code is wrong, not the comment.
+- Before committing, re-read every comment you just wrote with zero memory of this conversation. If it only makes sense as a "diary entry", cut it to the bare why.
+
 ## Release labels
 
 `.github/release-drafter.yml` groups the draft release by label. The autolabeler only fires on recognized title/branch patterns, so a PR whose title doesn't match lands unlabeled and falls into the uncategorized list, and the version bump defaults to patch. Before opening a PR, apply exactly one of these labels yourself if the title doesn't already match an autolabeler rule:

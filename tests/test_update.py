@@ -10,12 +10,14 @@ from install.update import (
     UpdateError,
     Updater,
     _apt_upgrade,
+    _mount_is_busy,
     _read_update_settings,
     _releases_url,
     _safe_extract,
     _safe_extract_venv,
     _select_asset,
     _select_precompiled_venv_asset,
+    _wait_for_mount_idle,
 )
 
 
@@ -197,6 +199,38 @@ def test_apt_upgrade_fails_fast_without_retry_on_readonly_root(monkeypatch, tmp_
     with pytest.raises(UpdateError, match="SYS-001.*read-only"):
         _apt_upgrade()
     assert calls == []  # never even tried apt/dpkg
+
+
+def test_mount_is_busy_reflects_shared_db_flag(tmp_path, monkeypatch):
+    import shared.db as db_module
+    db_path = str(tmp_path / "japyscope.db")
+    with db_module.db_session(db_path) as conn:
+        db_module.StateRepo(conn).set("mount_busy", "true")
+    original_db_session = db_module.db_session
+    monkeypatch.setattr(db_module, "db_session", lambda *a, **k: original_db_session(db_path))
+    assert _mount_is_busy() is True
+
+
+def test_mount_is_busy_fails_open_when_db_unreachable(monkeypatch):
+    import shared.db as db_module
+    monkeypatch.setattr(db_module, "db_session", lambda *a, **k: (_ for _ in ()).throw(OSError("no db")))
+    assert _mount_is_busy() is False
+
+
+def test_wait_for_mount_idle_returns_once_mount_goes_idle(monkeypatch):
+    busy = iter([True, True, False])
+    monkeypatch.setattr(update_module, "_mount_is_busy", lambda: next(busy))
+    monkeypatch.setattr(update_module.time, "sleep", lambda _seconds: None)
+    _wait_for_mount_idle(timeout=100)  # must not raise or hang
+
+
+def test_apt_upgrade_waits_for_mount_idle_before_each_attempt(monkeypatch):
+    calls = []
+    monkeypatch.setattr(update_module, "_mount_is_busy", lambda: False)
+    monkeypatch.setattr(update_module, "_wait_for_mount_idle", lambda *a, **k: calls.append("waited"))
+    monkeypatch.setattr(update_module.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    _apt_upgrade()
+    assert calls == ["waited"]
 
 
 def test_health_check_checks_services_separately(monkeypatch):
