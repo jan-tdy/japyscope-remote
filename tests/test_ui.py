@@ -2402,6 +2402,35 @@ def test_failed_jog_stop_attempts_safety_abort():
     finally: conn.close(); os.unlink(path)
 
 
+def test_mount_busy_flag_tracks_jog_start_and_stop():
+    ui, conn, path = make_ui()
+    try:
+        ui.state.screen = "TRACK"
+        ui.handle("2")
+        assert StateRepo(conn).get("mount_busy") == "true"
+        ui.handle(key_up("2"))
+        assert StateRepo(conn).get("mount_busy") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
+def test_mount_busy_flag_tracks_slew_until_tracking_confirmed():
+    ui, conn, path = make_ui()
+    try:
+        now = [1000.0]
+        ui.clock = lambda: now[0]
+        ui.state.last_status_at = now[0]
+        ui.state.selected = SearchResult("Moon", ra="1h", dec="+1d")
+        ui._begin_slew()
+        assert ui.state.screen == "SLEW"
+        assert StateRepo(conn).get("mount_busy") == "true"
+
+        now[0] += 2.0
+        ui.tick()
+        assert ui.state.screen == "TRACK"
+        assert StateRepo(conn).get("mount_busy") == "false"
+    finally: conn.close(); os.unlink(path)
+
+
 def test_scrolling_never_forces_a_full_refresh_mid_burst():
     # A fixed "every Nth scroll is full" cadence used to interrupt
     # otherwise-smooth scrolling with an unwanted full, visibly-flashing
