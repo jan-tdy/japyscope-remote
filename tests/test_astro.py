@@ -44,16 +44,17 @@ def test_altitude_below_horizon_for_opposite_declination():
 
 def test_altitude_matches_reference_sky_positions():
     # Madrid (40.4N, 3.7W), 2026-11-10 22:00 UTC: Vega is up in the north-west,
-    # Sirius has not yet risen.
+    # Sirius has not yet risen. Catalog coordinates are J2000, so precess first.
     when_epoch = datetime.datetime(2026, 11, 10, 22, tzinfo=datetime.timezone.utc).timestamp()
-    vega = astro.altitude_degrees(
-        astro.ra_to_degrees("18h36m56s"), astro.dec_to_degrees("+38°47′"), 40.4, -3.7, when_epoch
-    )
-    sirius = astro.altitude_degrees(
-        astro.ra_to_degrees("6h45m09s"), astro.dec_to_degrees("-16°43′"), 40.4, -3.7, when_epoch
-    )
-    assert abs(vega - 19.4) < 0.1
-    assert abs(sirius - -7.0) < 0.1
+
+    def alt(ra: str, dec: str) -> float:
+        ra_deg, dec_deg = astro.precess_j2000_to_date(
+            astro.ra_to_degrees(ra), astro.dec_to_degrees(dec), when_epoch
+        )
+        return astro.altitude_degrees(ra_deg, dec_deg, 40.4, -3.7, when_epoch)
+
+    assert abs(alt("18h36m56s", "+38°47′") - 19.56) < 0.05
+    assert abs(alt("6h45m09s", "-16°43′") - -7.23) < 0.05
 
 
 def test_precess_j2000_to_date_is_identity_at_j2000():
