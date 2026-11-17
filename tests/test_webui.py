@@ -52,6 +52,14 @@ def test_status_live_view_is_opt_in(tmp_path):
     assert b'http-equiv="refresh"' in response.data
 
 
+def test_app_mode_class_only_set_for_android_wrapper_user_agent(tmp_path):
+    client, _ = authenticated_client(tmp_path)
+    response = client.get("/status")
+    assert b'class="app-mode"' not in response.data
+    response = client.get("/status", headers={"User-Agent": "Mozilla/5.0 JapyScopeApp/1.0"})
+    assert b'class="app-mode"' in response.data
+
+
 def test_health_check_does_not_require_login(tmp_path):
     app = create_app(str(tmp_path / "health.db")); app.config.update(TESTING=True)
     response = app.test_client().get("/healthz")

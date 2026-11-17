@@ -18,7 +18,7 @@
   <meta name="apple-mobile-web-app-title" content="JapyScope">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon.svg') }}">
 </head>
-<body>
+<body{% if app_mode %} class="app-mode"{% endif %}>
 
 <header class="app-header">
   <div class="brand">
