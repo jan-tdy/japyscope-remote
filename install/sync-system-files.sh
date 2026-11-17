@@ -39,6 +39,11 @@ if [[ -d /run/systemd/system ]]; then systemctl daemon-reload; fi
 # Advertises the webui over mDNS/DNS-SD so the Android app (android/) can
 # find this device by browsing instead of needing an exact hostname.
 # avahi-daemon watches this directory and reloads on changes by itself.
+# This script intentionally never runs apt (OTA updates call it with a tight
+# timeout and no network retries), so on a device whose avahi-daemon
+# predates this feature, don't silently drop mDNS discovery: say so.
 if [[ -d /etc/avahi/services ]]; then
   install -o root -g root -m 644 "$source_dir/install/avahi-japyscope.service" /etc/avahi/services/japyscope.service
+else
+  echo "sync-system-files: /etc/avahi/services missing (avahi-daemon not installed) -- skipping mDNS service file; run 'apt-get install avahi-daemon' and re-run this script to enable Android app discovery" >&2
 fi
