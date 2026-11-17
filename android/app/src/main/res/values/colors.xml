@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand color, matches webui/static/manifest.json theme_color. -->
+    <color name="brand_primary">#0969DA</color>
+    <color name="brand_primary_dark">#0550AE</color>
+    <color name="brand_background">#F6F8FA</color>
+    <color name="brand_background_dark">#0D1117</color>
+    <color name="splash_icon_background">#0969DA</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+</resources>

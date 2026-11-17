@@ -1,0 +1,16 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Lets the Android companion app (see android/) find devices on the local
+  network by browsing for this service type via Android's NSD API, instead
+  of needing to already know a device's JapyScope_{SN}.local hostname.
+  avahi-daemon picks up changes to this file automatically; no reload needed.
+-->
+<service-group>
+  <name replace-wildcards="yes">%h</name>
+  <service>
+    <type>_japyscope._tcp</type>
+    <port>8080</port>
+    <txt-record>path=/</txt-record>
+  </service>
+</service-group>

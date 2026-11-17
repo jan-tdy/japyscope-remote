@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.JapyScopeRemote" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/brand_primary</item>
+        <item name="android:windowBackground">@color/brand_background</item>
+    </style>
+
+    <!-- Splash theme shown while MainActivity's process is cold-starting; swapped out
+         by installSplashScreen() as soon as the Compose content is ready. -->
+    <style name="Theme.JapyScopeRemote.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_icon_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/splash_icon_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.JapyScopeRemote</item>
+    </style>
+</resources>

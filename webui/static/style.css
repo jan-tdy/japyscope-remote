@@ -398,6 +398,39 @@ code {
   }
 }
 
+/* Rendered inside the Android wrapper app's WebView (android/): the native
+   activity already shows its own title bar and a "switch device" action, so
+   drop this in-page header/chrome and let content sit flush and edge-to-edge
+   instead of looking like a page inside a browser. The sidebar's open/close
+   JS is untouched -- the native menu action just clicks the (now hidden)
+   .nav-toggle button, which still dispatches its click handler. */
+body.app-mode {
+  padding: 0;
+  background: var(--bg-card);
+}
+
+body.app-mode .app-header {
+  display: none;
+}
+
+body.app-mode .layout-container {
+  max-width: none;
+  margin: 0;
+}
+
+body.app-mode .main-content {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 1rem;
+}
+
+@media (max-width: 768px) {
+  body.app-mode .sidebar {
+    padding-top: 1.25rem;
+  }
+}
+
 .log-toolbar {
   margin: 0.75rem 0;
 }

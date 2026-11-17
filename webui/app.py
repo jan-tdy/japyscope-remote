@@ -393,6 +393,10 @@ def create_app(
         return {
             "csrf_token": token,
             "telemetry": get_system_telemetry(),
+            # Set by the Android wrapper app's WebView (see android/), which
+            # appends this token to its User-Agent so templates can drop the
+            # in-page header/chrome that the native app already provides.
+            "app_mode": "JapyScopeApp/" in request.headers.get("User-Agent", ""),
         }
 
     @app.route("/", methods=["GET", "POST"])
