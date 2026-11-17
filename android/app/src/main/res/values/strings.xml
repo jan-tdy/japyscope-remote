@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JapyScope Remote</string>
+
+    <string name="discovery_title">Find your JapyScope</string>
+    <string name="discovery_searching">Searching for JapyScope devices…</string>
+    <string name="discovery_empty">No devices found yet. Make sure your phone is on the same Wi-Fi network as your JapyScope.</string>
+    <string name="discovery_scan_again">Scan again</string>
+    <string name="discovery_unreachable_banner">Couldn\'t reach %1$s — pick a device</string>
+    <string name="discovery_forget_device">Forget remembered device</string>
+    <string name="discovery_manual_entry_title">Enter address manually</string>
+    <string name="discovery_manual_host_label">Hostname or IP address</string>
+    <string name="discovery_manual_port_label">Port</string>
+    <string name="discovery_manual_connect">Connect</string>
+    <string name="discovery_manual_toggle">Enter address manually</string>
+    <string name="discovery_device_subtitle">%1$s:%2$d</string>
+
+    <string name="webui_menu_action">Open menu</string>
+    <string name="webui_switch_device_action">Switch device</string>
+    <string name="webui_connection_lost_title">Connection lost</string>
+    <string name="webui_connection_lost_reason">Couldn\'t reach %1$s. %2$s</string>
+    <string name="webui_retry">Retry</string>
+    <string name="webui_switch_device">Switch device</string>
+
+    <string name="connecting_to">Connecting to %1$s…</string>
+</resources>

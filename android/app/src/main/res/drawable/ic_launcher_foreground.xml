@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adapted from webui/static/icon.svg (orbit + planet + moon mark), re-centered and
+  scaled to fit the adaptive-icon safe zone. White-on-transparent; the brand-blue
+  background comes from ic_launcher_background.xml.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="54"
+        android:translateY="54">
+        <group
+            android:pivotX="0"
+            android:pivotY="0"
+            android:rotation="-18">
+            <path
+                android:pathData="M 30,0 a 30,10.83 0 1 1 -60,0 a 30,10.83 0 1 1 60,0 Z"
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="1.73"
+                android:fillColor="#00000000" />
+        </group>
+        <path
+            android:pathData="M 31.85,-9.26 a 3.33,3.33 0 1 1 -6.66,0 a 3.33,3.33 0 1 1 6.66,0 Z"
+            android:fillColor="#FFFFFF" />
+        <path
+            android:pathData="M 12.5,0 a 12.5,12.5 0 1 1 -25,0 a 12.5,12.5 0 1 1 25,0 Z"
+            android:fillColor="#FFFFFF" />
+    </group>
+</vector>
