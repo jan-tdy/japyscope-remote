@@ -1126,7 +1126,7 @@ def test_devtools_0044_enables_ssh_and_shows_status(monkeypatch):
         monkeypatch.setattr(controller_module.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
         monkeypatch.setattr(ControllerUI, "_local_ip", staticmethod(lambda: "10.0.0.5"))
         enter_devtools_code(ui, "0044")
-        assert calls == [["systemctl", "enable", "--now", "ssh"]]
+        assert calls == [["sudo", "/bin/systemctl", "enable", "--now", "ssh"]]
         assert ui.state.screen == "DEV_MESSAGE"
         assert ui.state.dev_message[0] == "SSH enabled"
         assert "10.0.0.5" in ui.state.dev_message[1]
