@@ -1739,7 +1739,6 @@ class ControllerUI:
             self.indi.goto(obj.ra, obj.dec)
         except (NotImplementedError, ConnectionError, OSError, subprocess.SubprocessError) as exc:
             logger.error("INDI-002 goto failed: %s", exc)
-            self._best_effort_abort()
             self._set(self.state.return_screen)
             return
         # The mount has accepted a new target -- whatever JapyScope event
